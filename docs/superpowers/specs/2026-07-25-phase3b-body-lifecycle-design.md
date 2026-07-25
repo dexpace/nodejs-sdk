@@ -124,15 +124,17 @@ does not, since no variant in this phase owns a closeable resource it must relea
 caller-owned, per `BODY-8`).
 
 Mirrors the `writeTo` decision: the public surface is the platform `ReadableStream`, not an internal wrapper.
-`text()`/`bytes()` drain the reader manually into Phase 3a's `ByteQueue` (`writeBytes`/`snapshot()` — the one `io/`
-primitive that is pure in-memory data, not bound to a stream reader/writer shape) and decode with `TextDecoder`
-using the charset from `Headers.get('content-type')` parsed via `MediaType`, falling back to UTF-8
-(`HTTP-42`). `BufferedSource`/`BufferedSink`/`TeeSink` are *not* reused here or anywhere in this phase — their
-constructors bind to a `ReadableStreamDefaultReader`/`WritableStreamDefaultWriter` and their `write`/`read`
-signatures are `ByteQueue`-and-count shaped, which doesn't fit `Body.writeTo`'s chunk-shaped
+`text()`/`bytes()` drain the reader with a plain manual chunk-accumulate-and-concatenate loop — **no `io/`
+import at all**. `http/` stays exactly as dependency-free of `io/` as Phase 1 left it; pulling `ByteQueue` in here
+for what's a five-line loop would create a Phase-1-reaches-into-Phase-3a edge with nothing to show for it.
+`text()` decodes with `TextDecoder` using the charset from `Headers.get('content-type')` parsed via `MediaType`,
+falling back to UTF-8 (`HTTP-42`). `BufferedSource`/`BufferedSink`/`TeeSink` are not reused here or anywhere in
+this phase — their constructors bind to a `ReadableStreamDefaultReader`/`WritableStreamDefaultWriter` and their
+`write`/`read` signatures are `ByteQueue`-and-count shaped, which doesn't fit `Body.writeTo`'s chunk-shaped
 `WritableStream<Uint8Array>` or a raw `ReadableStream<Uint8Array>` without rewriting Phase 3a's frozen,
-already-tested surface — off the table. `io/` therefore still gets no new consumer this phase beyond `ByteQueue`;
-`BufferedSource`'s typed/line reads get their first real consumer in Phase 6 (SSE). Repeated `.body` access
+already-tested surface — off the table. `io/`'s first real consumer is instead the two logging tees below, both
+in `body/`, which already legitimately depends on `io/` with no cycle risk (`io/` depends on nothing in `body/`).
+Repeated `.body` access
 returns the same stream reference by construction (`BODY-14`'s "not a replay" clause needs no separate guard).
 `close()` is idempotent, forwards to the body, and releases the connection whether or not the body was ever read
 (`BODY-15`, `HTTP-43`).
