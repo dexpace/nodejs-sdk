@@ -112,8 +112,16 @@ class Response {
   text(): Promise<string>;      // BODY-16, HTTP-42
   bytes(): Promise<Uint8Array>; // BODY-16
   close(): Promise<void>;       // BODY-15, HTTP-43
+  [Symbol.asyncDispose](): Promise<void>;   // delegates to close() — checkpoint §5.4's now-bumped floor applies
 }
 ```
+
+`Response` owns a resource (the body's connection) it releases via `close()`, so the checkpoint's §5.4 fix — already a
+prerequisite of this phase, floor bumped and `lib` extended before 3b starts — applies here too:
+`[Symbol.asyncDispose]` is the primary teardown interface, `close()` a retained delegate, so `await using response =
+...` works. The response-body logging wrapper (below) gets the same treatment for the same reason; `Body` itself
+does not, since no variant in this phase owns a closeable resource it must release (`StreamBody` is explicitly
+caller-owned, per `BODY-8`).
 
 Mirrors the `writeTo` decision: the public surface is the platform `ReadableStream`, not an internal wrapper.
 `text()`/`bytes()` drain the reader manually into Phase 3a's `ByteQueue` (`writeBytes`/`snapshot()` — the one `io/`
