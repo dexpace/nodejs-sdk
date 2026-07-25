@@ -238,16 +238,23 @@ third instance of the same violation:
 DexpaceError                                    (Phase 2 root)
 ├── RequiredFieldError, HeaderValidationError, …  (Phase 1, flattened per checkpoint §5.2)
 ├── CancellationError, OperationAssemblyError     (Phase 2, already flat)
+├── IoError                                       (Phase 3a — unchanged; already a flat leaf, used bare
+│                                                    at 4 sites in buffered-source/-sink.ts, tee-sink.ts
+│                                                    for generic io-layer failures)
 ├── EndOfStreamError, SourceContractViolationError,
-│   ClosedResourceError, AllocationLimitError     (Phase 3a — flattened here, io/errors.ts retrofit)
+│   ClosedResourceError, AllocationLimitError     (Phase 3a — retrofit: `extends IoError` becomes
+│                                                    `extends DexpaceError`, sibling of IoError not its
+│                                                    child; zero changes to the 3 files above)
 ├── ConsumedBodyError                             (3b, new — BODY-3 second write on a single-use body)
 ├── MultipartBoundaryError                        (3b, new — HTTP-51 invalid caller boundary)
 └── HttpStatusError                               (3b, new — BODY-30/31)
 ```
 
-Grouping is restored the way the checkpoint prescribed: a `readonly kind: 'domain-model' | 'cancellation' |
-'operation-assembly' | 'io' | 'body' | 'http-status'` discriminant on `DexpaceError`, or per-category type guards
-(`isIoError`, etc.) where a caller needs one — never a reintroduced class tier. `HttpStatusError` carries
+Grouping is restored the way the checkpoint prescribed, and lands on the lighter of its two sanctioned options:
+an exported type-guard union per category (`isIoError(e): e is IoError | EndOfStreamError | ...`, `isBodyError(e):
+e is ConsumedBodyError | MultipartBoundaryError`) rather than a `kind` discriminant field on `DexpaceError` — the
+guard needs no constructor-signature change on any existing leaf across three already-written phases, where a
+discriminant field would. `HttpStatusError` carries
 `readonly status: number` and the buffered body as fields, not only interpolated into `.message` (the checkpoint's
 §5.3 sanitized-`readonly`-fields pattern, applied to this phase's own new error rather than re-litigated).
 
