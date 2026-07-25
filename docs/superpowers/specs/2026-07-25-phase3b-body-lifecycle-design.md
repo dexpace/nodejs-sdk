@@ -116,8 +116,15 @@ class Response {
 ```
 
 Mirrors the `writeTo` decision: the public surface is the platform `ReadableStream`, not an internal wrapper.
-`text()`/`bytes()` wrap it in Phase 3a's `BufferedSource` internally for typed reads and charset decode
-(`HTTP-42`'s media-type-charset-then-UTF-8-fallback) — that machinery stays `@internal`. Repeated `.body` access
+`text()`/`bytes()` drain the reader manually into Phase 3a's `ByteQueue` (`writeBytes`/`snapshot()` — the one `io/`
+primitive that is pure in-memory data, not bound to a stream reader/writer shape) and decode with `TextDecoder`
+using the charset from `Headers.get('content-type')` parsed via `MediaType`, falling back to UTF-8
+(`HTTP-42`). `BufferedSource`/`BufferedSink`/`TeeSink` are *not* reused here or anywhere in this phase — their
+constructors bind to a `ReadableStreamDefaultReader`/`WritableStreamDefaultWriter` and their `write`/`read`
+signatures are `ByteQueue`-and-count shaped, which doesn't fit `Body.writeTo`'s chunk-shaped
+`WritableStream<Uint8Array>` or a raw `ReadableStream<Uint8Array>` without rewriting Phase 3a's frozen,
+already-tested surface — off the table. `io/` therefore still gets no new consumer this phase beyond `ByteQueue`;
+`BufferedSource`'s typed/line reads get their first real consumer in Phase 6 (SSE). Repeated `.body` access
 returns the same stream reference by construction (`BODY-14`'s "not a replay" clause needs no separate guard).
 `close()` is idempotent, forwards to the body, and releases the connection whether or not the body was ever read
 (`BODY-15`, `HTTP-43`).
@@ -160,16 +167,25 @@ Phase 7" deferral row, which is about the *seam*, not this machinery.
 function withRequestLogging(delegate: Body, tapCapBytes: number): Body & { snapshot(): Uint8Array };
 ```
 
-A `Body` decorator (composition, consistent with "no base class" above) built on Phase 3a's `TeeSink`, now taking
-a plain `WritableStream<Uint8Array>` rather than the internal `BufferedSink`. The tap clears at the start of every
-write (`BODY-18` — a retry against a replayable delegate does not accumulate stale bytes), is bounded by
-`tapCapBytes` while the full payload always reaches the primary sink regardless of the cap (`BODY-19`),
-`replayable` and `materialize()` pass through to the delegate verbatim (`BODY-21`), and there is no
-writable-buffer escape hatch (`BODY-37`, restating Phase 3a's `IO-28` at this layer).
+A `Body` decorator (composition, consistent with "no base class" above) — a **new, self-contained tee**, not a
+reuse of Phase 3a's `TeeSink` class. `TeeSink`'s constructor takes a `BufferedSink` and its `write(src: ByteQueue,
+count: number)` is `ByteQueue`-and-count shaped; `Body.writeTo` hands it a chunk-shaped
+`WritableStream<Uint8Array>`. The two don't compose without rewriting `TeeSink`'s already-frozen, tested signature,
+so this wrapper builds its own small adapter stream instead: it constructs a fresh `WritableStream<Uint8Array>`
+whose `write(chunk)` handler mirrors up to `tapCapBytes` of each chunk into an internal `ByteQueue` tap (`BODY-19`)
+before forwarding the full chunk unchanged to the real sink's writer, and passes that adapter to
+`delegate.writeTo`. Same behavioral contract `BODY-17`/`IO-25`–`29` describe, independent implementation — the tap
+clears (`ByteQueue.clear()`) at the start of every `writeTo` call (`BODY-18` — a retry against a replayable
+delegate does not accumulate stale bytes), the full payload always reaches the primary sink regardless of the cap
+(`BODY-19`), `replayable` and `materialize()` pass through to the delegate verbatim (`BODY-21`), and there is no
+writable-buffer escape hatch (`BODY-37`, restating Phase 3a's `IO-28` at this layer) — `snapshot()` is the only
+way to read the tap.
 
 **Response-body logging wrapper (`BODY-22`–`29`):** wraps the raw `ReadableStream<Uint8Array>` before it reaches
-`Response.body`. Lazy — drains only on first `read()`/`snapshot()`/exception-query, serialized so the upstream is
-read exactly once. Two regimes:
+`Response.body`. Also self-contained for the same reason — `BufferedSource`'s reader-bound constructor and
+cursor/view machinery solve a more general N-view problem this wrapper doesn't have. Uses a `ByteQueue` for the
+captured prefix, its own `ReadableStreamDefaultReader` loop, and its own close-once boolean. Lazy — drains only on
+first `read()`/`snapshot()`/exception-query, serialized so the upstream is read exactly once. Two regimes:
 
 - Fits the cap (EOF before the cap, `BODY-23`) — capture entirely, close the delegate, serve every later read as a
   fresh non-consuming view.
@@ -263,6 +279,7 @@ Phase 1's `unknown` placeholder; `Response` gains `text()`/`bytes()`/`close()`),
 | `StreamBody` always single-use, no mark/reset replay path | `BODY-9` (SHOULD) | Node's `ReadableStream` has no generic mark/reset; a caller wanting replay materializes first or uses `ByteArrayBody` |
 | `Body` as independent classes implementing a shared structural interface, no common base class | none — styleguide-mandated | `styleguide/typescript/06` §6.4 bans `extends` for anything but `Error` |
 | `writeTo(sink: WritableStream<Uint8Array>)` over Phase 3a's internal `BufferedSink` | `sdk-design/03` §3.1's sketch | Keeps `io/` `@internal` indefinitely; costs each `Body` variant hand-rolled `TextEncoder` writes instead of typed helpers, which is cheap given how simple each variant is |
+| Both logging tees are new, self-contained implementations, not built on Phase 3a's `TeeSink`/`BufferedSource` | none — forced by the `writeTo` decision above | `TeeSink`/`BufferedSource`/`BufferedSink` are reader/writer-bound with `ByteQueue`-and-count-shaped signatures; `Body.writeTo`'s chunk-shaped `WritableStream<Uint8Array>` doesn't compose with them without rewriting Phase 3a's frozen surface. Only `ByteQueue` (pure in-memory, unbound to a stream shape) is reused |
 | Phase 3a's `IoError` tier flattened in this phase, not in 3a itself | phase-boundary discipline (each phase's own frozen surface) | The checkpoint's `§5.2` fix for `DomainModelError` missed the identically-shaped `IoError` tier; carrying the inconsistency forward into a fourth phase was judged worse than a scoped retrofit here |
 | Logging tees and `toHttpError`'s preview machinery shipped `@internal`, unwired to any `Logger` | none — matches Phase 2's `Serde<T>` precedent | No `Logger`/config surface exists until Phase 7 |
 
