@@ -97,12 +97,17 @@ nothing.
 - No `FileBody` — see "Explicitly Out of Scope."
 
 **`materialize(body: Body): Promise<Body>`** — a free function (`10.1`, matching Phase 3a's `factories.ts`
-pattern), not a `Body` method. Returns the same instance unchanged if already `replayable`; otherwise drains
-`writeTo`'s output exactly once into a fresh `ByteArrayBody` and marks the original consumed. The consumed-once
-guard is a boolean flag checked and set before the function's first `await` — Node's single-threaded event loop
-collapses the reference's atomic-CAS requirement into this, correctly, *only* because the check-and-flip precedes
-any suspension point (the established deviation from `sdk-design-nodejs/06`; violating the ordering reintroduces
-the race `BODY-3` exists to prevent).
+pattern), not a `Body` method. Returns the same instance unchanged if already `replayable`; otherwise calls
+`body.writeTo(...)` once into a collector and returns a fresh `ByteArrayBody`. `materialize` itself holds no
+consumed-once state — the guard belongs to whichever single-use `Body` variant is being drained (`StreamBody`,
+below), since `writeTo` can be called directly without going through `materialize` at all, and the guard must
+protect that path too. `StreamBody`'s guard is a boolean flag checked and set before its `writeTo`'s first
+`await` — Node's single-threaded event loop collapses the reference's atomic-CAS requirement into this, correctly,
+*only* because the check-and-flip precedes any suspension point (the established deviation from
+`sdk-design-nodejs/06`; violating the ordering reintroduces the race `BODY-3` exists to prevent). A non-replayable
+`MultipartBody` needs no guard of its own: it is non-replayable exactly when it contains a non-replayable part, and
+that part's own guard fires on the composite's second `writeTo`, propagating up uncaught — composition is
+sufficient, no redundant guard needed at the composite level.
 
 ## Response Body
 
