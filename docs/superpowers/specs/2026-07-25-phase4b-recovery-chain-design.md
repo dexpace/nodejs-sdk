@@ -161,7 +161,7 @@ async function dispatchWithRecovery(request: Request, config: DispatchConfig): P
     const response = await config.transport.send(preparedRequest, config.options, config.signal);
     outcome = success(response);
   } catch (error) {
-    outcome = wrapCancellation(error, config.signal);   // RECOV-11; degenerates to failure(error) otherwise
+    outcome = wrapCancellation(error);   // RECOV-11; never throws, so RECOV-2 admits no side exit
   }
   outcome = await config.responseChain.apply(outcome);
   return fold(
@@ -175,9 +175,8 @@ async function dispatchWithRecovery(request: Request, config: DispatchConfig): P
 Two positional params (`request`, `config`), not five — the same `max-params: 3` trap 4a's `ContextInit` was built to dodge, applied here to the orchestrator's own signature.
 
 - **`RECOV-11`:** the orchestrator's catch is the helper's one and only call site. Every throwable leaving the
-  request chain or the transport passes through `wrapCancellation()` on its way to a `Failure`, which is what
-  makes the cancellation check an invariant of the real dispatch path rather than a primitive nothing calls. For
-  a non-cancellation throwable it is exactly `failure(error)`.
+  request chain or the transport passes through `wrapCancellation()` on its way to a `Failure`, so the
+  requirement sits on the real dispatch path rather than in a primitive nothing calls.
 - **`RECOV-2`:** the single `try`/`catch` wraps both the request chain's `apply()` and the transport invocation,
   so every throwable from either is caught and converted to a `Failure` before reaching the response chain. This
   is the defining invariant — a before-request throw cannot skip after-error handling.
@@ -192,10 +191,7 @@ abstraction is introduced here.
 ## Cancellation-Wrapping Helper (`RECOV-11`)
 
 ```typescript
-function wrapCancellation(error: unknown, signal: AbortSignal | undefined): Outcome<never> {
-  if (error instanceof CancellationError && !signal?.aborted) {
-    invariant(false, 'CancellationError observed without a corresponding aborted signal');
-  }
+function wrapCancellation(error: unknown): Outcome<never> {
   return failure(error);
 }
 ```
@@ -203,18 +199,27 @@ function wrapCancellation(error: unknown, signal: AbortSignal | undefined): Outc
 The reference requires re-asserting the cancellation signal on the current context when wrapping a
 cancellation/interruption throwable, so code later blocked on the outcome still observes cancellation — a
 concern specific to `Thread.interrupt()`'s flag being silently clearable. Node's `AbortSignal.aborted` is durable
-once set (no equivalent clearing hazard exists), so there is nothing to *re-assert*. Instead, this helper
-defensively re-checks: if the throwable is a `CancellationError` (Phase 2, `transport.ts`) but its paired signal
-does not report `aborted`, that is a structurally-impossible state (wrong signal threaded through, or a
-misclassified throwable) and crashes loudly via `invariant()` — a programmer error, not a recoverable `Failure`
-— per `docs/knowledge/error-handling.md`'s "a violated precondition... must crash loudly... never be demoted to a
-handled error." `instanceof` against the concrete class, not duck-typing, matches the styleguide's narrowing rule
-and Phase 2's own precedent of distinguishing `CancellationError`/`TimeoutError` by concrete class rather than a
-message string.
+once set (no equivalent clearing hazard exists), and the SDK holds a signal, never the caller's
+`AbortController`, so it could not set one even if it wanted to. There is nothing to *re-assert*, and the helper
+degenerates to `failure(error)`.
+
+**It deliberately does not crash on a `CancellationError` whose paired signal never aborted**, an earlier draft
+of this design's shape. Two reasons:
+
+- `Transport` is a pluggable seam. A mismatch between a classified `CancellationError` and the signal the SDK
+  threaded in is a *third-party implementation* misbehaving — an operational failure — not a violated
+  precondition of this codebase, which is what `docs/knowledge/error-handling.md` reserves crash-loud treatment
+  for. A transport that aborts its in-flight requests from `close()` (which `SEAM-14` permits — it only says
+  close need *not* cancel them) surfaces exactly this shape while the caller passed no signal at all.
+- `RECOV-2` is absolute: no throwable from the pre-request phase or the transport may bypass the recovery hooks.
+  `wrapCancellation` runs *inside* `dispatchWithRecovery`'s own `catch`, so throwing from it would skip the
+  response and recovery chains entirely — the one failure mode `RECOV-2` exists to prevent.
 
 `dispatchWithRecovery`'s catch clause is the helper's only call site — it is deliberately *not* shipped as an
 unwired primitive. Returning `Outcome<never>` keeps it assignable to the orchestrator's `Outcome<Response>` local
-without a cast.
+without a cast. It is a thin pass-through by design: its job is to be the one named, findable site where
+`RECOV-11`'s Node disposition lives. If Phase 5's retry step lands without giving it any behavior, inline it
+there and carry the disposition wholly in Phase 10's ledger rather than keeping a function with no body.
 
 ## Status→Typed-Exception Mapping Step (`RECOV-15`/`RECOV-16`)
 
@@ -271,7 +276,7 @@ programmer-error assertion, not a catchable `DexpaceError` subclass.
 |---|---|---|
 | Both recovery chains defensively copy their step lists at construction | `RECOV-14`'s reference asymmetry (request chain retains the caller's list by reference) | The spec text itself recommends a port copy both; true immutability on both chains costs nothing and removes an asymmetry a porter could otherwise assume away incorrectly |
 | All step types (`RequestStep`/`ResponseStep`/`RecoveryStep`) are `async`, not synchronous transforms | `§8.2`'s framing of the recovery layer as synchronous | Node has one execution model end to end; the shipped `RECOV-15`/`16` step must call the already-async `toHttpError()`, so async is applied uniformly across all step shapes rather than mixed with sync ones |
-| `RECOV-11`'s cancellation re-assertion becomes a defensive consistency check (`invariant()`), not a state re-assertion | `RECOV-11`'s literal "re-assert the cancellation signal" | `AbortSignal.aborted` is durable once fired, unlike a clearable `Thread.interrupt()` flag — nothing to re-assert. A mismatch between a classified cancellation error and a non-aborted signal is treated as a programmer error instead |
+| `RECOV-11`'s cancellation re-assertion is a no-op — `wrapCancellation` is `failure(error)` and never throws | `RECOV-11`'s literal "re-assert the cancellation signal" | `AbortSignal.aborted` is durable once fired, unlike a clearable `Thread.interrupt()` flag, and the SDK never holds the caller's `AbortController` — nothing to re-assert. Not reframed as an `invariant()` crash on a signal mismatch: `Transport` is a third-party seam, so that is an operational failure rather than a violated precondition, and throwing from inside the orchestrator's catch would violate `RECOV-2` |
 | No new per-status typed-exception hierarchy for `RECOV-15` | `RECOV-15`'s "matching typed exception" (which some ports read as a per-status class family) | Phase 3b's flat `HttpStatusError` (carrying `status` + buffered body) already satisfies this, and the corpus caps custom error hierarchies at two levels; a per-status class family would violate that cap |
 | No default/preset recovery chain shipped in 4b | none — scope decision | Matches 4a's "primitives only" discipline; Phase 5 (retry) is the first real consumer and decides its own composition |
 
@@ -297,8 +302,12 @@ connection released).
 **Negative space:** a response step throwing while holding a `Success` closes that response exactly once, with a
 close-failure attached as `suppressed` (`RECOV-12`); a recovery step returning a substitute `Success` does not
 trigger an auto-close of the original (`RECOV-13`); `dispatchWithRecovery` rethrows a `Failure`'s error
-byte-for-byte unchanged, no wrapping (`RECOV-10`); `wrapCancellation()` crashes via `invariant()` given a
-classified cancellation error paired with a non-aborted signal.
+byte-for-byte unchanged, no wrapping (`RECOV-10`); a transport-raised `CancellationError` with no caller signal
+still reaches the recovery steps rather than escaping the orchestrator (`RECOV-2`/`RECOV-11`).
+
+**A `Response` is frozen** (Phase 1's `Object.freeze(this)`, preserved by 3b's retrofit), so no test may patch
+`response.close` — the assignment throws `TypeError` under an ES module's strict mode. `RECOV-12`/`RECOV-13`'s
+close assertions observe the body stream's `cancel()` hook instead, the way 3b's own `response.test.ts` does.
 
 ## Deferred Items
 

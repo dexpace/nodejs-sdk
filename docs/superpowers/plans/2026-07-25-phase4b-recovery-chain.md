@@ -60,21 +60,34 @@ addition alongside the existing `invariant()`/`InvariantViolation` it already ex
 - **`RECOV-13`: a step that deliberately *returns* a different outcome (no throw) is never auto-closed.** Only a
   caught throw triggers the close-and-wrap path. Do not add a "close whenever the outcome changes" check — that
   would violate `RECOV-13` by closing a response a step meant to keep alive or already closed itself.
-- **`wrapCancellation`'s re-assertion is a defensive `invariant()` check, not a native re-throw of the signal.**
-  `AbortSignal.aborted` is durable once set (unlike `Thread.interrupt()`'s clearable flag), so there is nothing to
-  re-assert; a `CancellationError` paired with a non-aborted (or absent) signal is a programmer error, crashing
-  via `invariant()`, never demoted to a recoverable `Failure`.
+- **`wrapCancellation` never throws — it always returns a `Failure`.** `AbortSignal.aborted` is durable once
+  set (unlike `Thread.interrupt()`'s clearable flag) and the SDK does not own the caller's `AbortController`
+  anyway, so `RECOV-11`'s "re-assert the cancellation signal" has nothing to act on in Node. It is **not**
+  reframed as an `invariant()` crash on a `CancellationError` whose paired signal never aborted, for two
+  reasons: (1) `Transport` is a pluggable seam whose implementations the SDK does not control, so a
+  mismatch is a misbehaving third-party plugin — an operational failure — not a violated precondition of our
+  own code, and `docs/knowledge/error-handling.md` reserves crash-loud treatment for the latter; (2)
+  `RECOV-2` is absolute — *no* throwable from the transport may bypass the recovery hooks — and throwing from
+  inside `dispatchWithRecovery`'s own `catch` would do exactly that, skipping the response chain entirely.
+  A concrete way to trip it: a transport that aborts its in-flight requests from `close()` (permitted by
+  `SEAM-14`, which only says close need *not* cancel them) surfaces a `CancellationError` while the caller
+  passed no signal at all.
 - **No new per-status typed-exception hierarchy for `RECOV-15`.** Phase 3b's flat `HttpStatusError` (carrying
   `status` + a buffered, replayable body) already satisfies "the matching typed exception." The status-mapping
   step is a thin wrapper around the existing `toHttpError()` — do not reimplement buffering or invent
   `BadRequestError`/`NotFoundError`-style per-status classes; the corpus caps custom error hierarchies at two
   levels (`DexpaceError → Leaf`).
+- **Never monkey-patch a `Response` method in a test.** `Response` calls `Object.freeze(this)` at the end of
+  its constructor (Phase 1's rule, preserved by 3b's body retrofit), so `response.close = ...` throws
+  `TypeError: Cannot add property close, object is not extensible` — ES modules are strict mode, so the
+  assignment fails loudly rather than silently. Observe close through the body stream's `cancel()` hook
+  instead, the way Phase 3b's own `response.test.ts` does; `Response.close()` is idempotent and cancels at
+  most once, so a cancel counter is exactly the "released exactly once" count `RECOV-12` asks about.
 - **No `FakeTransport`.** Each test file that needs a `Transport` hand-rolls a minimal, file-local stub against
   the real `Transport` interface — matching 4a's precedent of not building a shared test double before a real
   consumer (Phase 5) needs one.
-- No new error leaf classes in this phase. The only new failure surface is `wrapCancellation()`'s `invariant()`
-  crash (`InvariantViolation`, a programmer error, not a catchable `DexpaceError` subclass) and `assertNever`'s
-  identical crash shape.
+- No new error leaf classes in this phase. The only new failure surface is `assertNever`'s
+  `InvariantViolation` crash — a programmer error, not a catchable `DexpaceError` subclass.
 - Existing lint/coverage gates apply unchanged: `max-lines-per-function` 70, `max-depth` 3, `max-params` 3,
   explicit return types on exports, 80% aggregate coverage floor (`NFR-5`), no constructor parameter properties
   (`erasableSyntaxOnly`) — every test-local class stub assigns fields in the constructor body, never via a
@@ -129,6 +142,10 @@ No `recovery/index.ts` (see Global Constraints). Task 7 runs the full gate seque
 // packages/core/src/invariant.test.ts
 // Add alongside the existing invariant() tests. Exercises the discriminated-union exhaustiveness helper
 // docs/knowledge/data-modeling.md requires every switch to close with.
+//
+// This is an ADDITION to the existing file, not a replacement: extend its existing import statement with
+// `assertNever` rather than pasting the line below wholesale, or `invariant` lands unused in whichever copy
+// survives and fails `no-unused-vars`.
 import {describe, expect, test} from 'bun:test';
 import {assertNever, InvariantViolation, invariant} from './invariant.js';
 
@@ -333,7 +350,8 @@ git commit -m "feat(core): add Outcome<T>, success/failure/fold (RECOV-1)"
 - Create: `packages/core/src/recovery/request-chain.test.ts`
 
 **Interfaces:**
-- Consumes: `Request` (`../http/request.js`, type-only), `Headers` (`../http/headers.js`).
+- Consumes: `Request` (`../http/request.js`, type-only). The test reaches `Headers` through
+  `request.headers.newBuilder()`, so neither the module nor the test imports `../http/headers.js` directly.
 - Produces: `type RequestStep = (request: Request) => Promise<Request>`, `class RequestRecoveryChain`. Task 6
   (`orchestrator.ts`) imports `RequestRecoveryChain`.
 
@@ -404,7 +422,9 @@ describe('RequestRecoveryChain.apply fold law', () => {
   // steps in order, for an arbitrary sequence of single-character append steps.
   test('apply() equals a manual left-to-right reduce, for arbitrary step sequences', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(fc.char(), {maxLength: 10}), async (chars) => {
+      // `fc.string({minLength: 1, maxLength: 1})` rather than `fc.char()`: the latter is deprecated in
+      // fast-check 3.22+ (removed in 4.x) and would print a deprecation warning on every run.
+      fc.asyncProperty(fc.array(fc.string({minLength: 1, maxLength: 1}), {maxLength: 10}), async (chars) => {
         const steps = chars.map(tagAppendStep);
         const chain = new RequestRecoveryChain(steps);
 
@@ -504,23 +524,48 @@ import {Status} from '../http/status.js';
 import {failure, success, type Outcome} from './outcome.js';
 import {ResponseRecoveryChain, type RecoveryStep, type ResponseStep} from './response-chain.js';
 
-function aResponse(): Response {
+function aResponse(body: ReadableStream<Uint8Array> | null = null): Response {
   return Response.newBuilder()
     .request(Request.newBuilder().url('https://example.com').build())
     .protocol(Protocol.HTTP_1_1)
     .status(Status.of(200))
+    .body(body)
     .build();
 }
 
-/** Wraps `response.close` with a call counter, returning a getter for the count. */
-function spyClose(response: Response): () => number {
-  let calls = 0;
-  const original = response.close.bind(response);
-  response.close = async () => {
-    calls += 1;
-    await original();
-  };
-  return () => calls;
+/**
+ * Close is observed through the body stream's `cancel()`, exactly the way Phase 3b's own `response.test.ts`
+ * observes it -- NOT by patching `response.close`. `Response` calls `Object.freeze(this)` at the end of its
+ * constructor (Phase 1's rule, kept by 3b's retrofit), so `response.close = ...` throws
+ * `TypeError: Cannot add property close, object is not extensible` in an ES module's strict mode.
+ * `Response.close()` is idempotent and cancels the body at most once, so the cancel count IS the
+ * effective-close count RECOV-12's "released exactly once" asks about.
+ */
+function countingCloseResponse(): {response: Response; closeCount: () => number} {
+  let cancels = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.from([1]));
+    },
+    cancel() {
+      cancels += 1;
+    },
+  });
+  return {response: aResponse(body), closeCount: () => cancels};
+}
+
+/** A response whose `close()` rejects: `Response.close()` awaits `body.cancel()`, which rethrows here. */
+function failingCloseResponse(closeError: Error): Response {
+  return aResponse(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1]));
+      },
+      cancel() {
+        throw closeError;
+      },
+    }),
+  );
 }
 
 describe('response-step phase (RECOV-4, RECOV-6)', () => {
@@ -634,8 +679,7 @@ describe('RECOV-8: a throwing recovery step wraps into a Failure fed to the next
 
 describe('RECOV-12: close-on-throw while holding a Success', () => {
   test('closes the in-hand response exactly once before wrapping the throwable', async () => {
-    const response = aResponse();
-    const closeCallCount = spyClose(response);
+    const {response, closeCount} = countingCloseResponse();
     const thrownError = new Error('step failed');
     const throwingStep: ResponseStep = () => {
       throw thrownError;
@@ -644,16 +688,13 @@ describe('RECOV-12: close-on-throw while holding a Success', () => {
 
     const result = await chain.apply(success(response));
 
-    expect(closeCallCount()).toBe(1);
+    expect(closeCount()).toBe(1);
     expect(result.kind === 'failure' && result.error).toBe(thrownError);
   });
 
   test('a close failure is attached as suppressed, with the original throwable staying primary', async () => {
-    const response = aResponse();
     const closeError = new Error('close failed');
-    response.close = () => {
-      throw closeError;
-    };
+    const response = failingCloseResponse(closeError);
     const originalError = new Error('step failed');
     const throwingStep: ResponseStep = () => {
       throw originalError;
@@ -672,26 +713,24 @@ describe('RECOV-12: close-on-throw while holding a Success', () => {
 
 describe('RECOV-13: a deliberate outcome substitution is never auto-closed', () => {
   test('a recovery step returning a different Failure does not trigger a close', async () => {
-    const response = aResponse();
-    const closeCallCount = spyClose(response);
+    const {response, closeCount} = countingCloseResponse();
     const substituteStep: RecoveryStep = async () => failure(new Error('substituted, not thrown'));
     const chain = new ResponseRecoveryChain([], [substituteStep]);
 
     await chain.apply(success(response));
 
-    expect(closeCallCount()).toBe(0);
+    expect(closeCount()).toBe(0);
   });
 
   test('a recovery step substituting a different Success does not trigger a close', async () => {
-    const original = aResponse();
-    const originalCloseCalls = spyClose(original);
+    const {response: original, closeCount} = countingCloseResponse();
     const substitute = aResponse();
     const substituteStep: RecoveryStep = async () => success(substitute);
     const chain = new ResponseRecoveryChain([], [substituteStep]);
 
     const result = await chain.apply(success(original));
 
-    expect(originalCloseCalls()).toBe(0);
+    expect(closeCount()).toBe(0);
     expect(result.kind === 'success' && result.value).toBe(substitute);
   });
 });
@@ -841,56 +880,54 @@ git commit -m "feat(core): add ResponseRecoveryChain (RECOV-4..RECOV-9, RECOV-12
 - Create: `packages/core/src/recovery/cancellation.test.ts`
 
 **Interfaces:**
-- Consumes: `CancellationError` (`../seams/transport.js`), `invariant` (`../invariant.js`), `Outcome`/`failure`
-  (Task 1).
-- Produces: `wrapCancellation(error: unknown, signal: AbortSignal | undefined): Outcome<never>`. Not consumed by
-  any other task in this plan -- it is a standalone helper future recovery-step authors (Phase 5's retry step)
-  call directly, matching this phase's "primitives only" scope.
+- Consumes: `Outcome`/`failure` (Task 1).
+- Produces: `wrapCancellation(error: unknown): Outcome<never>`. Task 6's orchestrator is its only call site;
+  Phase 5's retry step is the next likely one. It is the single named site where `RECOV-11`'s Node
+  disposition lives — if it is still a pure pass-through once Phase 5 lands, inline it there and move the
+  disposition wholly into Phase 10's deviation ledger rather than keeping an abstraction with no behavior.
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/cancellation.test.ts
-// Exercises: RECOV-11 (wrapping a cancellation throwable), reframed for Node -- AbortSignal.aborted is
-// durable once set, so the defensive check is "does a CancellationError ever appear without a
-// corresponding aborted signal", not a re-assertion of a clearable flag.
+// Exercises: RECOV-11 (wrapping a cancellation throwable into a Failure), reframed for Node -- an
+// AbortSignal is durable once aborted and the SDK does not own the caller's AbortController, so there is
+// nothing to re-assert; what the requirement still buys is the guarantee that a cancellation is surfaced
+// through the SAME Failure channel as every other throwable, never through a side exit (RECOV-2).
 import {describe, expect, test} from 'bun:test';
-import {InvariantViolation} from '../invariant.js';
 import {CancellationError} from '../seams/transport.js';
 import {wrapCancellation} from './cancellation.js';
 
 describe('wrapCancellation (RECOV-11)', () => {
-  test('wraps a CancellationError into a Failure when its signal is aborted', () => {
-    const controller = new AbortController();
+  test('wraps a CancellationError into a Failure carrying it unchanged', () => {
     const error = new CancellationError('cancelled by caller');
-    controller.abort(error);
 
-    const outcome = wrapCancellation(error, controller.signal);
+    const outcome = wrapCancellation(error);
 
     expect(outcome.kind).toBe('failure');
     expect(outcome.kind === 'failure' && outcome.error).toBe(error);
   });
 
-  test('wraps any non-CancellationError into a Failure regardless of signal state', () => {
+  test('wraps an ordinary error into a Failure carrying it unchanged', () => {
     const error = new Error('an ordinary failure');
 
-    const outcome = wrapCancellation(error, undefined);
+    const outcome = wrapCancellation(error);
 
     expect(outcome.kind).toBe('failure');
     expect(outcome.kind === 'failure' && outcome.error).toBe(error);
   });
 
-  test('crashes via InvariantViolation when a CancellationError is paired with a non-aborted signal', () => {
-    const controller = new AbortController(); // never aborted
-    const error = new CancellationError('cancelled by caller');
+  test('wraps a non-Error throw unchanged -- a JS throw can raise any value', () => {
+    const outcome = wrapCancellation('a string throw');
 
-    expect(() => wrapCancellation(error, controller.signal)).toThrow(InvariantViolation);
+    expect(outcome.kind === 'failure' && outcome.error).toBe('a string throw');
   });
 
-  test('crashes via InvariantViolation when a CancellationError is paired with no signal at all', () => {
-    const error = new CancellationError('cancelled by caller');
-
-    expect(() => wrapCancellation(error, undefined)).toThrow(InvariantViolation);
+  test('never throws, for any input', () => {
+    // RECOV-2 depends on this: dispatchWithRecovery calls it from inside its own catch, so a throw here
+    // would let a transport failure bypass the response/recovery chain entirely.
+    expect(() => wrapCancellation(new CancellationError('x'))).not.toThrow();
+    expect(() => wrapCancellation(undefined)).not.toThrow();
   });
 });
 ```
@@ -904,25 +941,27 @@ Expected: FAIL — `Cannot find module './cancellation.js'`.
 
 ```typescript
 // packages/core/src/recovery/cancellation.ts
-import {invariant} from '../invariant.js';
-import {CancellationError} from '../seams/transport.js';
 import {failure, type Outcome} from './outcome.js';
 
 /**
- * Wraps a cancellation/interruption throwable into a Failure (RECOV-11). The reference requires
- * re-asserting the cancellation signal on the current context so code later blocked on the outcome still
- * observes cancellation -- a concern specific to a clearable `Thread.interrupt()` flag. Node's
- * `AbortSignal.aborted` is durable once set, so there is nothing to re-assert; instead this defensively
- * checks that a `CancellationError` is never paired with a signal that disagrees -- a mismatch is a
- * programmer error (wrong signal threaded through, or a misclassified throwable), not a recoverable
- * Failure.
+ * Wraps a cancellation/interruption throwable into a Failure (RECOV-11). The reference requires re-asserting
+ * the cancellation signal on the current context so code later blocked on the outcome still observes
+ * cancellation -- a concern specific to a clearable `Thread.interrupt()` flag. Node has nothing to
+ * re-assert: an `AbortSignal` stays aborted once fired, and the SDK holds the signal, never the caller's
+ * `AbortController`, so it could not set one anyway.
+ *
+ * It deliberately does **not** crash on a `CancellationError` whose paired signal never aborted.
+ * `Transport` is a pluggable seam, so that mismatch is a misbehaving third-party implementation -- an
+ * operational failure -- not a violated precondition of this codebase, and crash-loud treatment is reserved
+ * for the latter (`docs/knowledge/error-handling.md`). It would also break RECOV-2: this runs inside
+ * `dispatchWithRecovery`'s own `catch`, so throwing here would let a transport failure skip the response and
+ * recovery chains entirely, which is precisely what RECOV-2 forbids.
+ *
+ * This function never throws, for any input.
  *
  * @internal
  */
-export function wrapCancellation(error: unknown, signal: AbortSignal | undefined): Outcome<never> {
-  if (error instanceof CancellationError) {
-    invariant(signal?.aborted === true, 'CancellationError observed without a corresponding aborted signal');
-  }
+export function wrapCancellation(error: unknown): Outcome<never> {
   return failure(error);
 }
 ```
@@ -931,6 +970,9 @@ export function wrapCancellation(error: unknown, signal: AbortSignal | undefined
 
 Run: `cd packages/core && bun test src/recovery/cancellation.test.ts`
 Expected: PASS, 4 tests.
+
+`CancellationError` is imported by the *test* only (to prove a classified cancellation gets no special
+treatment); `cancellation.ts` itself no longer needs it, so do not add the import back to the module.
 
 - [ ] **Step 5: Commit**
 
@@ -1233,21 +1275,28 @@ describe('RECOV-11: the catch routes every throwable through wrapCancellation', 
     ).rejects.toBe(cancellation);
   });
 
-  test('a CancellationError with a signal that never aborted crashes rather than becoming a Failure', async () => {
+  test('a CancellationError raised with no caller signal still reaches the recovery chain (RECOV-2)', async () => {
+    // A transport may abort its own in-flight requests for reasons the caller never signalled -- SEAM-14
+    // permits close() to cancel them. That must surface as an ordinary Failure through the recovery hooks,
+    // not as a side exit: RECOV-2 admits no throwable from the transport bypassing them.
+    const cancellation = new CancellationError('aborted by the transport itself');
+    const seenByRecovery: unknown[] = [];
+    const recoveryStep: RecoveryStep = async (outcome) => {
+      if (outcome.kind === 'failure') seenByRecovery.push(outcome.error);
+      return outcome;
+    };
     const transport = new StubTransport(async () => {
-      throw new CancellationError('misclassified');
+      throw cancellation;
     });
 
-    // The invariant fires inside the catch clause, so it escapes dispatchWithRecovery as its own throwable --
-    // it is a programmer error, never laundered into a recoverable Failure the recovery chain could swallow.
     await expect(
       dispatchWithRecovery(aRequest(), {
         transport,
         requestChain: new RequestRecoveryChain([]),
-        responseChain: new ResponseRecoveryChain([], []),
-        signal: new AbortController().signal,
+        responseChain: new ResponseRecoveryChain([], [recoveryStep]),
       }),
-    ).rejects.toThrow('CancellationError observed without a corresponding aborted signal');
+    ).rejects.toBe(cancellation);
+    expect(seenByRecovery).toEqual([cancellation]);
   });
 });
 ```
@@ -1291,10 +1340,10 @@ export interface DispatchConfig {
  * The unified recovery-chain orchestrator (RECOV-2, RECOV-10, RECOV-11). One try/catch wraps the request
  * chain's `apply()` and the transport invocation, so every throwable from either is caught and converted to
  * a Failure before reaching the response chain -- a before-request throw cannot skip after-error handling.
- * That conversion goes through `wrapCancellation` (RECOV-11), which is the helper's only call site: for a
- * non-cancellation throwable it is exactly `failure(error)`, and for a classified CancellationError paired
- * with a non-aborted signal it crashes loudly rather than laundering a structurally-impossible state into a
- * recoverable Failure. The final unwrap returns the response on Success, or rethrows the Failure's throwable
+ * That conversion goes through `wrapCancellation` (RECOV-11), which is the helper's only call site and which
+ * never throws for any input -- RECOV-2's guarantee depends on that, since this catch clause is the last
+ * place a transport throwable could escape without meeting the recovery hooks. The final unwrap returns the
+ * response on Success, or rethrows the Failure's throwable
  * UNCHANGED -- no wrapping, no substitution. Any typed-exception surfacing is a recovery step's own
  * responsibility.
  *
@@ -1307,8 +1356,8 @@ export async function dispatchWithRecovery(request: Request, config: DispatchCon
     const response = await config.transport.send(preparedRequest, config.options, config.signal);
     outcome = success(response);
   } catch (error) {
-    // RECOV-11: `Outcome<never>` widens to `Outcome<Response>` without a cast.
-    outcome = wrapCancellation(error, config.signal);
+    // RECOV-11: `Outcome<never>` widens to `Outcome<Response>` without a cast. Never throws (RECOV-2).
+    outcome = wrapCancellation(error);
   }
   const finalOutcome = await config.responseChain.apply(outcome);
   return fold(
@@ -1423,10 +1472,11 @@ git commit -m "chore(core): verify full gate sequence for Phase 4b"
   `current`). Recovery-step authors may prefer either; the chain does not care.
 - `RECOV-10` → Task 6 (the terminal `fold` returns the response on Success or rethrows the Failure's error
   unchanged).
-- `RECOV-11` → Task 4 (`wrapCancellation`'s `invariant()`-based defensive check, reframed for `AbortSignal`'s
-  durable-once-set semantics — see the design's deviation ledger for why this diverges from a literal
-  re-assertion) **and Task 6**, which is its only call site: `dispatchWithRecovery`'s catch converts every
-  throwable through it, so the check is an invariant of the real dispatch path rather than an unwired primitive.
+- `RECOV-11` → Task 4 (`wrapCancellation`, reframed for `AbortSignal`'s durable-once-set semantics — see the
+  design's deviation ledger for why a literal re-assertion has nothing to act on in Node, and why the
+  mismatch case is **not** an `invariant()` crash) **and Task 6**, its only call site:
+  `dispatchWithRecovery`'s catch converts every throwable through it, so it sits on the real dispatch path
+  rather than being an unwired primitive.
 - `RECOV-12` → Task 3 (`toFailureClosingSuccess`'s close-then-wrap, with a hand-built `SuppressedError` keeping
   the original throwable primary).
 - `RECOV-13` → Task 3 (a step's normal return, without a throw, never touches `toFailureClosingSuccess` — no

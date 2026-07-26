@@ -329,8 +329,10 @@ class Runtime implements Transport {
 
 // Module-level, not a method -- it reads no instance state. The request context to promote from: the original,
 // unless a step substituted the outbound request (PIPE-14), in which case an off-chain rebuild pinned to the
-// SAME key (CTX-6) so the exchange context describes the request that was actually sent.
-function exchangeSource(context: RequestContext, finalRequest: Request): RequestContext {
+// SAME key (CTX-6) so the exchange context describes the request that was actually sent. Exported (still
+// @internal) so its two branches are testable as the pure function they are -- `send()` evicts the exchange
+// context in its own `finally`, so the alternative would be patching the process-wide store singleton.
+export function exchangeSource(context: RequestContext, finalRequest: Request): RequestContext {
   if (finalRequest === context.request) return context;
   return createRequestContext(finalRequest, {
     key: context.key,                            // CTX-3: one call key for the whole chain
@@ -341,7 +343,10 @@ function exchangeSource(context: RequestContext, finalRequest: Request): Request
 ```
 
 Each `send()` call allocates exactly one fresh `Cursor` (`PIPE-10`); the `Runtime` itself holds no mutable
-per-call state (`PIPE-11`) — `#steps` and `#transport` are fixed at construction. `PIPE-26`'s "delegate
+per-call state (`PIPE-11`) — `#steps` and `#transport` are fixed at construction, with `#steps` copied and
+frozen there (`Object.freeze([...steps])`) rather than trusting whatever array the caller passed, so
+`PIPE-25`'s "immutable, read-only ordered view" holds at every construction site and not only through
+`PipelineBuilder.build()`. `PIPE-26`'s "delegate
 execute/execute-async to its own send/send-async" is satisfied by a single `send()` method: Phase 2's `Transport`
 SPI has one method, not a sync/async pair, so there is no second entry point to delegate through.
 
@@ -474,6 +479,13 @@ ships (plumbing, no pillar steps — a test that needs redirect or retry *behavi
 `PIPE-40`'s response-release discipline is a contract on wrapping steps, not on `Cursor`/`Runtime` (see "Cursor
 and fork"), and its conformance clause is a 2-hop redirect — untestable without a redirect step. It moves to the
 phase that ships one, alongside `PIPE-2`'s second half.
+
+**No test patches the `contextStore` singleton.** It is process-wide and shared across every test file in a
+run, so a patched method leaks past the test that installed it under any concurrency, and it mocks an owned
+interface. `exchangeSource` is exported `@internal` and asserted directly instead; the end-to-end half that
+stays observable — the substituted request is what reached the transport — is asserted through the transport
+stub. Prefer `contextStore.get(key) === undefined` over absolute `contextStore.size` checks for the same
+order-independence reason.
 
 **Negative space:** an empty pipeline dispatches directly to the terminal transport without allocating a cursor
 (`PIPE-9`, asserted via a transport spy plus absence of any cursor-only side effect); a second call to a given

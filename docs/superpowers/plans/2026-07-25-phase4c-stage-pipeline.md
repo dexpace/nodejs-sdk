@@ -102,6 +102,12 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
   pipeline constructible and no caller yet holds one to seed from. Do not add a `seedFrom`/copy-constructor
   "while we're here"; the future shape is an explicit, non-defaulted mode argument, decided by the phase that
   needs it.
+- **No test patches a method on the `contextStore` singleton.** It is process-wide and shared by every test
+  file in the run, so a patched `install`/`close` leaks beyond the test that installed it the moment anything
+  runs concurrently, and it is a mock of an owned interface, which `docs/knowledge/testing.md` rejects. What
+  needs asserting about the exchange context is `exchangeSource`'s two branches — a pure function, exported
+  `@internal` from `runtime.ts` and tested directly. Prefer key-scoped assertions
+  (`contextStore.get(key) === undefined`) over absolute `contextStore.size` checks for the same reason.
 - **Non-null assertions (`!`) are banned outside test fixtures.** Every place an array/`Map` lookup is provably
   non-`undefined` by surrounding control flow but TypeScript can't prove it (`noUncheckedIndexedAccess`), use
   `invariant(x !== undefined, '…')` to narrow instead (`docs/knowledge/variables-and-declarations.md`).
@@ -552,15 +558,16 @@ export interface StepDescriptor {
 // (a reused next()/fork() continuation throws CursorAlreadyAdvancedError), PIPE-12 (ctx.context, ctx.fork
 // gated by pillar stage), PIPE-13 (terminal dispatch threads request/options/signal), PIPE-14 (a substituted
 // request sticks downstream and to the terminal dispatch), PIPE-15/16 (fork() returns independent,
-// position-pinned one-shot continuations; a step that forks twice re-visits every downstream step both times)
+// position-pinned one-shot continuations; a step that forks twice re-visits every downstream step both
+// times), PIPE-17 (the caller's options are carried unchanged across every fork and into each dispatch)
 import {describe, expect, test} from 'bun:test';
 import {createRequestContext, type ExecutionContext} from '../context/context.js';
-import {invariant} from '../invariant.js';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
-import type {RequestOptions} from '../http/request-options.js';
+import {RequestOptions} from '../http/request-options.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
+import {invariant} from '../invariant.js';
 import type {Transport} from '../seams/transport.js';
 import {Cursor} from './cursor.js';
 import {CursorAlreadyAdvancedError} from './errors.js';
@@ -752,10 +759,11 @@ describe('Cursor request substitution (PIPE-14)', () => {
   });
 });
 
-describe('Cursor fork (PIPE-15, PIPE-16)', () => {
+describe('Cursor fork (PIPE-15, PIPE-16, PIPE-17)', () => {
   test('a step forking twice re-visits every downstream step on both attempts', async () => {
     const request = aRequest('https://example.com');
     const context = createRequestContext(request);
+    const options = RequestOptions.EMPTY;
     const log: string[] = [];
     const retryStep: Step = async (_request, ctx) => {
       invariant(ctx.fork !== undefined, 'retryStep must occupy a pillar stage');
@@ -770,10 +778,13 @@ describe('Cursor fork (PIPE-15, PIPE-16)', () => {
     ];
     const transport = new RecordingTransport(aResponse(200));
 
-    await new Cursor({steps, transport, request, context}).advance();
+    await new Cursor({steps, transport, request, context, options}).advance();
 
     expect(log).toEqual(['retry:attempt-1', 'downstream', 'retry:attempt-2', 'downstream']);
     expect(transport.calls).toHaveLength(2);
+    // PIPE-17: the caller's per-call options are carried unchanged across every re-drive fork and threaded
+    // into each terminal dispatch -- shared by reference, never copied-and-diverged per fork.
+    expect(transport.calls.map((call) => call.options)).toEqual([options, options]);
   });
 });
 ```
@@ -913,7 +924,8 @@ git commit -m "feat(core): add Step/StepDescriptor types and the per-call Cursor
   `RequestOptions` (external), `contextStore`/`createDispatchContext`/`promoteToRequest`/`promoteToExchange`/
   `ExecutionContext`/`RequestContext`/`createRequestContext` (`../context/context.js`), `contextStore`
   (`../context/store.js`).
-- Produces: `class Runtime implements Transport`, with `send()`, `close()`, `get steps()`. Task 5
+- Produces: `class Runtime implements Transport`, with `send()`, `close()`, `get steps()`, plus the
+  `exchangeSource()` helper (exported `@internal` so it is unit-testable as the pure function it is). Task 5
   (`builder.ts`) imports `Runtime`; `build()` constructs one.
 
 - [ ] **Step 1: Write the failing test**
@@ -921,21 +933,22 @@ git commit -m "feat(core): add Step/StepDescriptor types and the per-call Cursor
 ```typescript
 // packages/core/src/pipeline/runtime.test.ts
 // Exercises: PIPE-9 (an empty pipeline dispatches directly, no cursor/context allocated), PIPE-10 (each
-// send() allocates its own per-call state), PIPE-25 (get steps() exposes the flattened, immutable array),
-// PIPE-26 (Runtime itself satisfies the Transport SPI with one send() method), PIPE-27 (close() never
-// touches the wrapped transport), CTX-17's positive half (the first store entry is installed by the first
-// promotion), CTX-8 (install-or-replace under the same key)
+// send() allocates its own per-call state), PIPE-14 (a substituted request reaches the wire, and is what the
+// exchange context is built from), PIPE-25 (get steps() exposes the flattened, immutable array), PIPE-26
+// (Runtime itself satisfies the Transport SPI with one send() method), PIPE-27 (close() never touches the
+// wrapped transport), CTX-17's positive half (the first store entry is installed by the first promotion),
+// CTX-1/2/3/6 (exchangeSource pins the call key and instrumentation when it rebuilds)
 import {afterEach, describe, expect, test} from 'bun:test';
-import type {ExecutionContext} from '../context/context.js';
+import {createRequestContext, type ExecutionContext} from '../context/context.js';
 import {contextStore} from '../context/store.js';
-import {invariant} from '../invariant.js';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import type {RequestOptions} from '../http/request-options.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
+import {invariant} from '../invariant.js';
 import type {Transport} from '../seams/transport.js';
-import {Runtime} from './runtime.js';
+import {exchangeSource, Runtime} from './runtime.js';
 import type {Step, StepDescriptor} from './step.js';
 
 function aRequest(url: string): Request {
@@ -981,12 +994,15 @@ describe('Runtime.send empty pipeline (PIPE-9)', () => {
     const runtime = new Runtime([], transport);
     const request = aRequest('https://example.com/a');
     const signal = new AbortController().signal;
+    const sizeBefore = contextStore.size;
 
     const response = await runtime.send(request, undefined, signal);
 
     expect(response).toBe(canned);
     expect(transport.calls).toEqual([{request, options: undefined, signal}]);
-    expect(contextStore.size).toBe(0);
+    // A delta, not an absolute size: `contextStore` is process-wide, so a sibling test file sharing the
+    // process must not be able to turn this assertion red (styleguide 11.7 -- tests survive any order).
+    expect(contextStore.size).toBe(sizeBefore);
   });
 });
 
@@ -1004,74 +1020,63 @@ describe('Runtime.send context-store wiring (CTX-17, CTX-8)', () => {
 
     invariant(observed !== undefined, 'the step must have observed an installed context');
     expect(observed.kind).toBe('request');
-    expect(contextStore.size).toBe(0);
+    expect(contextStore.get(observed.key)).toBeUndefined(); // evicted in send()'s finally
     expect(response.status.code).toBe(200);
   });
 
   test('evicts the installed context even when a step throws', async () => {
-    const step: Step = async () => {
+    let observedKey: symbol | undefined;
+    const step: Step = async (_request, ctx) => {
+      observedKey = ctx.context.key;
       throw new Error('boom');
     };
     const descriptor: StepDescriptor = {type: Symbol('throws'), stage: 'PRE_LOGGING', fn: step};
     const runtime = new Runtime([descriptor], new RecordingTransport(aResponse(200)));
 
     await expect(runtime.send(aRequest('https://example.com'))).rejects.toThrow('boom');
-    expect(contextStore.size).toBe(0);
+    invariant(observedKey !== undefined, 'the step must have run and captured its call key');
+    expect(contextStore.get(observedKey)).toBeUndefined();
   });
 });
 
-describe('Runtime.send exchange context (PIPE-14, CTX-1)', () => {
-  test('a step-substituted request is what the exchange context carries, not the original', async () => {
+describe('exchangeSource (PIPE-14, CTX-1, CTX-2, CTX-3, CTX-6)', () => {
+  // Tested directly rather than by spying on `contextStore.install`: the exchange context is evicted in
+  // `send()`'s own `finally`, so observing it end-to-end would mean patching a method on the process-wide
+  // singleton -- a mock of an owned interface (styleguide 11.3) that also leaks across test files sharing
+  // the process if a run is ever parallelised. `exchangeSource` is a pure function; the end-to-end half that
+  // remains observable (the substituted request is what actually reached the wire) is asserted below.
+  test('returns the SAME context object when no step substituted the request', () => {
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request, {operationName: 'GetWidget'});
+
+    expect(exchangeSource(context, request)).toBe(context);
+  });
+
+  test('rebuilds around the substituted request, pinning the same key and instrumentation', () => {
     const original = aRequest('https://example.com/original');
     const substituted = aRequest('https://example.com/substituted');
-    let observedAtExchange: ExecutionContext | undefined;
+    const context = createRequestContext(original, {operationName: 'GetWidget'});
+
+    const rebuilt = exchangeSource(context, substituted);
+
+    expect(rebuilt.request).toBe(substituted);
+    expect(rebuilt.key).toBe(context.key); // CTX-3: one call key for the whole chain
+    expect(rebuilt.instrumentation).toBe(context.instrumentation); // CTX-2: carried forward by reference
+    expect(rebuilt.operationName).toBe('GetWidget');
+  });
+});
+
+describe('Runtime.send request substitution reaches the wire (PIPE-14)', () => {
+  test('the transport receives the substituted request, not the original', async () => {
+    const original = aRequest('https://example.com/original');
+    const substituted = aRequest('https://example.com/substituted');
     const substituteStep: Step = async (_request, ctx) => ctx.next(substituted);
     const descriptor: StepDescriptor = {type: Symbol('substitute'), stage: 'PRE_LOGGING', fn: substituteStep};
     const transport = new RecordingTransport(aResponse(200));
-    const runtime = new Runtime([descriptor], transport);
-    // The store entry is evicted in `send`'s finally, so observe it from a close-time spy on the singleton.
-    const realInstall = contextStore.install.bind(contextStore);
-    contextStore.install = (context) => {
-      if (context.kind === 'exchange') observedAtExchange = context;
-      realInstall(context);
-    };
 
-    try {
-      await runtime.send(original);
-    } finally {
-      contextStore.install = realInstall;
-    }
+    await new Runtime([descriptor], transport).send(original);
 
-    invariant(observedAtExchange !== undefined, 'an exchange context must have been installed');
-    invariant(observedAtExchange.kind === 'exchange', 'the observed context must be exchange-stage');
     expect(transport.calls[0]?.request).toBe(substituted);
-    expect(observedAtExchange.request).toBe(substituted);
-  });
-
-  test('an unsubstituted call promotes the original request context object itself', async () => {
-    const request = aRequest('https://example.com');
-    let observedAtExchange: ExecutionContext | undefined;
-    const descriptor: StepDescriptor = {
-      type: Symbol('passthrough'),
-      stage: 'PRE_LOGGING',
-      fn: async (_r, ctx) => ctx.next(),
-    };
-    const runtime = new Runtime([descriptor], new RecordingTransport(aResponse(200)));
-    const realInstall = contextStore.install.bind(contextStore);
-    contextStore.install = (context) => {
-      if (context.kind === 'exchange') observedAtExchange = context;
-      realInstall(context);
-    };
-
-    try {
-      await runtime.send(request);
-    } finally {
-      contextStore.install = realInstall;
-    }
-
-    invariant(observedAtExchange !== undefined, 'an exchange context must have been installed');
-    invariant(observedAtExchange.kind === 'exchange', 'the observed context must be exchange-stage');
-    expect(observedAtExchange.request).toBe(request);
   });
 });
 
@@ -1128,8 +1133,15 @@ import type {StepDescriptor} from './step.js';
  * reference (CTX-2/CTX-3). Promoting straight off the original would pair the response with a request that
  * never left the process, against CTX-1's "the exchange stage exposes the request and the response". Doing it
  * here rather than widening `promoteToExchange` with a request-override keeps promotion strictly additive.
+ *
+ * Exported (still `@internal`, still absent from the package barrel) so its two branches can be asserted as
+ * the pure function they are. The alternative -- observing the exchange context end-to-end -- would require
+ * patching `install` on the process-wide `contextStore` singleton, since `send()` evicts the entry in its own
+ * `finally`.
+ *
+ * @internal
  */
-function exchangeSource(context: RequestContext, finalRequest: Request): RequestContext {
+export function exchangeSource(context: RequestContext, finalRequest: Request): RequestContext {
   if (finalRequest === context.request) return context;
   return createRequestContext(finalRequest, {
     key: context.key,
@@ -1150,7 +1162,11 @@ export class Runtime implements Transport {
   readonly #transport: Transport;
 
   constructor(steps: readonly StepDescriptor[], transport: Transport) {
-    this.#steps = steps;
+    // PIPE-10/PIPE-25: the built runtime is immutable, and `get steps()` hands out a read-only view. Copying
+    // and freezing here rather than trusting the caller makes both structural -- `PipelineBuilder` is not the
+    // only construction site (tests build one directly, and Phase 5+ may too), so an unfrozen array passed in
+    // would leave the "immutable after construction" guarantee resting on caller discipline.
+    this.#steps = Object.freeze([...steps]);
     this.#transport = transport;
   }
 
@@ -1196,7 +1212,7 @@ export class Runtime implements Transport {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/pipeline/runtime.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1646,7 +1662,7 @@ export class PipelineBuilder {
       const bucket = this.#buckets.get(stage);
       if (bucket !== undefined) flattened.push(...bucket);
     }
-    return new Runtime(Object.freeze(flattened), this.#transport);
+    return new Runtime(flattened, this.#transport); // Runtime copies and freezes -- PIPE-10/PIPE-25.
   }
 
   #rejectReservedStage(stage: Stage, operation: string): void {
@@ -1692,7 +1708,7 @@ export class PipelineBuilder {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/pipeline/builder.test.ts`
-Expected: PASS, 15 tests.
+Expected: PASS, 19 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1802,11 +1818,13 @@ git commit -m "chore(core): verify full gate sequence for Phase 4c"
   `#request`/`#options`/`#signal`; the cursor only moves forward within one un-forked drive).
 - `PIPE-14` → Task 3 (`Next`'s optional replacement `Request`, stored in the single mutable `#request` shared
   by the whole drive) and Task 4 (`exchangeSource` promotes the exchange context off the request that was
-  actually sent).
+  actually sent — exported `@internal` and unit-tested directly, so no test has to patch the process-wide
+  `contextStore` to observe a context `send()` evicts in its own `finally`).
 - `PIPE-15`, `PIPE-16` → Task 3 (`ctx.fork` only for pillar-stage descriptors; every `fork()` call returns a
   fresh one-shot continuation pinned to the same target position; reusing one throws
   `CursorAlreadyAdvancedError`).
-- `PIPE-17` → Task 3 (`#options` is read-only and shared by every fork, never copied-and-diverged).
+- `PIPE-17` → Task 3 (`#options` is read-only and shared by every fork, never copied-and-diverged; the
+  two-fork test asserts the identical options object reaches both terminal dispatches).
 - `PIPE-18`, `PIPE-19`, `PIPE-21` → Task 5 (`insertAfter`/`insertBefore`/`replace` against the first anchor
   instance; `CrossStageEditError` on a cross-stage edit; `AnchorNotFoundError` on a missing anchor).
 - `PIPE-20` → Task 5 (`remove` filters every instance of a type, order-preserving, a no-op when absent).
@@ -1814,8 +1832,9 @@ git commit -m "chore(core): verify full gate sequence for Phase 4c"
   edit-order-independence property test).
 - `PIPE-23` → Task 5 (`reload` validates the whole batch before `#buckets.clear()`).
 - `PIPE-24`, `PIPE-39` → **not shipped** (no standard-resilience preset until real pillar steps exist).
-- `PIPE-25` → Task 5 (`build()` flattens in `STAGE_ORDER`, skipping `SEND`, freezing the array) and Task 4
-  (`get steps()`).
+- `PIPE-25` → Task 5 (`build()` flattens in `STAGE_ORDER`, skipping `SEND`) and Task 4 (`Runtime`'s
+  constructor copies and freezes the array, so immutability holds for every construction site rather than
+  only the builder's; `get steps()` hands out that frozen view).
 - `PIPE-26`, `PIPE-27` → Task 4 (`Runtime implements Transport` with one `send()`; `close()` never touches the
   wrapped transport).
 - `PIPE-28`, `PIPE-29`, `PIPE-30` → satisfied structurally, no code: one `STAGE_ORDER` means no second runtime
