@@ -2516,6 +2516,8 @@ The integration point for every piece built in Tasks 1–13. Read Plan-time deci
 **Files:**
 - Create: `packages/core/src/auth/auth-step.ts`
 - Test: `packages/core/src/auth/auth-step.test.ts`
+- Modify: `packages/core/src/http/request-options.ts` (+ its test) — the `auth?: AuthDescriptor` per-call field
+  (see the scoping note below)
 
 **Interfaces:**
 - Consumes: `invariant` from `../invariant.js`; `Request` from `../http/request.js`; `Response` from
@@ -2529,17 +2531,25 @@ The integration point for every piece built in Tasks 1–13. Read Plan-time deci
 - Produces: `interface AuthCredentialSet {basic?, digest?, bearer?, apiKey?}` (Plan-time decision 1);
   `availableSchemesOf(credentials): ReadonlySet<AuthScheme>`; `type ChallengeHook = (response, request) =>
   Promise<Request | undefined>`; `interface AuthStepSettings {credentials, tiers, handlers?, challengeHook?,
-  bearerMarginMs?}`; `AUTH_STEP_TYPE: symbol`; `authStep(settings): StepDescriptor`. Task 16 (`preset.ts`)
-  consumes `authStep`; Task 16's joint conformance test consumes `AuthStepSettings`/`AuthCredentialSet`.
+  bearerMarginMs?}`; `AUTH_STEP_TYPE: symbol`; `authStep(settings): StepDescriptor`; the amended
+  `RequestOptions.auth?: AuthDescriptor` (Step 3b). Task 16 (`preset.ts`) consumes `authStep`; Task 16's joint
+  conformance test consumes `AuthStepSettings`/`AuthCredentialSet`; Task 16's api-report step picks up the one
+  new `RequestOptions` member.
 
-**Plan-time scoping note on `AuthStepSettings.tiers`.** No prior phase (4a's `ExecutionContext`) wires a
-per-call/per-operation auth-requirement override into the context object — that plumbing doesn't exist anywhere
-in this roadmap yet. `tiers: AuthTiers` is therefore a SINGLE static value fixed at `authStep()` construction,
-not looked up per-call from `ctx.context`. `resolveAuthRequirement`'s `perCall ?? operation ?? client` logic
-still applies exactly as designed (AUTH-4/5/6/7 are mechanically satisfied regardless of where the tiers came
-from) — this just means all three tiers, if a caller sets more than one, are currently populated from the same
-fixed configuration rather than three genuinely different sources. Wiring true per-call/per-operation tiers
-through `ExecutionContext` is future work, not scoped to any phase in the current roadmap.
+**Scoping note on `AuthStepSettings.tiers` (revised 2026-07-28, planning review).** The original plan-time note
+fixed all three tiers at `authStep()` construction because no phase exposed a per-call source. That changed with
+5a Task 1's `StepContext` amendment: `PIPE-17` requires the caller's per-call `RequestOptions` to be readable by
+any step, and `StepContext.options` now delivers it. This task therefore also amends `RequestOptions` (Phase 1,
+`http/request-options.ts`) with one optional field, `auth?: AuthDescriptor` — builder method `.auth(descriptor)`,
+no validation beyond the type (any constructed `AuthDescriptor` is already valid by `AUTH-3`). The import is
+type-only and cycle-free: `descriptor.ts` → `requirement.ts` → `scheme.ts` import nothing from `http/`.
+
+The step resolves per call against effective tiers — `ctx.options?.auth` present replaces the `perCall` slot,
+else `settings.tiers` is used as configured. `resolveAuthRequirement`'s `perCall ?? operation ?? client` logic
+(AUTH-4/5/6/7) is untouched; the `perCall` tier simply gains a genuinely per-call source. The `operation` tier
+still has no distinct source (no per-operation layer exists in this roadmap) — that residue stays in the
+roadmap's Deferred Items Log. `AuthDescriptor` is already public surface transitively via `AuthStepSettings`,
+so `core.api.md` widens by exactly one `RequestOptions` member (Task 16's report step picks it up).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2552,7 +2562,8 @@ through `ExecutionContext` is future work, not scoped to any phase in the curren
 // (401+WWW-Authenticate invokes the hook; replacement re-drives exactly once via a fresh fork()), AUTH-31
 // (non-replayable replacement body surfaces the original 401 unchanged, untouched), AUTH-32 (a throwing hook
 // closes the 401 before propagating), AUTH-33 (no WWW-Authenticate, or hook yields nothing -> unchanged),
-// AUTH-36 (OAUTH2's default hook evicts the exact rejected token and re-stamps).
+// AUTH-36 (OAUTH2's default hook evicts the exact rejected token and re-stamps), AUTH-4 (a per-call
+// RequestOptions.auth descriptor overrides the configured perCall tier, via ctx.options).
 import {describe, expect, test} from 'bun:test';
 import {Headers} from '../http/headers.js';
 import {Request} from '../http/request.js';
@@ -2810,8 +2821,27 @@ describe('authStep', () => {
     expect(transport.calls[1]?.request.headers.get('Authorization')).toBe('Bearer t2'); // evicted t1, fetched fresh
     expect(calls).toBe(2);
   });
+
+  test('a per-call RequestOptions.auth descriptor overrides the configured perCall tier (AUTH-4)', async () => {
+    const transport = new FakeTransport([countingResponse(200).response]);
+    const credentials: AuthCredentialSet = {
+      apiKey: {credential: new ApiKeyCredential('secret'), headerName: 'X-Api-Key', prefix: undefined},
+    };
+    // Configured tiers resolve to API_KEY; the per-call descriptor demands NO_AUTH and must win.
+    const descriptor = authStep({credentials, tiers: tiersFor('API_KEY')});
+    const options = RequestOptions.newBuilder()
+      .auth(createAuthDescriptor([createAuthRequirement('NO_AUTH')]))
+      .build();
+    const cursor = new Cursor({steps: [descriptor], transport, request: aRequest(), context: aRequestContext(), options});
+
+    await cursor.advance();
+
+    expect(transport.calls[0]?.request.headers.get('X-Api-Key')).toBeUndefined();
+  });
 });
 ```
+
+The per-call test additionally imports `RequestOptions` from `../http/request-options.js`.
 
 `aRequestContext()` follows the same shared-helper caveat as 5a's and 5b's test suites: inline a `RequestContext`
 instead if the helper turns out to be file-local to 4c's own test file.
@@ -2838,6 +2868,7 @@ import {composingHandler, type ComposingHandler} from './composing-handler.js';
 import type {ApiKeyCredential, NameKeyCredential, TokenProvider} from './credential.js';
 import type {DigestAlgorithm} from './digest.js';
 import {digestHandler} from './digest.js';
+import type {AuthDescriptor} from './descriptor.js';
 import {PlaintextCredentialError} from './errors.js';
 import {resolveAuthRequirement, type AuthTiers} from './resolve.js';
 import type {AuthScheme} from './scheme.js';
@@ -2904,11 +2935,20 @@ export type ChallengeHook = (response: Response, request: Request) => Promise<Re
 
 export interface AuthStepSettings {
   readonly credentials: AuthCredentialSet;
-  /** See the plan's "Plan-time scoping note" -- a single static value, not looked up per call. */
+  /**
+   * The operation/client tiers, fixed at construction. The perCall slot may additionally be supplied per
+   * call via `RequestOptions.auth` (AUTH-4), which wins over any perCall value configured here -- see the
+   * task's scoping note.
+   */
   readonly tiers: AuthTiers;
   readonly handlers?: readonly ChallengeHandler[] | undefined;
   readonly challengeHook?: ChallengeHook | undefined;
   readonly bearerMarginMs?: number | undefined;
+}
+
+/** AUTH-4: a per-call descriptor (RequestOptions.auth, via StepContext.options) overrides the perCall slot. */
+function effectiveTiers(configured: AuthTiers, perCall: AuthDescriptor | undefined): AuthTiers {
+  return perCall === undefined ? configured : {...configured, perCall};
 }
 
 export const AUTH_STEP_TYPE: unique symbol = Symbol('dexpace.auth');
@@ -3040,7 +3080,7 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
       const {fork} = ctx;
       invariant(fork !== undefined, 'authStep must occupy the AUTH pillar stage');
 
-      const requirement = resolveAuthRequirement(settings.tiers, availableSchemes);
+      const requirement = resolveAuthRequirement(effectiveTiers(settings.tiers, ctx.options?.auth), availableSchemes);
       const scheme = requirement.scheme;
 
       // AUTH-29: cross-origin check first; the marker is cleared unconditionally before either branch, so it
@@ -3105,10 +3145,37 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
 }
 ```
 
+- [ ] **Step 3b: Amend `RequestOptions` with the per-call `auth` field**
+
+In `packages/core/src/http/request-options.ts`: add a `readonly #auth: AuthDescriptor | undefined` field, a
+`get auth(): AuthDescriptor | undefined` accessor, and an `auth(descriptor: AuthDescriptor)` builder method,
+mirroring the existing `timeoutMs`/`maxRetries` pattern exactly (constructor parameter, `EMPTY` leaves it
+`undefined`). Type-only import: `import type {AuthDescriptor} from '../auth/descriptor.js';` — no cycle,
+`descriptor.ts`'s chain (`requirement.ts`, `scheme.ts`) imports nothing from `http/`. No validation beyond the
+type: any constructed `AuthDescriptor` is already valid per `AUTH-3`.
+
+Append to `packages/core/src/http/request-options.test.ts`:
+
+```typescript
+describe('per-call auth descriptor (AUTH-4)', () => {
+  test('EMPTY carries no auth descriptor', () => {
+    expect(RequestOptions.EMPTY.auth).toBeUndefined();
+  });
+
+  test('the builder stores and the accessor returns the same descriptor instance', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('NO_AUTH')]);
+    expect(RequestOptions.newBuilder().auth(descriptor).build().auth).toBe(descriptor);
+  });
+});
+```
+
+(with `createAuthDescriptor`/`createAuthRequirement` imported from `../auth/descriptor.js` /
+`../auth/requirement.js`).
+
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/core/src/auth/auth-step.test.ts`
-Expected: PASS — 14 tests.
+Run: `bun test packages/core/src/auth/auth-step.test.ts packages/core/src/http/request-options.test.ts`
+Expected: PASS — 15 auth-step tests plus the two new request-options tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
@@ -3119,7 +3186,8 @@ each 2-3 params via bundled context objects; the pillar `fn` closure is under 70
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/core/src/auth/auth-step.ts packages/core/src/auth/auth-step.test.ts
+git add packages/core/src/auth/auth-step.ts packages/core/src/auth/auth-step.test.ts \
+  packages/core/src/http/request-options.ts packages/core/src/http/request-options.test.ts
 git commit -m "feat(core): the AUTH pillar step -- one challenge hook, scheme-dependent default (AUTH-27..33)"
 ```
 
@@ -3507,8 +3575,10 @@ recommended path for the common case.
 Run: `bun run api`
 Expected: `packages/core/etc/core.api.md` gains entries for exactly the symbols listed above (plus their
 transitively-exported types: `RetryStepOptions` is NOT promoted — `retryStep()`'s parameter type stays
-structural/inferred at the call site, matching 5a's own non-promotion of it). Review the diff by hand; this is
-the one phase where the API report is expected to change.
+structural/inferred at the call site, matching 5a's own non-promotion of it), and exactly one amended existing
+entry: `RequestOptions` gains the `auth?: AuthDescriptor` member from Task 14 Step 3b (with `AuthDescriptor`
+already present transitively via `AuthStepSettings.tiers`). Review the diff by hand; this is the one phase
+where the API report is expected to change.
 
 - [ ] **Step 7: Run the full gate sequence**
 
