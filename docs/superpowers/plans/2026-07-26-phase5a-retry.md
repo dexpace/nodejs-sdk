@@ -91,8 +91,8 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
 
 ```
 packages/core/src/pipeline/
-  step.ts              # MODIFIED — StepContext gains `signal` (Task 1)
-  cursor.ts            # MODIFIED — populates it from #signal (Task 1)
+  step.ts              # MODIFIED — StepContext gains `signal` + `options` (Task 1, PIPE-17)
+  cursor.ts            # MODIFIED — populates them from #signal/#options (Task 1)
 packages/core/src/retry/
   classify.ts          # RETRY-1..8, 37    (Task 2)
   backoff.ts           # RETRY-9..12, 43   (Task 3)
@@ -112,11 +112,13 @@ Every file has a colocated `*.test.ts`. Nine production files, each one responsi
 
 ---
 
-### Task 1: `StepContext.signal` — the 4c amendment
+### Task 1: `StepContext.signal` + `StepContext.options` — the 4c amendment
 
-4c's `Cursor` accepts and threads a `signal`, but `StepContext` never exposes it, so no step can observe
-cancellation. `RETRY-26`'s cancellable wait and `RETRY-32`'s "no further attempts once cancelled" both need it,
-and 5b/5c will too. Additive, one field.
+4c's `Cursor` accepts and threads a `signal` and the caller's per-call `options`, but `StepContext` never
+exposes either, so no step can observe cancellation or read per-call options. `RETRY-26`'s cancellable wait and
+`RETRY-32`'s "no further attempts once cancelled" need the signal, and 5b/5c will too. The options exposure is
+`PIPE-17`'s own MUST ("readable by any step") and the wire for `RETRY-41`'s per-call override
+(`RequestOptions.maxRetries`, `HTTP-35`) and 5c's per-call auth descriptor. Additive, two fields.
 
 **Files:**
 - Modify: `packages/core/src/pipeline/step.ts`
@@ -124,9 +126,10 @@ and 5b/5c will too. Additive, one field.
 - Test: `packages/core/src/pipeline/cursor.test.ts`
 
 **Interfaces:**
-- Consumes: `StepContext`, `Cursor`, `CursorInit` from Phase 4c.
-- Produces: `StepContext.signal?: AbortSignal | undefined`, populated on every step invocation from the cursor's
-  own signal. Tasks 9 reads it.
+- Consumes: `StepContext`, `Cursor`, `CursorInit` from Phase 4c; `RequestOptions` from `../http/request-options.js`
+  (type-only, no cycle — `http/` imports nothing from `pipeline/`).
+- Produces: `StepContext.signal?: AbortSignal | undefined` and `StepContext.options?: RequestOptions | undefined`,
+  populated on every step invocation from the cursor's own fields. Task 9 reads both.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -177,20 +180,67 @@ describe('StepContext.signal', () => {
     expect(observed).toBeUndefined();
   });
 });
+
+describe('StepContext.options (PIPE-17)', () => {
+  test('a step reads the per-call options the cursor was constructed with', async () => {
+    const options = RequestOptions.newBuilder().maxRetries(0).build();
+    const transport = new RecordingTransport();
+    let observed: RequestOptions | undefined;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (request, ctx) => {
+        observed = ctx.options;
+        return ctx.next();
+      },
+    };
+    const cursor = new Cursor({
+      steps: [descriptor],
+      transport,
+      request: aRequest(),
+      context: aRequestContext(),
+      options,
+    });
+
+    await cursor.advance();
+
+    expect(observed).toBe(options); // the same immutable instance, not a copy (PIPE-17)
+  });
+
+  test('options is undefined when the caller supplied none', async () => {
+    const transport = new RecordingTransport();
+    let observed: RequestOptions | undefined = RequestOptions.EMPTY;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (request, ctx) => {
+        observed = ctx.options;
+        return ctx.next();
+      },
+    };
+    const cursor = new Cursor({steps: [descriptor], transport, request: aRequest(), context: aRequestContext()});
+
+    await cursor.advance();
+
+    expect(observed).toBeUndefined();
+  });
+});
 ```
 
 `RecordingTransport`, `aRequest()`, and `aRequestContext()` are the helpers 4c's `cursor.test.ts` already
-defines — reuse them, do not redefine.
+defines — reuse them, do not redefine. The options tests additionally import `RequestOptions` from
+`../http/request-options.js`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/core/src/pipeline/cursor.test.ts -t 'StepContext.signal'`
-Expected: FAIL — `Property 'signal' does not exist on type 'StepContext'` at typecheck, or `observed` is
-`undefined` where the signal was expected.
+Run: `bun test packages/core/src/pipeline/cursor.test.ts -t 'StepContext'`
+Expected: FAIL — `Property 'signal' does not exist on type 'StepContext'` (and likewise `options`) at
+typecheck, or `observed` is `undefined` where the value was expected.
 
-- [ ] **Step 3: Add the field to `StepContext`**
+- [ ] **Step 3: Add the fields to `StepContext`**
 
-In `packages/core/src/pipeline/step.ts`, add the field to the existing interface:
+In `packages/core/src/pipeline/step.ts`, add the fields to the existing interface (plus a type-only
+`import type {RequestOptions} from '../http/request-options.js';`):
 
 ```typescript
 export interface StepContext {
@@ -202,25 +252,31 @@ export interface StepContext {
    * none. A pillar step that waits between drives (retry's backoff, auth's token fetch) MUST honor it.
    */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * The caller's per-call options, immutable and shared across every fork (PIPE-17: "readable by any
+   * step"). Undefined when the caller supplied none. The retry step reads `maxRetries` (RETRY-41/HTTP-35);
+   * the auth step reads the per-call auth descriptor (5c).
+   */
+  readonly options?: RequestOptions | undefined;
 }
 ```
 
-- [ ] **Step 4: Populate it in `Cursor`**
+- [ ] **Step 4: Populate them in `Cursor`**
 
-In `packages/core/src/pipeline/cursor.ts`, inside `#dispatch`, add `signal: this.#signal` to the object literal
-built for `ctx`, alongside the existing `next`, `fork`, and `context` entries. No other change — `#signal` is
-already a field.
+In `packages/core/src/pipeline/cursor.ts`, inside `#dispatch`, add `signal: this.#signal` and
+`options: this.#options` to the object literal built for `ctx`, alongside the existing `next`, `fork`, and
+`context` entries. No other change — `#signal` and `#options` are already fields.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/pipeline/cursor.test.ts`
-Expected: PASS — the two new tests plus every pre-existing cursor test.
+Expected: PASS — the four new tests plus every pre-existing cursor test.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add packages/core/src/pipeline/step.ts packages/core/src/pipeline/cursor.ts packages/core/src/pipeline/cursor.test.ts
-git commit -m "feat(core): expose the call's AbortSignal on StepContext"
+git commit -m "feat(core): expose the call's AbortSignal and per-call RequestOptions on StepContext"
 ```
 
 ---
@@ -1944,9 +2000,16 @@ git commit -m "feat(core): the retry attempt loop with budget, pacing, and suppr
 **Interfaces:**
 - Consumes: `StepDescriptor`, `Next` from `../pipeline/step.js`; `Cursor` from `../pipeline/cursor.js`;
   `invariant` from `../invariant.js`; `fold`, `success`, `failure` from `../recovery/outcome.js`;
-  `runWithRetry`, `RetryConfig`, `RetryDispatch` from `./engine.js`; `RetrySettings` from `./settings.js`.
+  `runWithRetry`, `RetryConfig`, `RetryDispatch` from `./engine.js`; `RetrySettings` from `./settings.js`;
+  `RequestOptions` (type-only, via `ctx.options` from Task 1's amendment).
 - Produces: `RETRY_STEP_TYPE: symbol`; `interface RetryStepOptions {settings, now?, random?, delayOverride?}`;
   `retryStep(options?: RetryStepOptions): StepDescriptor`. Task 12 references it; 5c installs it in the preset.
+
+**Per-call override (`RETRY-41`/`HTTP-35`).** The step resolves its effective attempt budget per call:
+when `ctx.options?.maxRetries` is present, the engine runs with `maxAttempts = maxRetries + 1`
+(`RetrySettings.maxAttempts` counts total sends, the option counts retries), else with the configured
+settings unchanged. `maxRetries: 0` therefore yields exactly one send — HTTP-35's "disable retries for this
+call". `RequestOptionsBuilder` already rejects negatives at construction, so no revalidation here.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1954,7 +2017,8 @@ git commit -m "feat(core): the retry attempt loop with budget, pacing, and suppr
 // packages/core/src/retry/retry-step.test.ts
 // Exercises: PIPE-36 (stage assignment is baked into the descriptor, not subclassable), RETRY-44 (a FRESH
 // continuation per attempt via ctx.fork), RETRY-8 (both axes still gate inside the pipeline), RETRY-32
-// (the step honors the call's signal, which only exists thanks to Task 1).
+// (the step honors the call's signal, which only exists thanks to Task 1), RETRY-41/HTTP-35 (the per-call
+// RequestOptions.maxRetries override, read via ctx.options from Task 1's amendment).
 import {describe, expect, test} from 'bun:test';
 import {Request} from '../http/request.js';
 import {IoError} from '../io/errors.js';
@@ -2025,8 +2089,38 @@ describe('retryStep', () => {
     await expect(runThrough(descriptor, transport, controller.signal)).rejects.toBeDefined();
     expect(transport.sendCount).toBe(0);
   });
+
+  test('per-call maxRetries: 0 disables retries for this call only (RETRY-41, HTTP-35)', async () => {
+    const the503 = countingResponse(503);
+    const transport = new FakeTransport([the503.response, countingResponse(200).response]);
+    const descriptor = retryStep({settings: {maxAttempts: 3, fixedDelayMs: 0}});
+    const options = RequestOptions.newBuilder().maxRetries(0).build();
+    const cursor = new Cursor({steps: [descriptor], transport, request: GET, context: aRequestContext(), options});
+
+    const response = await cursor.advance();
+
+    expect(transport.sendCount).toBe(1); // the configured budget of 3 was overridden per call
+    expect((response as {status: {code: number}}).status.code).toBe(503);
+  });
+
+  test('per-call maxRetries widens the configured budget too (RETRY-41 is present-override-wins)', async () => {
+    const transport = new FakeTransport([
+      countingResponse(503).response,
+      countingResponse(503).response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = retryStep({settings: {maxAttempts: 1, fixedDelayMs: 0}});
+    const options = RequestOptions.newBuilder().maxRetries(2).build();
+    const cursor = new Cursor({steps: [descriptor], transport, request: GET, context: aRequestContext(), options});
+
+    await cursor.advance();
+
+    expect(transport.sendCount).toBe(3); // 2 retries + the initial send
+  });
 });
 ```
+
+The two override tests additionally import `RequestOptions` from `../http/request-options.js`.
 
 `aRequestContext()` is 4c's existing cursor-test helper. If 4c defined it inline in `cursor.test.ts` rather
 than a shared file, construct a `RequestContext` inline here instead — do **not** create a
@@ -2042,7 +2136,7 @@ Expected: FAIL — `Cannot find module './retry-step.js'`.
 ```typescript
 // packages/core/src/retry/retry-step.ts
 import {invariant} from '../invariant.js';
-import type {Next, StepDescriptor} from '../pipeline/step.js';
+import type {Next, StepContext, StepDescriptor} from '../pipeline/step.js';
 import {failure, fold, success} from '../recovery/outcome.js';
 import {runWithRetry, type RetryConfig, type RetryDispatch} from './engine.js';
 import {retrySettings, type RetrySettings} from './settings.js';
@@ -2068,10 +2162,19 @@ function attemptVia(fork: () => Next): RetryDispatch {
   };
 }
 
-function configFrom(options: RetryStepOptions, signal: AbortSignal | undefined): RetryConfig {
+/**
+ * RETRY-41/HTTP-35: the per-call `RequestOptions.maxRetries` override wins over the configured budget when
+ * present. The option counts retries; `maxAttempts` counts total sends, hence the `+ 1`. Non-negativity is
+ * enforced by RequestOptionsBuilder at construction.
+ */
+function effectiveSettings(base: RetrySettings, perCallMaxRetries: number | undefined): RetrySettings {
+  return perCallMaxRetries === undefined ? base : {...base, maxAttempts: perCallMaxRetries + 1};
+}
+
+function configFrom(options: RetryStepOptions, ctx: Pick<StepContext, 'signal' | 'options'>): RetryConfig {
   return {
-    settings: retrySettings(options.settings),
-    signal,
+    settings: effectiveSettings(retrySettings(options.settings), ctx.options?.maxRetries),
+    signal: ctx.signal,
     now: options.now ?? (() => Date.now()),
     random: options.random ?? (() => Math.random()),
     delayOverride: options.delayOverride,
@@ -2095,7 +2198,7 @@ export function retryStep(options: RetryStepOptions = {}): StepDescriptor {
     fn: async (request, ctx) => {
       const {fork} = ctx;
       invariant(fork !== undefined, 'retryStep must occupy the RETRY pillar stage');
-      const outcome = await runWithRetry(request, attemptVia(fork), configFrom(options, ctx.signal));
+      const outcome = await runWithRetry(request, attemptVia(fork), configFrom(options, ctx));
       return fold(
         outcome,
         (response) => response,
@@ -2111,7 +2214,7 @@ export function retryStep(options: RetryStepOptions = {}): StepDescriptor {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/retry/retry-step.test.ts`
-Expected: PASS — 5 tests.
+Expected: PASS — 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2507,7 +2610,8 @@ Sections and their sources:
    `RETRY-29` ⏳ deferred, not scheduled.
 6. **Appendix C `RECOV-17`–`RECOV-34`** — reproduce the design doc's mapping table verbatim, with `RECOV-32` ✅
    Task 11 and `RECOV-33` ⏳ Phase 7.
-7. **Cross-phase obligations** — `PIPE-36` ✅ Task 9; the `StepContext.signal` amendment ✅ Task 1.
+7. **Cross-phase obligations** — `PIPE-36` ✅ Task 9; the `StepContext.signal`/`StepContext.options` amendment
+   ✅ Task 1 (`PIPE-17`'s "readable by any step" + `RETRY-41`/`HTTP-35` per-call override, wired in Task 9).
 8. **Deferred out of Phase 5a** — `RETRY-29`; `RECOV-33` → Phase 7; public-barrel promotion of `retryStep` →
    5c, with the preset.
 

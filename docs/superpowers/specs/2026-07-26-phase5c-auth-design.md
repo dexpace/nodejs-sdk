@@ -329,6 +329,7 @@ request unstamped; the composing handler only engages on the resulting 401. `OAU
 ```typescript
 export interface AuthStepSettings {
   readonly credentials: AuthCredentialSet;         // which schemes are actually available, feeds resolveAuthRequirement
+  readonly tiers: AuthTiers;                        // operation/client tiers, fixed at construction; perCall may be overridden per call (below)
   readonly handlers?: readonly ChallengeHandler[];  // Basic/Digest handlers, default = [digestHandler(), basicHandler()]
   readonly challengeHook?: ChallengeHook | undefined;  // caller override; default = per-scheme dispatch below
 }
@@ -339,10 +340,30 @@ const AUTH_STEP_TYPE = Symbol('dexpace.auth');
 export function authStep(settings: AuthStepSettings): StepDescriptor;   // stage: 'AUTH'
 ```
 
+**Per-call tier override (`AUTH-4`'s `perCall` tier, closing part of the roadmap's "true per-call `AuthTiers`"
+deferral).** `RequestOptions` (Phase 1) gains one optional field, `auth?: AuthDescriptor`, amended in this phase
+the same way this phase already amends `pipeline/builder.ts` — `http/request-options.ts` takes a *type-only*
+import of `AuthDescriptor`, whose module chain (`descriptor.ts` → `requirement.ts` → `scheme.ts`) imports nothing
+from `http/`, so no cycle. The auth step reads it through `ctx.options` (exposed on `StepContext` by 5a's
+Task 1 amendment, per `PIPE-17`'s "readable by any step") and resolves against effective tiers:
+
+```typescript
+const effectiveTiers = ctx.options?.auth === undefined
+  ? settings.tiers
+  : {...settings.tiers, perCall: ctx.options.auth};
+```
+
+`resolveAuthRequirement`'s `perCall ?? operation ?? client` logic (`AUTH-4`–`AUTH-7`) is unchanged — this only
+gives the `perCall` slot a genuinely per-call source instead of the construction-time constant it was at plan
+time. The `operation` tier still has no distinct source (nothing in this roadmap ships a per-operation layer);
+that residue stays in the Deferred Items Log. `AuthDescriptor` was already public surface (transitively, via
+`authStep`'s settings), so the field widens `core.api.md` by exactly the one `RequestOptions` member.
+
 Per-call sequence, nested inside both redirect (5b) and retry (5a) per `AUTH-27`'s "redirect wraps retry wraps
 auth":
 
-1. Resolve the requirement (`resolveAuthRequirement`) from the call's tiers + configured `credentials`.
+1. Resolve the requirement (`resolveAuthRequirement`) from the call's effective tiers (per-call override above) +
+   configured `credentials`.
 2. **Cross-origin check first** (`AUTH-29`): `hasCrossOriginMarker(request.headers)`. Either way, immediately build
    the outbound request with `clearCrossOriginMarker()` applied via `request.newBuilder()` — the header must never
    reach the wire regardless of which branch runs, and clearing before either branch means the marker can't

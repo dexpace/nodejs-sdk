@@ -42,6 +42,10 @@ factories. All state frozen once, at construction — never re-copied per getter
 - Every test file's top-of-file comment cites the `HTTP-N`/`SEAM-N` IDs it exercises.
 - No `zod` in this phase — construction-time invariants on already-typed values use explicit predicate functions
   (styleguide 6.8's "or explicit invariants" allowance).
+- **`NFR-13` starts here:** every new source file (production and test) opens with the SPDX header
+  `// SPDX-License-Identifier: MIT` on line 1. A review convention, not a mechanical gate, per the spec's own
+  framing — the scaffold's deferral row targets "Phase 1 onward", and this is the phase where real files begin.
+  Applies equally to every later phase's new files without each plan restating it.
 
 ---
 

@@ -42,7 +42,8 @@ all, so this phase ships one adapter, not two.
 - `packages/core/src/body/body.js` — `Body` (`replayable: boolean`)
 - `packages/core/src/invariant.js` — `invariant()`
 - `packages/core/src/pipeline/step.js` — `Step`, `StepContext` (`next`, `fork?: () => Next`, `context`,
-  `signal?: AbortSignal | undefined` — the last one is 5a's Task 1 amendment), `StepDescriptor`
+  `signal?: AbortSignal | undefined`, `options?: RequestOptions | undefined` — the last two are 5a's Task 1
+  amendment; this phase reads only `signal`), `StepDescriptor`
 - `packages/core/src/pipeline/builder.js` — `class PipelineBuilder` with `append(descriptor): this`, `build(): Runtime`
 - `packages/core/src/testing/fake-transport.js` — `class FakeTransport implements Transport`, `countingResponse(status, request?): {response, cancelCount}`, `.sendCount`, `.calls` (5a's `@internal` test double, reused unchanged)
 

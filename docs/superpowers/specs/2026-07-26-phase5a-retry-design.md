@@ -63,28 +63,38 @@ do not.
 Phase 9's conformance sweep should read this table rather than re-deriving it. Effective unique scope for 5a is
 therefore ~47 requirements, not 63.
 
-## Prerequisite: a one-field amendment to 4c's `StepContext`
+## Prerequisite: a two-field amendment to 4c's `StepContext`
 
-4c's `Cursor` accepts a `signal?: AbortSignal` and threads it through to terminal dispatch, but `StepContext`
-exposes only `next`, `fork`, and `context`. **A step cannot observe the call's cancellation signal.** The retry step
-must: `RETRY-26`'s cancellable inter-attempt wait and `RETRY-32`'s "launch no further attempts once the caller has
-cancelled" are both unimplementable without it, and 5b's redirect loop and 5c's token fetch need the same access.
+4c's `Cursor` accepts a `signal?: AbortSignal` and an `options?: RequestOptions` and threads both through to
+terminal dispatch, but `StepContext` exposes only `next`, `fork`, and `context`. **A step can observe neither the
+call's cancellation signal nor the caller's per-call options.**
 
-The amendment is additive and one field:
+- **`signal`.** The retry step must observe cancellation: `RETRY-26`'s cancellable inter-attempt wait and
+  `RETRY-32`'s "launch no further attempts once the caller has cancelled" are both unimplementable without it,
+  and 5b's redirect loop and 5c's token fetch need the same access.
+- **`options`.** `PIPE-17` (MUST) requires the caller's per-call options to be "readable by any step", not only
+  threaded into the terminal dispatch — with no exposure on `StepContext`, that clause is unsatisfied outright.
+  It is also the missing wire for two already-designed per-call knobs: `RETRY-41`'s "effective retry count is
+  present-override-wins" names exactly Phase 1's `RequestOptions.maxRetries` (`HTTP-35`, where `0` means
+  "disable retries for this call"), which nothing read until now; and 5c's per-call auth-descriptor override
+  rides the same field (see 5c's design).
+
+The amendment is additive, two fields:
 
 ```typescript
 interface StepContext {
   readonly next: Next;
   readonly fork?: () => Next;
   readonly context: ExecutionContext;
-  readonly signal?: AbortSignal | undefined;   // NEW -- the call's signal, already held by Cursor
+  readonly signal?: AbortSignal | undefined;         // NEW -- the call's signal, already held by Cursor
+  readonly options?: RequestOptions | undefined;     // NEW -- the caller's per-call options (PIPE-17), already held by Cursor
 }
 ```
 
-Optional, `?: T | undefined` per `exactOptionalPropertyTypes`, populated from the `Cursor`'s existing `#signal`.
-No behavior changes for any step that ignores it. 4c is planned but not executed, so this lands as an edit to the
-4c plan rather than a retrofit — but it is a genuine cross-phase dependency and must be applied before 5a's own
-implementation begins.
+Optional, `?: T | undefined` per `exactOptionalPropertyTypes`, populated from the `Cursor`'s existing `#signal`
+and `#options`. No behavior changes for any step that ignores them. 4c is planned but not executed, so this lands
+as 5a's Task 1 rather than a retrofit — but it is a genuine cross-phase dependency and must be applied before
+5a's own implementation begins.
 
 ## Module Layout
 
@@ -294,7 +304,12 @@ total and the original throwable is what the trail carries regardless.
 exponential backoff; the exception path skips the header step, having no headers. `RETRY-40`: a throwing user
 delay-override is non-fatal (logged, falls back to the schedule); a throwing should-retry predicate aborts the call
 as a well-typed error. `RETRY-41`: an effective retry count is present-override-wins (validated non-negative), else
-the configured value, with a negative configured value clamped to the default and zero meaning "no retries".
+the configured value, with a negative configured value clamped to the default and zero meaning "no retries". The
+present override is per-call: `RequestOptions.maxRetries` (Phase 1, `HTTP-35`), read by the retry step from
+`ctx.options` (the `StepContext` amendment above). When present, the engine's effective budget is
+`maxRetries + 1` total sends (`RetrySettings.maxAttempts` counts sends, the option counts retries), so
+`maxRetries: 0` yields exactly one attempt — `HTTP-35`'s "disable retries for this call". Non-negativity is
+already enforced by `RequestOptionsBuilder` at construction, so the step revalidates nothing.
 
 `RETRY-20`/`RECOV-22`: a present pacing hint **replaces**, never augments, the exponential value for that single
 decision, receives no additional symmetric jitter, and is still clamped against the total-timeout deadline when one
