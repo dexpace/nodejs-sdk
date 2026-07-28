@@ -66,6 +66,14 @@ Because §2 establishes that no segment depends on another, the order is chosen 
 sub-phase may be executed out of order without breaking the others.** State this in each sub-phase's own design so
 a future reader does not invent a dependency that was never there.
 
+**And state it in each plan's Prerequisite section, not only in the designs.** The 2026-07-28 plans review found
+all three plans had been written with a linear prerequisite chain — 6b "Phases 0 through 6a", 6c "0 through 6b" —
+which would have re-imposed the dependency this split exists to remove, silently, since a plan's Prerequisite is
+what an executing agent actually reads. All three now name **Phases 0 through 5c** and say explicitly what a
+sibling sub-phase does and does not contribute. The only real cross-plan artifacts are 6b's `verify:sse-37`
+script (which 6c's closing gate invokes, and which 6c should drop from that command if 6b has not run) and a
+`tsconfig.base.json` `lib` entry both 6b and 6c need, written so whichever runs first adds it.
+
 **6a first**, for two reasons that are both about paying a cost once, early:
 
 1. 6a scaffolds the workspace's **second package**. `@dexpace/codec-json` is the first non-`core` package in the

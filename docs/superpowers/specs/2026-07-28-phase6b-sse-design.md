@@ -168,7 +168,42 @@ without reshaping the facade. This is the same "mechanism now, wiring later" pat
 
 `SSE-32`'s bodyless-response case throws `SseStreamError` (new, flat under `DexpaceError`) rather than returning
 an empty stream — a bodyless SSE response is a server or caller mistake, and silently yielding zero events would
-hide it.
+hide it. A second flat leaf, `SseLineTooLongError`, carries `SSE-19`'s opt-in cap; it exists only when a caller
+set `maxLineBytes`, and it is a distinct type from `SseStreamError` because it is neither caller misuse nor a
+server-shape problem but a deliberate policy trip.
+
+**`sseStreamFrom` owns two things and must release both.** `SSE-23` says the facade owns *one* closeable
+resource, and the obvious reading — hand it the `Response` — is wrong here: the function also builds a
+`BufferedSource`, which takes a **reader lock** on `response.body`. Cancelling a `ReadableStream` that still has
+a locked reader throws `TypeError`, so releasing only the response would fail against a real `Response` while
+passing against any close-counting test double. `sseStreamFrom` therefore bundles the two into one `SseResource`
+released in reverse acquisition order — source, then response — with both closes always attempted and the first
+failure kept primary. `docs/knowledge/sse-streaming.md:84` states the obligation as "the facade's `finally` must
+invoke `response.body.cancel()` exactly once," and closing the source is what actually reaches that call.
+
+## Disposal
+
+`SseStream` owns a resource and exposes `close()`, which is the shape `styleguide/typescript/13` §13.1 tells a
+class *not* to make its primary teardown interface, with §13.2 prescribing `[Symbol.asyncDispose]` delegating to
+the legacy `close()`. Phases 2 and 3a deferred this with the explicit escape clause *"costs nothing today since
+no §5 type is public."* 6b is where that stops being true: `SseStream` is published.
+
+The deferral is therefore **partially** discharged rather than reversed. `Symbol.asyncDispose` landed in Node
+18.18 and this package's declared floor is 18.17 — the exact version `verify:node-floor` pins — and TypeScript
+does not polyfill the well-known symbol for a library *declaring* the method, so the computed key silently
+becomes the string `"undefined"` at run time. So:
+
+- the disposal member is **installed at run time only when the symbol exists**, via a guarded
+  `Object.defineProperty` on the prototype, and simply does not exist below 18.18;
+- it is **typed as optional**, because typing it non-optional would promise `await using` support the floor
+  cannot honor;
+- **`close()` remains the supported teardown on every runtime**, and dispose delegates to it, so there is one
+  release path and it inherits close's idempotence rather than adding a second guard.
+
+Promoting this to an unconditional `implements AsyncDisposable` is a one-line change gated on `engines.node`
+moving past 18.18; the roadmap's deferred-items row now says so instead of claiming no public resource type
+exists. Naming `Symbol.asyncDispose` in a type position also requires `esnext.disposable` on the TypeScript
+`lib` list, which the plan checks before relying on it.
 
 ## The Typed Adapter
 
@@ -272,6 +307,16 @@ would publish a way to violate `SSE-17`'s non-ownership contract by accident.
   excluding NUL in `id`.
 - **Property:** splitting one fixed byte stream at every possible chunk boundary yields the same event sequence
   every time — the chunk-independence guarantee the line reader's carry buffer exists to provide.
+- The line reader's *own* end sentinel staying stable across repeated pulls, and a CRLF-terminated stream
+  emitting no trailing empty line. Both are masked by the parser's `#ended` guard if only tested through the
+  parser — and a reader that answers `''` forever is an infinite supply of dispatch boundaries.
+- `sseStreamFrom` reaching the response body's `cancel()` hook, not merely a close counter: the `BufferedSource`
+  holds the reader lock, so a facade that closes only the response would fail against a real `Response` while
+  passing against a double.
+- `await using` on an `SseStream` releasing exactly once where the runtime has `Symbol.asyncDispose`, and the
+  member being absent (with `close()` still working) where it does not.
+- The `SSE-37`/`SSE-38` detector's own negative cases: a TSDoc *documenting* the absence of reconnection, and a
+  commented-out serde import, are both non-violations.
 
 ## Deviation Ledger (for Phase 10)
 
@@ -281,4 +326,5 @@ would publish a way to violate `SSE-17`'s non-ownership contract by accident.
 | `retry` cap is `Number.MAX_SAFE_INTEGER` | `SSE-11` (reference uses signed 64-bit ms) | The largest exactly-representable integer in JavaScript; beyond it, parsing rounds silently, which is the wrapping `SSE-11` forbids |
 | `maxLineBytes` off by default | `SSE-19` (MAY) | Matches the reference's own no-cap behavior so a port swap changes nothing; the exposure is documented on the option |
 | `MapperOutcome<T>` is a separate type from `Outcome<T>` | `sdk-design-nodejs/07` §7.2's "reused rather than re-invented" | The *idiom* is reused; extending the recovery chain's union would force every existing `fold` site to handle unreachable variants |
-| `SSE-37` and `SSE-38` enforced by a build script, not by module-graph structure | `SSE-37`, `SSE-38` | The reference gets it free from package boundaries; this port puts serde in the same package, so the invariant needs a mechanical guard or it is only a convention |
+| `SSE-37` and `SSE-38` enforced by a build script, not by module-graph structure | `SSE-37`, `SSE-38` | The reference gets it free from package boundaries; this port puts serde in the same package, so the invariant needs a mechanical guard or it is only a convention. The script strips comments before the `SSE-38` marker scan and skips `*.test.ts` for markers only — a gate that failed on a TSDoc *documenting* the absence of reconnection would be deleted rather than obeyed |
+| `[Symbol.asyncDispose]` on `SseStream` is optional and runtime-guarded, not an `implements AsyncDisposable` | `styleguide/typescript/13` §13.1–13.2 | The symbol postdates the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not polyfill it for a declaring library. `close()` stays the supported path everywhere; dispose delegates to it. Unconditional once the floor moves past 18.18 |

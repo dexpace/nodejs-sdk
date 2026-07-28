@@ -183,11 +183,48 @@ and the consumer receiving it, an abandonment can land. That is covered by the g
 whatever page is currently held.
 
 `PAGE-14`'s single-use rule is not free — a generator function called twice returns two independent generators —
-so `pages()` sets a `viewTaken` flag and throws `PaginationError` on a second call. `items()` is deliberately
-**not** single-use: `PAGE-14` scopes the restriction to the page-level view, and `PAGE-8` requires two independent
-iterations to work.
+so it is guarded at **two** levels, and the second is the one that matters. Guarding only `pages()` would leave
+the hole the requirement explicitly names: `for await` calls `[Symbol.asyncIterator]()` afresh on every loop, so
+iterating a single returned view twice would silently restart the entire walk. The view therefore carries its own
+`iteratorTaken` flag as well, exactly as 6b's `SseStream` does. `items()` is deliberately **not** single-use:
+`PAGE-14` scopes the restriction to the page-level view, and `PAGE-8` requires two independent iterations to work.
 
-`PAGE-15`'s two-close-failures case uses native `SuppressedError`, the same mechanism 5a and 6b use.
+`PAGE-15`'s two-close-failures case uses native `SuppressedError`, the same mechanism 5a and 6b use — and it
+applies to the walk's *own* failure paths too, not only to back-to-back close failures. A generator whose body
+throws and whose `finally` then fails to close the held page would surface the close error and lose the transport
+or parse failure the caller actually needs. So the drive routine catches, releases with the walk's failure kept
+primary, and leaves the bare `finally` for the paths where nothing is in flight (exhaustion, `break`, consumer
+throw) — which is where `PAGE-15` wants a close error to surface on its own.
+
+### `PAGE-12`'s scoped-construct obligation
+
+`PAGE-12` closes with a clause that is easy to read past because it is about documentation rather than behavior:
+consumers **MUST be told** to wrap the page-level view in a scoped/auto-close construct, on the grounds that up
+to two pages can be live at once. The two-page window does not open here — a page is assigned to the generator's
+held slot *before* it is yielded, so the `finally` always has it — but the obligation is not thereby discharged,
+because a related hazard does survive: a consumer who calls `[Symbol.asyncIterator]()` by hand and abandons the
+iterator without `.return()` leaves the generator suspended forever, its `finally` never runs, and the held page
+stays open. No engine can defend against that from the inside. So the requirement's *telling* is the mitigation,
+and it goes on `pages()`' TSDoc naming the three safe shapes: stay inside a `for await` (which drives `.return()`
+on every exit path including `break` and `throw`), bind pulled pages with `await using`, or call `.return()`
+yourself.
+
+## Disposal
+
+`Page` owns a resource and exposes `close()` — the shape `styleguide/typescript/13` §13.1 says should not be a
+class's primary teardown interface, with §13.2 prescribing `[Symbol.asyncDispose]` delegating to the legacy
+`close()`. Phases 2 and 3a deferred this with the explicit escape clause *"costs nothing today since no §5 type
+is public."* 6c publishes `Page`, so that clause has expired, and `PAGE-12` independently wants a scoped
+construct to point callers at.
+
+The deferral is **partially** discharged, on identical terms to 6b's `SseStream`: `Symbol.asyncDispose` landed in
+Node 18.18, one patch past the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not
+polyfill the well-known symbol for a library that *declares* the method — the computed key silently becomes the
+string `"undefined"` at run time. So the member is installed at run time only when the symbol exists, typed as
+optional, and `close()` remains the supported teardown on every runtime with dispose delegating to it (inheriting
+`Response.close()`'s idempotence rather than adding a second guard). Promotion to an unconditional
+`implements AsyncDisposable` is gated on the floor moving; the roadmap's deferred row now records that rather
+than the expired "no public resource type" premise.
 
 ## Parse Failure (`PAGE-13`)
 
@@ -217,6 +254,18 @@ touches only the targeted parameter. But the **encoding rule** is identical to `
 component encoder rather than restating it — a second percent-encoder in this codebase would be a defect, and two
 encoders that drift is a worse one. If Phase 1 kept that function module-private, 6c's plan exports it from
 `query-params.ts` (an `@internal` export, no public-surface change) instead of copying the rule.
+
+**One honest limit on "byte-for-byte."** The rewritten query is handed back through `URL`, and assigning to
+`URL.search` is not inert: the WHATWG query percent-encode set (C0 controls, space, `"`, `#`, `<`, `>`, and `'`
+on special schemes) is applied to whatever it is given. The targeted parameter is unaffected — the component
+encoder has already encoded all of those — but an *untargeted* segment carrying one of them raw is rewritten.
+This is accepted rather than engineered around: every character in that set is one RFC 3986 already requires to
+be percent-encoded inside a query, so the only affected inputs were already non-conformant and the rewrite moves
+them toward conformance; and the only way to avoid it completely is to return a string instead of a `URL`, which
+relocates the problem to every caller rather than solving it. A named test pins the exact boundary so it stays
+known, and the deviation ledger records it. Separately, stray empty segments (`?a=1&&b=2`) are skipped rather
+than preserved — matching `HTTP-31`'s existing leniency for query *parsing*, so the codebase does not hold two
+disagreeing readings of one query string.
 
 `PAGE-23`'s semantics: replace the first occurrence in place and drop later duplicates; append when absent; remove
 entirely when the value is `undefined`; preserve order otherwise. `PAGE-24`: only the query may change — scheme,
@@ -349,6 +398,18 @@ implementation details; publishing them would publish a second URL-manipulation 
 - **Property:** `spliceQueryParam` leaves every untargeted byte of the query identical, for arbitrary queries.
 - **Property:** `readQueryParam(spliceQueryParam(url, n, v), n) === v` for arbitrary values, including values
   containing `+`, `%20`, `/`, `=`, and spaces.
+- A second `[Symbol.asyncIterator]()` on one `pages()` view throwing `PaginationError` **and** driving zero extra
+  transport sends — the assertion that distinguishes a real single-use guard from one placed on `pages()` alone.
+- A transport failure surfacing unwrapped (`PAGE-28`), and a transport failure whose held-page release *also*
+  fails surfacing as `SuppressedError` with the transport failure primary (`PAGE-15`).
+- The capped fetcher walk asserting the next-page fetcher ran `N-1` times, not `N`, and that every page fetched
+  was also closed — a cap checked at the wrong end of the loop over-fetches by one and leaks the page it refuses
+  to deliver.
+- `PAGE-19`'s unresolvable-target fixture paired with a test asserting the fixture really is unparseable. With a
+  base supplied, WHATWG `URL` resolves nearly anything as a relative reference; a fixture that quietly parses
+  makes the end-of-stream assertion vacuous.
+- `await using` on a `Page` releasing exactly once where the runtime has `Symbol.asyncDispose`, and the member
+  being absent (with `close()` still working) where it does not.
 
 ## Deviation Ledger (for Phase 10)
 
@@ -361,3 +422,6 @@ implementation details; publishing them would publish a second URL-manipulation 
 | No executor-rejection path | `PAGE-30` | Vacuous without an executor |
 | One engine, not a blocking one and an async one | `§12.9`'s framing | One async primitive in this runtime; `PAGE-6` explicitly anticipates a port where "invoking a walk method is itself the consumption trigger" |
 | `items()` is re-iterable while `pages()` is single-use | `PAGE-14` | `PAGE-14` scopes single-use to the page-level view, and `PAGE-8` requires independent iterations to work. Not an oversight — the asymmetry is in the spec |
+| Byte-for-byte query preservation yields to the WHATWG query percent-encode set | `PAGE-21` | `URL.search`'s setter encodes C0 controls, space, `"`, `#`, `<`, `>`, `'`. All are characters RFC 3986 already requires encoded in a query, so only already-non-conformant input is touched. Avoiding it means returning a string, which relocates the problem rather than solving it |
+| `[Symbol.asyncDispose]` on `Page` is optional and runtime-guarded | `styleguide/typescript/13` §13.1–13.2 | The symbol postdates the declared `>=18.17` floor `verify:node-floor` pins. `close()` stays the supported path; dispose delegates to it. Unconditional once the floor moves past 18.18 |
+| `PAGE-12`'s scoped-construct clause discharged as documentation + `await using`, not as a two-page buffer | `PAGE-12` | Only one page is ever live, so the reference's two-outstanding-pages window does not open. The surviving hazard — a hand-driven iterator abandoned without `.return()` — is exactly what the requirement's "consumers MUST be told" clause exists for |

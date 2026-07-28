@@ -46,7 +46,7 @@ Zod/Valibot/ArkType are what a *caller* supplies, never a dependency of either p
 | SERDE-9, SERDE-10 | MUST | `SerializationError` / `DeserializationError` — two flat leaves under `DexpaceError`, grouped by an exported `isSerdeError` guard rather than a base class (the tree stays two levels); backing failure always chained as `cause`, never escapes |
 | SERDE-11 | SHOULD | By construction — JavaScript has no checked exceptions |
 | SERDE-12 | MUST | A genuine stream failure propagates as Phase 3a's `IoError`, unwrapped; only malformed-input / unencodable-value failures are wrapped |
-| SERDE-13 | MUST | Wire `null` into a non-null target throws `DeserializationError` naming the target, checked in core *before* the schema runs, uniform across every decode entry point |
+| SERDE-13 | MUST | Wire `null` into a non-null target throws `DeserializationError` naming the target, checked *before* the schema runs, in the one `decodeText` funnel every codec entry point shares — a documented `Deserializer` contract obligation, not something core can enforce over a third-party codec (see below) |
 | SERDE-14 | MUST | `Tristate<T>` three-branch union, `present()` bounded against `null` at the type level |
 | SERDE-15, SERDE-16 | MUST | `JSON.stringify` replacer (Absent → key omitted, Null → wire null, Present → value); `tristate(inner)` decode combinator |
 | SERDE-17 | MUST | Missing key resolves to Absent via the combinator's own absent-default, not via a `JSON.parse` reviver |
@@ -100,10 +100,23 @@ are ownership and allocation contracts, not typing ones.
 
 **`typeName` is an optional diagnostic label**, not a witness. `SERDE-13` requires the null-rejection error to
 *name the target type*, and a structural schema value carries no reliable name (Zod exposes `.description`,
-Valibot does not, and neither is guaranteed populated). Core therefore checks for the wire `null` itself, before
-delegating to the schema, and names the target from `typeName` when supplied, falling back to a documented
-`'the target type'`. Doing the check in core — not leaving it to the schema — is also what makes `SERDE-13`'s
-"across every decode overload" mechanically true rather than dependent on which schema library a caller chose.
+Valibot does not, and neither is guaranteed populated). So the wire `null` is rejected explicitly, before the
+schema runs, and the target is named from `typeName` when supplied, falling back to a documented
+`'the target type'`.
+
+**Where that check lives: in the `Deserializer` implementation, not in core's response handlers.** An earlier
+draft of this document put it in core "so `SERDE-13`'s *across every decode overload* is mechanically true."
+That is not implementable: `decodeResponse` streams the body straight into `deserializeFrom` and never holds a
+parsed value to inspect — checking in core would mean core parsing the payload, which is exactly the codec
+ownership `SEAM-1` forbids. The check therefore belongs one layer down, in `decodeText`, which **every**
+`@dexpace/codec-json` entry point (`deserialize`, `deserializeFrom`, and so both response handlers by
+composition) funnels through — that single funnel is what makes "across every decode overload" true for this
+codec.
+
+The consequence, stated so Phase 9 does not read it as a gap: `SERDE-13` is a contract obligation on
+`Deserializer` implementors, documented on the interface, not an invariant core can enforce over a third-party
+codec. Core cannot police a seam it deliberately owns no implementation of. The codec conformance test
+(Task 10) is what proves the shipped one honors it.
 
 ### `SEAM-21` closure
 
@@ -115,11 +128,23 @@ would not be a breaking change. The reshape lands, the deferral closes, and the 
 ## `Tristate<T>`
 
 ```typescript
+/** Registry-global, so two copies of core in one tree still agree — see the dual-package hazard below. */
+const TRISTATE_BRAND: unique symbol = Symbol.for('@dexpace/core.Tristate');
+
 type Tristate<T> =
-  | {readonly kind: 'absent'}
-  | {readonly kind: 'null'}
-  | {readonly kind: 'present'; readonly value: T};
+  | {readonly [TRISTATE_BRAND]: true; readonly kind: 'absent'}
+  | {readonly [TRISTATE_BRAND]: true; readonly kind: 'null'}
+  | {readonly [TRISTATE_BRAND]: true; readonly kind: 'present'; readonly value: T};
 ```
+
+**The brand is load-bearing, not decoration.** `SERDE-15`'s replacer has to recognize a Tristate among arbitrary
+caller values, and a purely structural `{kind: 'present', value}` test would misfire on any caller DTO that
+happens to carry a `kind` field — silently rewriting it, or omitting a key the caller wanted emitted. The brand
+also gives the dual-package guard something to assert: `Symbol.for` resolves through the cross-realm registry, so
+even two non-identical copies of `@dexpace/core` produce the *same* symbol and the codec keeps recognizing both.
+The cost is that a caller writing a `Tristate` object literal by hand cannot — they must go through
+`absent()`/`nullValue()`/`present()`, which is the intent (`present()` is where `NonNullable<T>` makes the
+illegal fourth state unrepresentable).
 
 `present<T>(value: NonNullable<T>): Tristate<T>` makes `SERDE-14`'s illegal fourth state unrepresentable at the
 type level — strictly earlier than the reference's construction-time runtime rejection. The union is a

@@ -10,6 +10,14 @@ cache, the single AUTH pillar step, `PipelineBuilder.seedFrom()`, and the standa
 marker-consumption side (5b produced the marker), `PIPE-24`/`PIPE-39`'s preset, and public-barrel promotion of
 the pillar-authoring surface.
 
+> **Amended 2026-07-28 (Phase 7b retrofit):** `standardResilience()` (Task 16) now installs a fourth step,
+> `loggingStep(options.logging)`, into the previously-empty `LOGGING` slot — this task's own doc comment
+> already named "Phase 7" as the phase that would ship it. Narrow blast radius: nothing outside `preset.ts`
+> and its own test depends on this change, so this plan's execution now depends on Phase 7b's
+> `observability/logging-step.ts` existing first for Task 16 specifically (every other task in this plan is
+> unaffected) — see `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s
+> `standardResilience()` amendment section.
+
 **Architecture:** A new `packages/core/src/auth/` folder of fifteen files, plus one amendment to
 `packages/core/src/pipeline/builder.ts`. The descriptor/resolver half (`scheme.ts`/`requirement.ts`/
 `descriptor.ts`/`resolve.ts`) is pure data shapes and pure functions, no classes. The stamping half
@@ -3407,6 +3415,8 @@ import {withRedirect} from '../redirect/strip-marker-step.js';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
 import {createAuthDescriptor} from './descriptor.js';
 import {createAuthRequirement} from './requirement.js';
+// Phase 7b retrofit: loggingStep's settings type, for the inert-by-default assertion below.
+import type {Logger} from '../observability/logger.js';
 import {standardResilience, type StandardResilienceOptions} from './preset.js';
 import {AUTH_STEP_TYPE} from './auth-step.js';
 
@@ -3428,7 +3438,27 @@ describe('standardResilience', () => {
     const runtime = standardResilience(new FakeTransport([countingResponse(200).response]), bearerOptions());
     const types = runtime.steps.map((step) => step.type);
     expect(types).toContain(AUTH_STEP_TYPE);
-    expect(types).toHaveLength(4); // redirectStep + its POST_AUTH guard + retryStep + authStep, nothing else
+    // Phase 7b retrofit: redirectStep + its POST_AUTH guard + retryStep + authStep + loggingStep.
+    expect(types).toHaveLength(5);
+  });
+
+  test('the installed loggingStep is inert by default (Phase 7b retrofit)', async () => {
+    const transport = new FakeTransport([countingResponse(200).response]);
+    const counter = {emitted: 0};
+    const logger: Logger = {
+      atLevel: () => ({
+        field(): ReturnType<Logger['atLevel']> { return this; },
+        event(): ReturnType<Logger['atLevel']> { return this; },
+        cause(): ReturnType<Logger['atLevel']> { return this; },
+        emit(): void { counter.emitted += 1; },
+      }),
+      withContext(): Logger { return logger; },
+    };
+    const runtime = standardResilience(transport, {...bearerOptions(), logging: {logger}});
+
+    await runtime.send(Request.newBuilder().url('https://example.com').build());
+
+    expect(counter.emitted).toBe(0); // default granularity 'none' emits no http.request/http.response events
   });
 
   test('NO_AUTH is the default when no auth option is supplied', async () => {
@@ -3502,12 +3532,16 @@ import type {Transport} from '../seams/transport.js';
 import {authStep, type AuthStepSettings} from './auth-step.js';
 import {createAuthDescriptor} from './descriptor.js';
 import {createAuthRequirement} from './requirement.js';
+// Phase 7b retrofit: the LOGGING pillar step this preset previously left unfilled.
+import {loggingStep, type LoggingStepSettings} from '../observability/logging-step.js';
 
 export interface StandardResilienceOptions {
   readonly retry?: RetryStepOptions | undefined;
   readonly redirect?: Partial<RedirectSettings> | undefined;
   /** Required if any credential tier is configured; defaults to a NO_AUTH-only tier otherwise. */
   readonly auth?: AuthStepSettings | undefined;
+  /** Phase 7b retrofit. Defaults to `loggingStep()`'s own defaults (granularity 'none' -- inert). */
+  readonly logging?: LoggingStepSettings | undefined;
 }
 
 const NO_AUTH_SETTINGS: AuthStepSettings = {
@@ -3516,11 +3550,13 @@ const NO_AUTH_SETTINGS: AuthStepSettings = {
 };
 
 /**
- * PIPE-24/39: installs exactly the three resilience pillars that exist by the end of 5c, in redirect-then-
- * retry-then-auth order, into a FRESH `PipelineBuilder` -- "installs into empty slots only" is therefore true
- * by construction, with no runtime check needed. `LOGGING`/`SERDE` stay empty: `LOGGING`'s real step ships in
- * Phase 7, and `SERDE` remains reserved with no shipped behavior anywhere in this roadmap's current scope. A
- * caller wanting to layer this preset onto an already-customized builder reaches for
+ * PIPE-24/39: installs exactly the four resilience pillars that exist as of the 2026-07-28 Phase 7b retrofit
+ * (redirect, retry, auth, logging), in redirect-then-retry-then-auth-then-logging order, into a FRESH
+ * `PipelineBuilder` -- "installs into empty slots only" is therefore true by construction, with no runtime
+ * check needed. `LOGGING` was left empty at 5c's original execution ("ships in Phase 7"); this retrofit fills
+ * it once 7b exists, exactly the "narrow follow-up amendment, not a redesign" 5c's own original comment
+ * anticipated. `SERDE` stays empty: it remains reserved with no shipped behavior anywhere in this roadmap's
+ * current scope. A caller wanting to layer this preset onto an already-customized builder reaches for
  * `PipelineBuilder.seedFrom(runtime, 'nest' | 'flatten')` (Task 15) instead of this function growing a
  * "skip occupied slots" branch.
  */
@@ -3529,6 +3565,7 @@ export function standardResilience(transport: Transport, options: StandardResili
   return withRedirect(builder, options.redirect)
     .append(retryStep(options.retry))
     .append(authStep(options.auth ?? NO_AUTH_SETTINGS))
+    .append(loggingStep(options.logging))
     .build();
 }
 ```
@@ -3652,7 +3689,8 @@ Sections and their sources:
 8. **`PIPE-24`/`PIPE-39` preset** — ✅ Task 16.
 9. **`PIPE-2`'s redirect-hop half** — ✅ **Resolved in Task 16** (joint conformance test, jointly with 5b).
 10. **Public-barrel promotion** — ✅ Task 16.
-11. **Deferred out of Phase 5c** — `standardResilience()` gaining a `LOGGING` step → Phase 7; re-verification of
+11. **Deferred out of Phase 5c** — `standardResilience()` gaining a `LOGGING` step → **resolved 2026-07-28,
+    Phase 7b retrofit** (Task 16, this document); re-verification of
     "Basic/Digest never preemptively stamp" against reference fixtures → Phase 9; `DigestChallengeUnsupportedError`
     consumer confirmation → see Deviation Ledger note below; true per-call/per-operation `AuthTiers` wiring
     through `ExecutionContext` → unscoped future work (see Task 14's plan-time scoping note).
@@ -3689,13 +3727,13 @@ Reproduced from the design doc, plus every plan-time correction this plan itself
 | A 407 is answered from `Proxy-Authenticate` into `Proxy-Authorization`; a 401 from `WWW-Authenticate` into `Authorization` | Design doc reacts only to 401, which left `AUTH-25`'s proxy pairing unreachable | Without it `isProxy` could never legitimately be true and the whole proxy half of `AUTH-25` was dead code |
 | `AuthStepSettings.tiers` is one static value, not looked up per-call/per-operation from `ExecutionContext` | Design doc's `AuthTiers {perCall, operation, client}` implies three genuinely different lookup sources | No prior phase wires an auth-requirement extension point into `ExecutionContext` — that plumbing doesn't exist yet anywhere in this roadmap; `resolveAuthRequirement`'s own logic (AUTH-4..7) is unaffected either way |
 | No async-variant preset | Reference's async standard pipeline (retry+instrumentation+caller-supplied scheduler) | 4c already dispositioned one `Promise`-only execution model |
-| `standardResilience()` installs only REDIRECT/RETRY/AUTH, not LOGGING | Design doc notes the reference preset also includes instrumentation | Phase 7 (instrumentation) has not shipped yet; scope boundary, not an omission |
+| `standardResilience()` installed only REDIRECT/RETRY/AUTH at original execution, not LOGGING | Design doc notes the reference preset also includes instrumentation | **Resolved 2026-07-28** — Phase 7b retrofit (Task 16) adds `loggingStep()` once 7b exists; no longer a live gap |
 
 ## Deferred Items (add to the roadmap's Deferred Items Log)
 
 | Item | Deferred from | Target | Reason |
 |---|---|---|---|
-| `standardResilience()` gains a `LOGGING` pillar step | Phase 5c design | Phase 7 | No real logging step exists yet |
+| `standardResilience()` gains a `LOGGING` pillar step | Phase 5c design | **Resolved 2026-07-28 (Phase 7b retrofit)** | Task 16 now installs `loggingStep()`; see this plan's amendment banner |
 | Re-verification of "Basic/Digest never preemptively stamp" against reference fixtures | Phase 5c design | Phase 9 (conformance sweep) | Flagged as an interpretation, not a certainty |
 | `DigestChallengeUnsupportedError` — confirm whether any caller-facing API needs it, or cut it | Phase 5c design | This plan (see note) | **Not cut** — kept as a `@internal`-tier leaf for a lower-level API consumer (a caller constructing `composingHandler`/`digestHandler` directly, bypassing `authStep()`); `authStep()` itself never throws it, matching the design's own framing. If Phase 9's conformance sweep finds no such consumer, cut it then |
 | True per-call/per-operation `AuthTiers` via `ExecutionContext` | This plan (Task 14's scoping note) | Unscoped future work | No phase in the current roadmap wires this; `AuthStepSettings.tiers` is one static value until it does |

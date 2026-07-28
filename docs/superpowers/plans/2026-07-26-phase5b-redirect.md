@@ -8,6 +8,16 @@ loop/hop-cap guarding, and the pillar adapter plus its bundled marker-stripping 
 `docs/product-spec/10-redirect-handling.md` (`REDIR-1`–`REDIR-*`), per
 `docs/superpowers/specs/2026-07-26-phase5b-redirect-design.md`, and closing the roadmap's `PIPE-40` deferred item.
 
+> **Amended 2026-07-28 (Phase 7b retrofit):** Task 6's `redirect-step.ts` gains two `SHOULD`-level structured
+> log events via `getGlobalLogger()` (a hop event, and a rejection event distinguishing `SchemeDowngradeError`
+> from other `'fail'` causes) — narrow blast radius, only this file's own emission points. **Partial closure
+> only:** `decide()`'s `Decision` type has no reason discriminant on `'return-current'`, so a genuine
+> "loop-detected" vs. "hop-cap-exceeded" vs. "normal termination" distinction is NOT covered here — reshaping
+> `Decision` for that is out of scope for this retrofit (a `SHOULD`, not a `MUST`, and 5b's `decide.test.ts`
+> asserts the current shape throughout). This plan's execution now depends on Phase 7b's
+> `observability/logger.ts` existing first for Task 6 specifically; every other task is unaffected. See
+> `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s "Amendments to 5a and 5b" section.
+
 **Architecture:** A new `packages/core/src/redirect/` folder of seven files. `decide.ts` is a pure function — no
 I/O, no clock, no side effects beyond the `Request` value it returns — that resolves one hop's outcome from a
 `Response`, the in-flight `Request`, the seed origin, the visited set, and settings. `redirect-step.ts` is a thin
@@ -1378,6 +1388,10 @@ Expected: FAIL — `Cannot find module './redirect-step.js'`.
 
 ```typescript
 // packages/core/src/redirect/redirect-step.ts
+// Amended 2026-07-28 (Phase 7b retrofit): getGlobalLogger() call sites below, narrow blast radius (only this
+// file's own emission points; no other phase depends on them). See
+// docs/superpowers/specs/2026-07-28-phase7b-observability-design.md's "Amendments to 5a and 5b" section.
+import {getGlobalLogger} from '../observability/logger.js';
 import {invariant} from '../invariant.js';
 import type {Request} from '../http/request.js';
 import type {StepDescriptor} from '../pipeline/step.js';
@@ -1421,10 +1435,27 @@ export function redirectStep(overrides?: Partial<RedirectSettings>): StepDescrip
 
         if (decision.kind === 'return-current') return response;
         if (decision.kind === 'fail') {
+          // Phase 7b retrofit: a SHOULD-level rejection event, distinguishing the one cleanly-typed case
+          // (scheme downgrade) from everything else. NOT closing the full "loop vs. hop-cap vs. normal
+          // termination" distinction for 'return-current' above -- decide()'s Decision type carries no reason
+          // discriminant for that case, and reshaping it (Task 5) to add one is out of scope for this narrow
+          // retrofit. Left as an explicit, documented gap -- see this plan's amendment banner.
+          getGlobalLogger().atLevel('verbose')
+            .event('redirect.rejected')
+            .field('reason', decision.error.constructor.name)
+            .emit();
           await response.close();
           throw decision.error;
         }
         if (signal?.aborted === true) return response;
+
+        // Phase 7b retrofit: a SHOULD-level hop event, fired once per redirect followed.
+        getGlobalLogger().atLevel('verbose')
+          .event('redirect.hop')
+          .field('from', request.url.href)
+          .field('to', decision.nextRequest.url.href)
+          .field('crossOrigin', decision.crossOrigin)
+          .emit();
 
         await response.close();
         visited.add(decision.nextRequest.url.href);
@@ -1650,7 +1681,9 @@ Sections and their sources:
    return-final-open) ✅ Task 6; cancellation ✅ Task 6.
 5. **`PIPE-40`** — ✅ **Resolved in Task 6** (2-hop `FakeTransport` conformance test).
 6. **Deferred out of Phase 5b** — `AUTH-29`'s marker-*consumption* side → 5c; redirect structured logging
-   (`SHOULD`) → Phase 7; the predicate-scope judgment call (see Deviation Ledger) → re-confirm at Phase 9's
+   (`SHOULD`) → **partially resolved 2026-07-28, Phase 7b retrofit** (hop + rejection events, Task 6; the
+   loop-vs-hop-cap-vs-normal-termination distinction remains open, needing a `decide()` reshape out of this
+   retrofit's scope); the predicate-scope judgment call (see Deviation Ledger) → re-confirm at Phase 9's
    conformance sweep.
 
 State explicitly at the top whether the plan has been executed, matching the Phase 5a checklist's convention.

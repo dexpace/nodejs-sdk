@@ -8,6 +8,23 @@ step, and the two thin adapters binding the engine to the stage pipeline (4c) an
 satisfying `product-spec/09-retry-and-resilience.md` (`RETRY-1`–`RETRY-45`) and appendix C's
 `RECOV-17`–`RECOV-34`, per `docs/superpowers/specs/2026-07-26-phase5a-retry-design.md`.
 
+> **Amended 2026-07-28 (Phase 7a retrofit):** `RetryConfig.now`/`RetryStepOptions.now` are retyped to
+> `clock: Clock`, consuming Phase 7a's `config/clock.ts` seam instead of an ad hoc `() => number`;
+> `pacing.ts`'s private RFC 1123 parser is replaced by an import from Phase 7a's `config/http-date.ts`; and
+> `classify.ts`'s private `RETRYABLE_STATUSES`/`isRetryableStatus` are replaced by a re-export from Phase 7a's
+> `config/retryable.ts` (CFG-35). All three are single-sourcing corrections, not behavior changes — see
+> `docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`'s Scope section. This plan's execution now
+> depends on Phase 7a's `config/` module existing first (see Prerequisite below); every other task is
+> unaffected.
+>
+> **Amended 2026-07-28 (Phase 7b retrofit):** `engine.ts`'s `runWithRetry` (Task 8) gains two `SHOULD`-level
+> structured log events via `getGlobalLogger()` — attempt-failed (with the next delay) and retries-exhausted
+> (only when stopping after at least one retry with a failure outcome, cleanly derivable from
+> `decision.outcome.kind` with no reshape). Narrow blast radius — only this file's own emission points. This
+> plan's execution now additionally depends on Phase 7b's `observability/logger.ts` existing first for Task 8
+> specifically. See `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s "Amendments to 5a
+> and 5b" section.
+
 **Architecture:** A new `packages/core/src/retry/` folder of eight independent files with no folder-level barrel,
 plus one file in `src/recovery/` and one in a new `src/testing/`. The engine core is pure functions —
 classification, backoff math, and pacing parsing take no I/O and no clock — driven by one attempt loop
@@ -22,8 +39,14 @@ invariant, mechanically enforced since the scaffold, still holds (the RFC 1123 p
 platform-neutral).
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, 4a, 4b, and 4c are implemented exactly as their plans
-specify. Concretely:
+specify, **plus Phase 7a's `Clock` seam** (added by the 2026-07-28 Phase 7a brainstorm's retrofit — see the
+"`Clock` retrofit" note in `docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`, Scope section).
+This inverts this plan's original numeric ordering relative to Phase 7; 7a's `config/clock.ts` must exist before
+Task 8 of this plan can be executed. Concretely:
 
+- `packages/core/src/config/clock.js` — `Clock` (`now()`, `monotonic()`, `sleep(ms, signal?)`), `defaultClock`
+- `packages/core/src/config/http-date.js` — `formatHttpDate(epochMs)`, `parseHttpDate(raw): number | null`
+- `packages/core/src/config/retryable.js` — `RETRYABLE_STATUSES: ReadonlySet<number>`, `isRetryableStatus(code)`
 - `packages/core/src/http/method.js` — `type Method`, `isIdempotent(method)`
 - `packages/core/src/http/request.js` — `Request` (`method`, `url`, `headers`, `body: Body | undefined`,
   `newBuilder()`), `RequestBuilder`
@@ -69,7 +92,9 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
   it.
 - **`Date.parse`/`new Date(string)` are banned in `pacing.ts`.** `sdk-design/06`: JS date-string parsing is
   permissive and non-standardized across V8, JavaScriptCore, and SpiderMonkey, which is the opposite of
-  `RETRY-16`'s totality mandate. The RFC 1123 parser is hand-written with explicit field range validation.
+  `RETRY-16`'s totality mandate. The RFC 1123 parser (hand-written, explicit field range validation) is now
+  Phase 7a's shared `config/http-date.ts`, imported here rather than duplicated — do not reintroduce a private
+  copy in `pacing.ts`.
 - **The pacing parser returns `null` for "no hint", never `0`.** `RETRY-16`: a malformed header must fall back to
   exponential backoff, not hammer the server immediately. `0` is reserved for a *validly-parsed* past instant
   (`RETRY-17`). This distinction is the single most important behavior in `pacing.ts`.
@@ -289,7 +314,8 @@ git commit -m "feat(core): expose the call's AbortSignal and per-call RequestOpt
 
 **Interfaces:**
 - Consumes: `isIdempotent` from `../http/method.js`; `Request` from `../http/request.js`; `IoError` from
-  `../io/errors.js`; `HttpStatusError` from `../body/http-status-error.js`.
+  `../io/errors.js`; `HttpStatusError` from `../body/http-status-error.js`; `RETRYABLE_STATUSES`,
+  `isRetryableStatus` from Phase 7a's `../config/retryable.js` (re-exported unchanged — see Step 3's comment).
 - Produces: `RETRYABLE_STATUSES: ReadonlySet<number>`; `isRetryableStatus(code: number): boolean`;
   `isRetryableFailure(error: unknown, statuses: ReadonlySet<number>): boolean`;
   `isResendable(request: Request): boolean`. Tasks 5, 8, and 10 consume all four.
@@ -435,31 +461,15 @@ Expected: FAIL — `Cannot find module './classify.js'`.
 ```typescript
 // packages/core/src/retry/classify.ts
 import {HttpStatusError} from '../body/http-status-error.js';
+// Phase 7a retrofit: RETRY-1's status set and predicate previously lived here as a private
+// `buildRetryableStatuses()`/`RETRYABLE_STATUSES`/`isRetryableStatus`. Phase 7a's CFG-35 promotes the exact
+// same set to a public utility at `config/retryable.js` (for callers with no retry-engine dependency); this
+// module now re-exports that single source instead of keeping a second definition. The doc comment below
+// stays accurate -- "every consumer reads this one set" now includes 7a's own callers too.
+export {RETRYABLE_STATUSES, isRetryableStatus} from '../config/retryable.js';
 import {isIdempotent} from '../http/method.js';
 import type {Request} from '../http/request.js';
 import {IoError} from '../io/errors.js';
-
-function buildRetryableStatuses(): ReadonlySet<number> {
-  const codes = new Set<number>([408, 429]);
-  for (let code = 500; code <= 599; code += 1) {
-    // 501 Not Implemented and 505 HTTP Version Not Supported mean the server cannot fulfill the
-    // request regardless of how many times it is asked (RETRY-1).
-    if (code !== 501 && code !== 505) codes.add(code);
-  }
-  return codes;
-}
-
-/**
- * The single retryable-status definition (RETRY-1). Every consumer -- the default settings, the
- * classifier, and the engine -- reads this one set; ES modules make that structural, not a discipline.
- * Typed `ReadonlySet` rather than frozen: `Object.freeze` does not seal a `Set`'s internal slots, so it
- * would be a misleading no-op. Same treatment as Phase 1's `IDEMPOTENT_METHODS`.
- */
-export const RETRYABLE_STATUSES: ReadonlySet<number> = buildRetryableStatuses();
-
-export function isRetryableStatus(code: number): boolean {
-  return RETRYABLE_STATUSES.has(code);
-}
 
 /** True for the abort reason `AbortSignal.timeout()` produces, false for a caller abort (RETRY-23/24). */
 function isTimeoutAbort(value: unknown): boolean {
@@ -704,14 +714,15 @@ git commit -m "feat(core): overflow-safe exponential backoff with symmetric jitt
 ### Task 4: `pacing.ts` — the server-hint parser
 
 The largest spec surface per line in this phase. Read the Global Constraints on `Date.parse` and on
-`null`-vs-`0` before starting.
+`null`-vs-`0` before starting. **Phase 7a retrofit:** this task now imports its RFC 1123 date parser from
+`../config/http-date.js` (Phase 7a) rather than hand-rolling a private copy — see Step 3's comment for why.
 
 **Files:**
 - Create: `packages/core/src/retry/pacing.ts`
 - Test: `packages/core/src/retry/pacing.test.ts`
 
 **Interfaces:**
-- Consumes: `Headers` from `../http/headers.js`.
+- Consumes: `Headers` from `../http/headers.js`; `parseHttpDate` from Phase 7a's `../config/http-date.js`.
 - Produces: `parsePacingHint(headers: Headers, nowMs: number, random: () => number): number | null`. Task 8
   consumes it.
 
@@ -886,6 +897,13 @@ Expected: FAIL — `Cannot find module './pacing.js'`.
 ```typescript
 // packages/core/src/retry/pacing.ts
 import type {Headers} from '../http/headers.js';
+// Phase 7a retrofit: this module previously hand-rolled its own private RFC 1123 parser here (a HTTP_DATE
+// regex, a MONTHS table, and a local `parseHttpDate` function, tolerant of an informational weekday and a
+// single-digit day -- never `Date.parse`, since JS date-string parsing is permissive and non-standardized
+// across engines, the opposite of RETRY-16's totality mandate). Phase 7a's `config/http-date.ts` is a
+// superset (it adds the formatter this module never needed) built to the identical grammar, so that private
+// copy is deleted and this line imports the shared one instead -- one RFC 1123 parser in the codebase, not two.
+import {parseHttpDate} from '../config/http-date.js';
 
 /** RETRY-18: every computed delta is clamped to this ceiling before use. */
 const MAX_PACING_MS = 365 * 24 * 60 * 60 * 1000;
@@ -897,11 +915,6 @@ const MAX_PACING_MS = 365 * 24 * 60 * 60 * 1000;
  */
 const DECIMAL_SECONDS = /^\d+(?:\.\d+)?$/u;
 const DECIMAL_INTEGER = /^\d+$/u;
-
-const HTTP_DATE =
-  /^(?:[A-Za-z]{3,9},\s+)?(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+GMT$/u;
-
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 function clampPacing(deltaMs: number): number {
   return Math.min(Math.max(0, deltaMs), MAX_PACING_MS);
@@ -917,25 +930,6 @@ function parseIntegerValue(raw: string | undefined): number | null {
   if (raw === undefined || !DECIMAL_INTEGER.test(raw)) return null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
-}
-
-/**
- * A hand-written RFC 1123 parser (RETRY-15), tolerant of an informational weekday and a single-digit day.
- * Never `Date.parse` -- JS date-string parsing is permissive and non-standardized across engines, which is
- * the opposite of RETRY-16's totality mandate. Every field is range-checked so an out-of-range value is
- * REJECTED rather than silently rolled over by `Date.UTC` into a valid but wrong instant.
- */
-function parseHttpDate(raw: string): number | null {
-  const match = HTTP_DATE.exec(raw);
-  if (match === null) return null;
-  const day = Number(match[1] ?? '');
-  const month = MONTHS.indexOf((match[2] ?? '').toLowerCase());
-  const year = Number(match[3] ?? '');
-  const hour = Number(match[4] ?? '');
-  const minute = Number(match[5] ?? '');
-  const second = Number(match[6] ?? '');
-  if (month < 0 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60) return null;
-  return Date.UTC(year, month, day, hour, minute, second);
 }
 
 function parseRetryAfter(raw: string, nowMs: number): number | null {
@@ -1498,9 +1492,10 @@ ordering in `decideRetry` is load-bearing, not stylistic.
 - Consumes: `toHttpError`, `HttpStatusError` from `../body/http-status-error.js`; `Outcome`, `success`, `failure`
   from `../recovery/outcome.js`; `Request`, `Response` from `../http/*`; `computeDelay` from `./backoff.js`;
   `isResendable`, `isRetryableFailure` from `./classify.js`; `parsePacingHint` from `./pacing.js`; `RetrySettings`
-  from `./settings.js`; `stampAttempt` from `./attempt-stamp.js`.
+  from `./settings.js`; `stampAttempt` from `./attempt-stamp.js`; `Clock` (type-only) from Phase 7a's
+  `../config/clock.js`.
 - Produces: `type RetryDispatch = (request: Request, attempt: number) => Promise<Outcome<Response>>`;
-  `interface RetryConfig {settings, signal?, now, random, delayOverride?}`;
+  `interface RetryConfig {settings, signal?, clock, random, delayOverride?}`;
   `runWithRetry(request: Request, dispatch: RetryDispatch, config: RetryConfig): Promise<Outcome<Response>>`.
   Tasks 9 and 10 consume all three.
 
@@ -1522,15 +1517,25 @@ import type {Response} from '../http/response.js';
 import {IoError} from '../io/errors.js';
 import {failure, success, type Outcome} from '../recovery/outcome.js';
 import {countingResponse} from '../testing/fake-transport.js';
+import type {Clock} from '../config/clock.js';
 import {retrySettings, type RetrySettings} from './settings.js';
 import {runWithRetry, type RetryConfig, type RetryDispatch} from './engine.js';
 
 const GET = Request.newBuilder().url('https://example.com').build();
 const BARE_POST = Request.newBuilder().method('POST').url('https://example.com').build();
 
+/** A fake Clock whose `now`/`monotonic` both advance only when a test advances `clockState.ms`. */
+function fakeClock(clockState: {ms: number}): Clock {
+  return {
+    now: () => clockState.ms,
+    monotonic: () => clockState.ms,
+    sleep: () => Promise.resolve(),
+  };
+}
+
 /** A config whose clock advances only when a test advances it, and whose jitter is pinned to the midpoint. */
-function configOf(overrides?: Partial<RetrySettings>, clock = {ms: 0}): RetryConfig {
-  return {settings: retrySettings(overrides), now: () => clock.ms, random: () => 0.5};
+function configOf(overrides?: Partial<RetrySettings>, clockState = {ms: 0}): RetryConfig {
+  return {settings: retrySettings(overrides), clock: fakeClock(clockState), random: () => 0.5};
 }
 
 /** Serves outcomes in order; the last repeats. Records the requests it saw. */
@@ -1763,7 +1768,7 @@ describe('suppressed trail (RETRY-34)', () => {
 describe('per-call state (RETRY-42, RECOV-28)', () => {
   test('concurrent invocations do not clobber each other’s budget', async () => {
     const settings = retrySettings({maxAttempts: 3, fixedDelayMs: 0});
-    const config: RetryConfig = {settings, now: () => 0, random: () => 0.5};
+    const config: RetryConfig = {settings, clock: fakeClock({ms: 0}), random: () => 0.5};
     const left = scriptedDispatch([failure(new IoError('left'))]);
     const right = scriptedDispatch([failure(new IoError('right'))]);
 
@@ -1785,6 +1790,11 @@ Expected: FAIL — `Cannot find module './engine.js'`.
 ```typescript
 // packages/core/src/retry/engine.ts
 import {HttpStatusError, toHttpError} from '../body/http-status-error.js';
+import type {Clock} from '../config/clock.js';
+// Phase 7b retrofit: getGlobalLogger() call sites below, narrow blast radius (only this file's own emission
+// points; no other phase depends on them). See docs/superpowers/specs/2026-07-28-phase7b-observability-design.md's
+// "Amendments to 5a and 5b" section.
+import {getGlobalLogger} from '../observability/logger.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {failure, type Outcome} from '../recovery/outcome.js';
@@ -1799,8 +1809,13 @@ export type RetryDispatch = (request: Request, attempt: number) => Promise<Outco
 export interface RetryConfig {
   readonly settings: RetrySettings;
   readonly signal?: AbortSignal | undefined;
-  /** Injectable clock (CFG-15) -- the total-timeout budget is measured through it, never `Date.now()`. */
-  readonly now: () => number;
+  /**
+   * Phase 7a's `Clock` seam (CFG-15) -- replaces this field's original ad hoc `now: () => number` shape.
+   * `clock.monotonic()` measures the total-timeout budget (CFG-16: elapsed-time math never uses wall-clock,
+   * which MAY move backwards); `clock.now()` supplies `parsePacingHint`'s wall-clock instant, since a
+   * `Retry-After` HTTP-date is an absolute instant, not an elapsed duration. Never `Date.now()` directly.
+   */
+  readonly clock: Clock;
   /** Injectable randomness -- jitter and the X-RateLimit-Reset spread both draw from it. */
   readonly random: () => number;
   /** Highest-precedence delay source (RETRY-39). A throw is non-fatal (RETRY-40). */
@@ -1819,7 +1834,7 @@ type Decision =
   | {readonly kind: 'retry'; readonly error: unknown; readonly delayMs: number};
 
 function elapsed(state: LoopState): number {
-  return state.config.now() - state.startedAt;
+  return state.config.clock.monotonic() - state.startedAt;
 }
 
 /** A budget of `undefined` or `0` disables the deadline (RETRY-27, RECOV-20). */
@@ -1877,7 +1892,7 @@ async function retireAndSchedule(outcome: Outcome<Response>, state: LoopState): 
   try {
     const hint = response === undefined
       ? null
-      : parsePacingHint(response.headers, state.config.now(), state.config.random);
+      : parsePacingHint(response.headers, state.config.clock.now(), state.config.random);
     const error = response === undefined ? outcome.error : await retire(response);
     return {kind: 'retry', error, delayMs: clampToBudget(resolveDelay(hint, state), state)};
   } finally {
@@ -1953,7 +1968,7 @@ export async function runWithRetry(
   dispatch: RetryDispatch,
   config: RetryConfig,
 ): Promise<Outcome<Response>> {
-  const startedAt = config.now();
+  const startedAt = config.clock.monotonic();
   const trail: unknown[] = [];
 
   for (let attempt = 1; ; attempt += 1) {
@@ -1963,7 +1978,26 @@ export async function runWithRetry(
     const stamped = stampAttempt(request, attempt, config.settings.attemptHeaderName);
     const outcome = await dispatch(stamped, attempt);
     const decision = await decideRetry(outcome, {config, request, attempt, startedAt});
-    if (decision.kind === 'stop') return withTrail(decision.outcome, trail);
+    if (decision.kind === 'stop') {
+      // Phase 7b retrofit: a SHOULD-level retries-exhausted event. Cleanly derivable with no reshape --
+      // `decision.outcome.kind` already discriminates success/failure (unlike `decision.kind`'s own
+      // catch-all 'stop', which also covers a plain first-attempt success or a non-retryable failure).
+      // `attempt > 1` is what makes this "exhausted after retrying," not "failed on the first try."
+      if (decision.outcome.kind === 'failure' && attempt > 1) {
+        getGlobalLogger().atLevel('verbose')
+          .event('retry.exhausted')
+          .field('attempts', attempt)
+          .emit();
+      }
+      return withTrail(decision.outcome, trail);
+    }
+
+    // Phase 7b retrofit: a SHOULD-level attempt-failed event, fired each time the loop decides to retry.
+    getGlobalLogger().atLevel('verbose')
+      .event('retry.attemptFailed')
+      .field('attempt', attempt)
+      .field('nextDelayMs', decision.delayMs)
+      .emit();
 
     trail.push(decision.error);
     await waitFor(decision.delayMs, config.signal);
@@ -2001,8 +2035,9 @@ git commit -m "feat(core): the retry attempt loop with budget, pacing, and suppr
 - Consumes: `StepDescriptor`, `Next` from `../pipeline/step.js`; `Cursor` from `../pipeline/cursor.js`;
   `invariant` from `../invariant.js`; `fold`, `success`, `failure` from `../recovery/outcome.js`;
   `runWithRetry`, `RetryConfig`, `RetryDispatch` from `./engine.js`; `RetrySettings` from `./settings.js`;
-  `RequestOptions` (type-only, via `ctx.options` from Task 1's amendment).
-- Produces: `RETRY_STEP_TYPE: symbol`; `interface RetryStepOptions {settings, now?, random?, delayOverride?}`;
+  `RequestOptions` (type-only, via `ctx.options` from Task 1's amendment); `Clock`, `defaultClock` from Phase
+  7a's `../config/clock.js`.
+- Produces: `RETRY_STEP_TYPE: symbol`; `interface RetryStepOptions {settings, clock?, random?, delayOverride?}`;
   `retryStep(options?: RetryStepOptions): StepDescriptor`. Task 12 references it; 5c installs it in the preset.
 
 **Per-call override (`RETRY-41`/`HTTP-35`).** The step resolves its effective attempt budget per call:
@@ -2136,6 +2171,7 @@ Expected: FAIL — `Cannot find module './retry-step.js'`.
 ```typescript
 // packages/core/src/retry/retry-step.ts
 import {invariant} from '../invariant.js';
+import {defaultClock, type Clock} from '../config/clock.js';
 import type {Next, StepContext, StepDescriptor} from '../pipeline/step.js';
 import {failure, fold, success} from '../recovery/outcome.js';
 import {runWithRetry, type RetryConfig, type RetryDispatch} from './engine.js';
@@ -2146,7 +2182,7 @@ export const RETRY_STEP_TYPE: unique symbol = Symbol('dexpace.retry');
 
 export interface RetryStepOptions {
   readonly settings?: Partial<RetrySettings> | undefined;
-  readonly now?: (() => number) | undefined;
+  readonly clock?: Clock | undefined;
   readonly random?: (() => number) | undefined;
   readonly delayOverride?: ((attempt: number) => number | undefined) | undefined;
 }
@@ -2175,7 +2211,7 @@ function configFrom(options: RetryStepOptions, ctx: Pick<StepContext, 'signal' |
   return {
     settings: effectiveSettings(retrySettings(options.settings), ctx.options?.maxRetries),
     signal: ctx.signal,
-    now: options.now ?? (() => Date.now()),
+    clock: options.clock ?? defaultClock,
     random: options.random ?? (() => Math.random()),
     delayOverride: options.delayOverride,
   };
@@ -2247,12 +2283,15 @@ git commit -m "feat(core): RETRY pillar step re-driving the chain via ctx.fork"
 import {describe, expect, test} from 'bun:test';
 import {Request} from '../http/request.js';
 import {IoError} from '../io/errors.js';
+import type {Clock} from '../config/clock.js';
 import {RequestRecoveryChain, ResponseRecoveryChain} from '../recovery/chains.js';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
 import {retrySettings} from './settings.js';
 import {dispatchWithRetry, type RetryDispatchConfig} from './retry-dispatch.js';
 
 const GET = Request.newBuilder().url('https://example.com').build();
+
+const zeroClock: Clock = {now: () => 0, monotonic: () => 0, sleep: () => Promise.resolve()};
 
 function configOf(transport: FakeTransport, requestSteps = new RequestRecoveryChain([])): RetryDispatchConfig {
   return {
@@ -2261,7 +2300,7 @@ function configOf(transport: FakeTransport, requestSteps = new RequestRecoveryCh
     responseChain: new ResponseRecoveryChain([], []),
     retry: {
       settings: retrySettings({maxAttempts: 3, fixedDelayMs: 0}),
-      now: () => 0,
+      clock: zeroClock,
       random: () => 0.5,
     },
   };
@@ -2609,10 +2648,14 @@ Sections and their sources:
    ✅ Task 8; `RETRY-38` ✅ Task 7; `RETRY-39`–`RETRY-44` ✅ Tasks 5, 8, 9; `RETRY-45` N/A (no scheduler object);
    `RETRY-29` ⏳ deferred, not scheduled.
 6. **Appendix C `RECOV-17`–`RECOV-34`** — reproduce the design doc's mapping table verbatim, with `RECOV-32` ✅
-   Task 11 and `RECOV-33` ⏳ Phase 7.
+   Task 11 and `RECOV-33` ⏳ Phase 7a.
 7. **Cross-phase obligations** — `PIPE-36` ✅ Task 9; the `StepContext.signal`/`StepContext.options` amendment
-   ✅ Task 1 (`PIPE-17`'s "readable by any step" + `RETRY-41`/`HTTP-35` per-call override, wired in Task 9).
-8. **Deferred out of Phase 5a** — `RETRY-29`; `RECOV-33` → Phase 7; public-barrel promotion of `retryStep` →
+   ✅ Task 1 (`PIPE-17`'s "readable by any step" + `RETRY-41`/`HTTP-35` per-call override, wired in Task 9); the
+   2026-07-28 Phase 7a retrofit (`Clock`, RFC 1123 parser, retryable-status classifier single-sourcing) ✅
+   applied directly to this plan/design, see the amendment banners at the top of each; the 2026-07-28 Phase 7b
+   retrofit (two `SHOULD`-level structured log events in `engine.ts`, `RECOV-30`-adjacent) ✅ applied the same
+   way.
+8. **Deferred out of Phase 5a** — `RETRY-29`; `RECOV-33` → Phase 7a; public-barrel promotion of `retryStep` →
    5c, with the preset.
 
 State explicitly at the top whether the plan has been executed, matching the Phase 4 checklist's convention.

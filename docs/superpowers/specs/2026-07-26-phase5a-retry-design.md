@@ -9,6 +9,15 @@ retry-engine half of `docs/product-spec/08-execution-pipelines.md` §8.2 as inde
 (`RECOV-17`–`RECOV-34`). This is the first of three sub-phases the roadmap's Phase 5 ("Resilience —
 Retry/Redirect/Auth") splits into: **5a** (this document, retry), 5b (redirect, `§10`), 5c (auth, `§11`).
 
+> **Amended 2026-07-28 (Phase 7a retrofit):** `RetryConfig`'s clock field, described below only informally as
+> "clock" (see `runWithRetry`'s signature comment), is retyped to Phase 7a's real `Clock` seam (`CFG-15`)
+> instead of an ad hoc `now: () => number`; `pacing.ts`'s hand-written RFC 1123 parser (referenced throughout
+> this document) is re-sourced from Phase 7a's shared `config/http-date.ts` rather than staying a private
+> copy; and `classify.ts`'s `RETRYABLE_STATUSES`/`isRetryableStatus` (`RETRY-1`) are re-exported from Phase 7a's
+> `config/retryable.ts` (`CFG-35`) rather than defined here a second time. See
+> `docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`'s Scope section for the rationale; see
+> the amended `docs/superpowers/plans/2026-07-26-phase5a-retry.md` for the concrete diffs.
+
 **Governing documents:** `docs/product-spec/09-retry-and-resilience.md` (normative, cited by ID throughout),
 `docs/product-spec/appendix-c-consolidated-normative-requirement-index.md` (`RECOV-17`–`RECOV-34`),
 `docs/sdk-design-nodejs/06-retry-redirect-and-authentication.md` (Node-port mapping — ES-module single-sourcing,

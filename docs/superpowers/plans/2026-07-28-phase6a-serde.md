@@ -20,7 +20,11 @@ type-level assertions, `api-extractor` (now two reports). No new runtime depende
 `SEAM-1` untouched. No `node:` imports anywhere in either package.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, 4a, 4b, 4c, 5a, 5b, and 5c are implemented exactly as
-their plans specify. Concretely, this phase consumes:
+their plans specify. **6b (SSE) and 6c (Pagination) are not prerequisites and this plan is not a prerequisite for
+them** — the segmentation design cuts the three so they share no types, and `SSE-37` plus `§12`'s serde-agnostic
+preamble forbid the only couplings that could exist. The 6a → 6b → 6c order is convenience (6a scaffolds the
+second package and reshapes an already-published seam, so it is the one worth paying for first), not dependency;
+any of the three may execute alone. Concretely, this phase consumes:
 
 - `packages/core/src/http/errors.js` — `DexpaceError`
 - `packages/core/src/http/response.js` — `Response` (`status: Status`, `headers: Headers`,
@@ -347,6 +351,14 @@ export interface Serializer {
  * `typeName` is an optional diagnostic label, never a witness: a structural schema value carries no reliable
  * name, so when a wire `null` is decoded into a non-null target the implementation names the target from this
  * label, falling back to `'the target type'`.
+ *
+ * **Contract obligation on implementors (SERDE-13).** A wire `null` decoded into a non-null target MUST throw
+ * `DeserializationError` naming that target, on *every* entry point, and MUST NOT return a `null` that flows
+ * through the non-null result and detonates at some later field access. Enforce it before delegating to the
+ * schema — a schema library may or may not reject a bare `null`, and may or may not name the target when it
+ * does. Core cannot enforce this for you: `decodeResponse` streams bytes straight into
+ * {@link Deserializer.deserializeFrom} and never holds a parsed value to inspect, and core owning a parser
+ * would violate SEAM-1.
  */
 export interface Deserializer {
   deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T;
@@ -931,6 +943,44 @@ test('a genuine stream failure propagates unwrapped as IoError (SERDE-12)', asyn
   expect(caught).not.toBeInstanceOf(DeserializationError);
   expect(closes()).toBe(1);
 });
+
+/** A response whose close always rejects, for the two suppression cases below. */
+function failingCloseResponse(body: ReadableStream<Uint8Array> | null, closeFailure: unknown) {
+  return {
+    body,
+    close(): Promise<void> {
+      return Promise.reject(closeFailure);
+    },
+  } as unknown as Parameters<typeof decodeResponse>[0];
+}
+
+test('a close failure does NOT mask the decode failure — decode primary, close suppressed', async () => {
+  // A bare `finally { await response.close() }` would replace the DeserializationError with the close error,
+  // telling the caller their socket died when in fact their payload was malformed. Every other close path in
+  // Phase 6 (6b's release split, 6c's parseOrClose) preserves the primary; this one must too.
+  const closeFailure = new IoError('close failed');
+  let caught: unknown;
+  try {
+    await decodeResponse(
+      failingCloseResponse(bodyOf('{"id":"not-a-number"}'), closeFailure),
+      jsonish,
+      dtoSchema,
+      'Dto',
+    );
+  } catch (e: unknown) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(SuppressedError);
+  expect((caught as SuppressedError).error).toBeInstanceOf(DeserializationError);
+  expect((caught as SuppressedError).suppressed).toBe(closeFailure);
+});
+
+test('a close failure on the SUCCESS path surfaces plainly — it is the only failure there is', async () => {
+  const closeFailure = new IoError('close failed');
+  await expect(
+    decodeResponse(failingCloseResponse(bodyOf('{"id":7}'), closeFailure), jsonish, dtoSchema, 'Dto'),
+  ).rejects.toBe(closeFailure);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -951,10 +1001,40 @@ import {DeserializationError} from './errors.js';
 const UNNAMED_TARGET = 'the target type';
 
 /**
+ * Run `work`, then close `response` — on every path, but **without letting a close failure eat the real one**.
+ *
+ * A bare `finally { await response.close() }` looks equivalent and is not: when `close()` rejects while an error
+ * is already in flight, the `finally`'s rejection *replaces* it, and the caller is told their connection dropped
+ * when in fact their payload was malformed. So:
+ *
+ * - work threw, close succeeded → the work error propagates
+ * - work threw, close also threw → the work error stays **primary**, the close error attaches as `suppressed`
+ * - work succeeded, close threw → the close error propagates; it is the only failure there is
+ *
+ * The same primary-plus-suppressed shape 6b's release routine and 6c's `parseOrClose` use, deliberately, so the
+ * ordering cannot drift between the three subsystems.
+ */
+async function closingAfter<T>(response: Response, work: () => Promise<T>): Promise<T> {
+  let result: T;
+  try {
+    result = await work();
+  } catch (primary: unknown) {
+    try {
+      await response.close();
+    } catch (closeError: unknown) {
+      throw new SuppressedError(primary, closeError, 'the decode failed and releasing the response also failed');
+    }
+    throw primary;
+  }
+  await response.close();
+  return result;
+}
+
+/**
  * Decode a response body directly through a {@link Deserializer} into the schema's type (SERDE-27).
  *
  * The body is **streamed**, never materialized first. The response is closed on every path — success, missing
- * body, codec failure, and stream failure alike — via `finally`, so no path can strand the connection.
+ * body, codec failure, and stream failure alike — so no path can strand the connection.
  *
  * Failure routing follows SERDE-12: only malformed-input and shape-mismatch failures are wrapped as
  * {@link DeserializationError} with the original chained; a genuine stream failure (`IoError`) propagates
@@ -967,7 +1047,7 @@ export async function decodeResponse<T>(
   typeName?: string,
 ): Promise<T> {
   const target = typeName ?? UNNAMED_TARGET;
-  try {
+  return closingAfter(response, async () => {
     const body = response.body;
     if (body === null) {
       throw new DeserializationError(`response carried no body to decode into ${target}`);
@@ -978,16 +1058,14 @@ export async function decodeResponse<T>(
       if (e instanceof IoError || e instanceof DeserializationError) throw e;
       throw new DeserializationError(`failed to decode the response body into ${target}`, {cause: e});
     }
-  } finally {
-    await response.close();
-  }
+  });
 }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/core && bun test src/serde/response-handlers.test.ts`
-Expected: 5 pass, 0 fail.
+Expected: 7 pass, 0 fail.
 
 - [ ] **Step 5: Commit**
 
@@ -1019,17 +1097,45 @@ import {HttpStatusError} from '../body/http-status-error.js';
 import {Status} from '../http/status.js';
 import {decodeSuccessResponse} from './response-handlers.js';
 
-/** Adds the status/header surface `decodeSuccessResponse` reads, on top of the Task 5 stand-in. */
+/**
+ * Adds the status/header surface `decodeSuccessResponse` reads, on top of the Task 5 stand-in.
+ *
+ * `text()`/`bytes()` are present because the 4xx/5xx branch delegates to 3b's real `toHttpError()`, which
+ * buffers a bounded copy of the error body — a stand-in carrying only `status`/`headers`/`body`/`close` would
+ * fail inside `toHttpError`, not inside the code under test, and the resulting error would be misleading.
+ * Both read the same `body` stream once, matching the real `Response`'s single-use discipline.
+ */
 function fakeStatusResponse(
   code: number,
   body: ReadableStream<Uint8Array> | null,
   headers: Readonly<Record<string, string>> = {},
 ): {response: Parameters<typeof decodeSuccessResponse>[0]; closes: () => number} {
   let closeCount = 0;
+  const drain = async (): Promise<Uint8Array> => {
+    if (body === null) return new Uint8Array();
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      if (value !== undefined) chunks.push(value);
+    }
+    reader.releaseLock();
+    const total = chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  };
   const response = {
     status: Status.of(code),
     headers: {get: (name: string) => headers[name.toLowerCase()]},
     body,
+    bytes: drain,
+    text: async () => new TextDecoder().decode(await drain()),
     async close(): Promise<void> {
       closeCount += 1;
     },
@@ -1130,14 +1236,16 @@ export async function decodeSuccessResponse<T>(
 
   const etag = response.headers.get('ETag') ?? null;
   const location = response.headers.get('Location') ?? null;
-  try {
-    throw new DeserializationError(
-      `${String(status.code)}: response status is not decodable into ${typeName ?? UNNAMED_TARGET}`,
-      {status: status.code, etag, location},
-    );
-  } finally {
-    await response.close();
-  }
+  // Routed through the same helper as `decodeResponse` rather than a `try { throw } finally { close }`: if the
+  // close fails here too, the status error must stay primary, not be replaced by it.
+  return closingAfter(response, () =>
+    Promise.reject(
+      new DeserializationError(
+        `${String(status.code)}: response status is not decodable into ${typeName ?? UNNAMED_TARGET}`,
+        {status: status.code, etag, location},
+      ),
+    ),
+  );
 }
 ```
 
@@ -1146,7 +1254,7 @@ Add `import {invariant} from '../invariant.js';` to the file's import block.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/core && bun test src/serde/response-handlers.test.ts`
-Expected: 10 pass, 0 fail (Task 5's five plus these five).
+Expected: 12 pass, 0 fail (Task 5's seven plus these five).
 
 - [ ] **Step 5: Commit**
 
@@ -2107,7 +2215,10 @@ test('an explicit null decodes to Null (SERDE-16)', () => {
 
 test('a present value decodes to Present with the inner schema applied (SERDE-16)', () => {
   const decoded = tristate(numberSchema).parse(5);
-  expect(decoded).toEqual({...decoded, kind: 'present', value: 5});
+  // Assert the fields directly. Spreading `decoded` into its own expectation (`{...decoded, kind: 'present'}`)
+  // would be a tautology that passes for any input.
+  expect(decoded.kind).toBe('present');
+  expect(decoded.kind === 'present' ? decoded.value : undefined).toBe(5);
 });
 
 test('the inner schema still rejects a wrong-typed present value', () => {

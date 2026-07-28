@@ -127,9 +127,13 @@
   <sub>spec · `docs/product-spec/appendix-b-conformance-test-checklist.md:15` · high · sha:0451cc7f3bb4</sub>
 - The pagination conformance suite verifies that per-call options reach every page exchange (PAGE-36).
   <sub>spec · `docs/product-spec/appendix-b-conformance-test-checklist.md:16` · high · sha:0451cc7f3bb4</sub>
-- The port's item-level generator wraps `yield* page.items` in a `finally` block that awaits `page.close()`, so an early `break` in the consumer's loop automatically triggers page closure with no wrapper type or documented convention required.
+- The port's item-level generator wraps `yield* page.items` in a `finally` block that awaits `page.close()`, so an early `break` in the consumer's loop automatically triggers page closure with no wrapper type or documented convention required. **Erratum (Phase 6c, 2026-07-28): correct about the `.return()`-on-abandon mechanism, wrong about close ordering — see Conflicts below.**
   <sub>design · `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md:19-31` · high · sha:d546f9973c4e</sub>
 
 ## Conflicts
+- **Item-view close ordering.** The Rules entry above (`PAGE-11`, `docs/product-spec/12-pagination.md:38`) requires the item-level view to eager-close each page **before** yielding any of that page's items, after copying them. The Reference entry above (`sdk-design-nodejs/07` §7.1) shows the opposite ordering — `yield*` inside a `try`, `close()` in the `finally` — which holds the response open for the entire time a consumer walks that page's items. **`PAGE-11` governs**, per the standing tie-breaker that the normative spec wins over an illustrative snippet; the cost is zero because `PAGE-2` guarantees materialized items survive close. Resolved in Phase 6c, which implements copy-items → close → yield and writes the erratum into `sdk-design-nodejs/07` §7.1.
+
+  The reason this needed recording rather than silently correcting: **the conformance test is weaker than the requirement.** Appendix B's `PAGE-11` check ("take one item from a multi-item first page and stop; assert the first page's response was closed") *passes* under the snippet's ordering, because an early `break` drives `.return()` and therefore the `finally`. Following the design doc would have shipped a MUST violation the checklist could not catch. Phase 6c's `lifecycle.test.ts` adds the assertion appendix B does not make — that the close is observed *before* the first item is yielded.
+  <sub>review · `docs/superpowers/specs/2026-07-28-phase6c-pagination-design.md` · high · sha:manual-6c-erratum</sub>
 
 ## Superseded

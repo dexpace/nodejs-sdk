@@ -16,7 +16,12 @@ unchanged.
 **Tech Stack:** TypeScript 5.8+, `bun test`, `fast-check` for the two query-splice invariants, native
 `SuppressedError`, platform `URL`. No new runtime dependencies. No `node:` imports.
 
-**Prerequisite:** Phases 0 through 6b implemented as their plans specify. This phase consumes:
+**Prerequisite:** Phases 0 through **5c** implemented as their plans specify. **6a and 6b are deliberately *not*
+prerequisites** — `§12`'s preamble declares the engine serde-agnostic and nothing in `§12` touches SSE, so this
+phase imports nothing either of them produces. 6c is listed last in the segmentation design because it is the
+segment most coupled to *earlier* phases (4c's `Runtime`, 5a's `FakeTransport`, 3b's `Response` body), not
+because it depends on its siblings; it can execute alone. One consequence for Task 11's closing gate: drop
+`verify:sse-37` from the command if 6b has not run, since the script will not exist. This phase consumes:
 
 - `packages/core/src/http/request.js` — `Request` (`method`, `url: URL`, `headers`, `body`, `newBuilder()`),
   `RequestBuilder` (`url(u)`, `build()`)
@@ -302,6 +307,23 @@ test('URLSearchParams-style canonicalization does NOT happen (PAGE-21)', () => {
   const out = spliceQueryParam(at('https://h/p?msg=a%20b&path=x:y&page=1'), 'page', '2');
   expect(query(out)).toBe('msg=a%20b&path=x:y&page=2');
 });
+
+test('the WHATWG query encode set is the one boundary of byte-for-byte preservation (PAGE-21)', () => {
+  // Assigning to `URL.search` percent-encodes C0 controls, space, " # < > and (on special schemes) ' — so an
+  // untargeted segment carrying one of those raw is rewritten. Every such character is one RFC 3986 already
+  // requires to be encoded in a query, so the only inputs affected were already non-conformant. Pinned here so
+  // the boundary is known rather than discovered, and recorded in the Deviation Ledger.
+  const out = spliceQueryParam(at('https://h/p?tag=<raw>&page=1'), 'page', '2');
+  expect(query(out)).toBe('tag=%3Craw%3E&page=2');
+
+  // Everything RFC 3986 permits raw in a query survives untouched — which is the case that actually matters.
+  const safe = spliceQueryParam(at('https://h/p?f=a:b/c!d$e(f)*g,h;i@j&page=1'), 'page', '2');
+  expect(query(safe)).toBe('f=a:b/c!d$e(f)*g,h;i@j&page=2');
+});
+
+test('stray empty segments are skipped, matching HTTP-31 query parsing', () => {
+  expect(query(spliceQueryParam(at('https://h/p?a=1&&b=2&page=1'), 'page', '2'))).toBe('a=1&b=2&page=2');
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -378,7 +400,13 @@ export function readQueryParam(url: URL, name: string): string | undefined {
   return undefined;
 }
 
-/** Split a raw query into `&`-separated segments, dropping the leading `?` and any stray empty segments. */
+/**
+ * Split a raw query into `&`-separated segments, dropping the leading `?` and any stray empty segments.
+ *
+ * Dropping empty segments (`?a=1&&b=2` → two segments) is not a byte-for-byte violation to apologize for — it
+ * is the same leniency `HTTP-31` already mandates for query *parsing*, "stray `&` is skipped." Doing something
+ * different here would put two disagreeing readings of the same query string in one codebase.
+ */
 function splitQuery(search: string): string[] {
   const raw = search.startsWith('?') ? search.slice(1) : search;
   return raw.length === 0 ? [] : raw.split('&').filter((segment) => segment.length > 0);
@@ -391,13 +419,24 @@ function nameOf(segment: string): string {
 }
 ```
 
-Note: `next.search = ...` is the one place a platform API touches the query, and it assigns a string that is
-already fully encoded, so no canonicalization pass runs over the untargeted segments.
+**One caveat on `next.search = ...`, and it is a real one.** This is the single place a platform API touches the
+query, and it is *not* inert: the WHATWG URL query setter runs the query percent-encode set over whatever it is
+given — C0 controls, space, `"`, `#`, `<`, `>`, and (on special schemes, which includes `https:`) `'`. The
+targeted parameter is unaffected, because `encodeQueryComponent` has already encoded every one of those. But an
+**untargeted** segment carrying a raw `<` comes back as `%3C`, which is a byte-for-byte change `PAGE-21` did not
+ask for.
+
+This is bounded and deliberate rather than an oversight, for two reasons: every character in that set is one
+RFC 3986 already requires to be percent-encoded inside a query, so the only inputs affected are queries that
+were already non-conformant, and the setter's rewrite moves them toward conformance rather than away; and the
+only way to avoid it entirely is to stop returning a `URL` and hand back a string, which would push the same
+problem onto every caller instead of solving it. Step 4's test pins the exact behavior so it stays a known
+boundary rather than a surprise, and the Deviation Ledger records it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/core && bun test src/pagination/query-splice.test.ts`
-Expected: 15 pass, 0 fail.
+Expected: 17 pass, 0 fail.
 
 - [ ] **Step 5: Write the property tests**
 
@@ -408,7 +447,14 @@ import {test} from 'bun:test';
 import fc from 'fast-check';
 import {readQueryParam, spliceQueryParam} from './query-splice.js';
 
-/** Segment names and values drawn from characters a real server actually sends, including hostile ones. */
+/**
+ * Segment names and values drawn from characters a real server actually sends, including hostile ones.
+ *
+ * The alphabet deliberately excludes `"`, `#`, `<`, `>`, and `'`: those sit in the WHATWG query percent-encode
+ * set, so assigning to `URL.search` rewrites them and byte-for-byte preservation genuinely does not hold. That
+ * boundary is pinned by its own named test above rather than being smuggled into a property that would then
+ * fail for a reason unrelated to the splice logic this property exists to check.
+ */
 const rawSegment = fc
   .tuple(fc.stringMatching(/^[a-z]{1,6}$/), fc.stringMatching(/^[a-zA-Z0-9:%._~-]{0,10}$/))
   .map(([name, value]) => `${name}=${value}`);
@@ -538,6 +584,30 @@ test('an empty items list with a next request is a valid non-terminal page (PAGE
   expect(info.items).toEqual([]);
   expect(info.nextRequest).toBe(next);
 });
+
+test('await using releases the page, where the runtime supports it (PAGE-3, PAGE-12)', async () => {
+  const {response, closes} = fakeResponse();
+  const page = makePage(response, [1]);
+
+  if (typeof Symbol.asyncDispose !== 'symbol') {
+    // The declared floor (Node 18.17) predates the symbol; close() is the supported path there. Asserted rather
+    // than skipped so this still means something on the verify:node-floor runner.
+    expect(page[Symbol.asyncDispose as unknown as symbol]).toBeUndefined();
+    await page.close();
+    expect(closes()).toBe(1);
+    return;
+  }
+
+  {
+    await using scoped = page;
+    expect(scoped.items).toEqual([1]);
+  }
+  expect(closes()).toBe(1);
+
+  // Dispose delegates to close, so it inherits Response.close()'s idempotence rather than adding a second guard.
+  await page.close();
+  expect(closes()).toBe(1);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -613,12 +683,49 @@ export class Page<T> {
     await this.#response.close();
   }
 }
+
+export interface Page<T> {
+  /**
+   * Scoped teardown for `await using`, delegating to {@link Page.close}.
+   *
+   * `PAGE-12` requires consumers of the page-level view to be *told* to wrap it in a scoped/auto-close
+   * construct, and this is that construct. `styleguide/typescript/13` §13.1–13.2 wants it independently: a
+   * resource-owning class should offer disposal rather than a bare `close()`, and where a `close()` remains,
+   * dispose delegates to it.
+   *
+   * **Optional, and deliberately so.** `Symbol.asyncDispose` landed in Node 18.18, one patch past this
+   * package's declared `>=18.17` floor — the version `verify:node-floor` pins — and TypeScript does not
+   * polyfill the well-known symbol for a library that *declares* the method, so the computed key silently
+   * becomes the string `"undefined"` at run time. Typing it non-optional would promise support the floor cannot
+   * honor. `close()` therefore remains the supported teardown on every runtime. Same treatment as 6b's
+   * `SseStream`; both become unconditional when `engines.node` moves past 18.18.
+   */
+  [Symbol.asyncDispose]?: () => Promise<void>;
+}
+
+// Guarded install — see the note above. A no-op on a runtime without the symbol, rather than a property whose
+// key is the literal string "undefined".
+if (typeof Symbol.asyncDispose === 'symbol') {
+  Object.defineProperty(Page.prototype, Symbol.asyncDispose, {
+    value: function asyncDispose(this: Page<unknown>): Promise<void> {
+      return this.close();
+    },
+    writable: true,
+    configurable: true,
+  });
+}
 ```
+
+**`lib` check, once for the phase.** Naming `Symbol.asyncDispose` in a type position needs `esnext.disposable`
+on the TypeScript `lib` list (`styleguide/typescript/13` §13.1). If 6b already added it to `tsconfig.base.json`,
+nothing to do; if 6b has not run, add `"lib": ["es2023", "esnext.disposable"]` to `compilerOptions` and re-run
+`bun run typecheck`. This changes only which types are visible — it emits nothing and does not move
+`engines.node`, which stays `>=18.17`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/core && bun test src/pagination/page.test.ts`
-Expected: 7 pass, 0 fail.
+Expected: 8 pass, 0 fail.
 
 - [ ] **Step 5: Commit**
 
@@ -680,6 +787,13 @@ import type {PageInfo} from './page.js';
 
 /**
  * A stateless parser turning one response into that page's items plus the next page's request (PAGE-5).
+ *
+ * **On `template`.** The glossary calls this "the original request template," but the engine passes the request
+ * that produced *this* response — i.e. it advances with the walk. That is deliberate and is what the built-in
+ * strategies need: `cursorStrategy` splices the new cursor onto the request actually just executed, so a walk
+ * accumulates one cursor parameter rather than re-deriving page N's URL from page 1's every time. Read the
+ * parameter as "the request to derive the next one from," and use `response.request` when you specifically want
+ * the executed request's own URL (`pageNumberStrategy` does).
  *
  * **Contract obligations on implementors** — none of these can be enforced by the type system, so they are
  * stated here and covered by the engine's own tests:
@@ -780,8 +894,30 @@ function transportOf(pages: number): FakeTransport {
   );
 }
 
-const initialRequest = (): Request =>
-  ({url: new URL('https://api.test/items?page=1')} as unknown as Request);
+/**
+ * A `Request` stand-in carrying the two members the engine and the strategies actually touch: `url`, and a
+ * `newBuilder()` chain for `PAGE-23`'s swap-only-the-URL rewrite.
+ *
+ * `newBuilder()` is not optional here — `threePageStrategy` below calls it on every non-terminal page, so a bare
+ * `{url}` cast would fail on the first parse with `template.newBuilder is not a function`, in every test in this
+ * file that walks more than one page.
+ */
+const requestAt = (href: string): Request =>
+  ({
+    url: new URL(href),
+    newBuilder() {
+      let target = new URL(href);
+      return {
+        url(next: URL) {
+          target = next;
+          return this;
+        },
+        build: () => requestAt(target.href),
+      };
+    },
+  }) as unknown as Request;
+
+const initialRequest = (): Request => requestAt('https://api.test/items?page=1');
 
 test('the item view flattens all pages in server order (PAGE-1)', async () => {
   const paginator = new Paginator({
@@ -1028,7 +1164,15 @@ export class Paginator<T> {
    * is closed at exhaustion or on abandonment via the generator's `finally` — which the runtime drives
    * automatically when a `for await` loop exits early through `break`, `return`, or a throw.
    *
-   * Single-use (PAGE-14): a second call fails loudly rather than silently restarting.
+   * **Consume this inside a scoped construct** (PAGE-12, MUST). A `for await` loop is one — it drives
+   * `.return()` on every exit path, including `break` and `throw`, so the held page is always released. Driving
+   * the iterator by hand is the case to be careful with: if you call `[Symbol.asyncIterator]()` yourself and
+   * then abandon it without calling `.return()`, the generator never resumes, its `finally` never runs, and the
+   * page it is holding stays open until the process exits. Either stay in a `for await`, or bind the pages you
+   * pull with `await using` (see {@link Page}), or call `.return()` on the iterator yourself.
+   *
+   * Single-use (PAGE-14): both a second `pages()` call and a second `[Symbol.asyncIterator]()` on the returned
+   * view fail loudly rather than silently restarting the walk.
    */
   pages(): AsyncIterable<Page<T>> {
     if (this.#pagesViewTaken) {
@@ -1038,7 +1182,22 @@ export class Paginator<T> {
     }
     this.#pagesViewTaken = true;
     const walk = this.#walk.bind(this);
-    return {[Symbol.asyncIterator]: () => walk()[Symbol.asyncIterator]()};
+    let iteratorTaken = false;
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<Page<T>> => {
+        // PAGE-14 governs obtaining the *iterator*, not calling pages(), and guarding only the method would
+        // leave the exact hole the requirement names: `for await` calls Symbol.asyncIterator afresh each time,
+        // so iterating one returned view twice would silently restart the entire walk. 6b's SseStream guards at
+        // this same level, for the same reason.
+        if (iteratorTaken) {
+          throw new PaginationError(
+            'the page-level view is single-use; its iterator may be obtained at most once',
+          );
+        }
+        iteratorTaken = true;
+        return walk()[Symbol.asyncIterator]();
+      },
+    };
   }
 
   /** The one drive routine both views share. */
@@ -1072,9 +1231,28 @@ export class Paginator<T> {
         request = info.nextRequest;
         yield held;
       }
+    } catch (primary: unknown) {
+      // The walk itself failed — a transport rejection, or a parse failure already wrapped by `parseOrClose`.
+      // Release before propagating, and keep the walk's failure primary if the release also fails (PAGE-15):
+      // a bare `finally` would let the close error replace the cause the caller actually needs to see.
+      const stranded = held;
+      held = undefined; // so the `finally` below does not attempt a second close on the same page
+      if (stranded !== undefined) {
+        try {
+          await stranded.close();
+        } catch (closeError: unknown) {
+          throw new SuppressedError(
+            primary,
+            closeError,
+            'the pagination walk failed and releasing the current page also failed',
+          );
+        }
+      }
+      throw primary;
     } finally {
       // Covers exhaustion, an early `break`, and a consumer throw — the runtime calls `.return()` on the
-      // generator, which runs this block (PAGE-12, PAGE-27, PAGE-32).
+      // generator, which runs this block (PAGE-12, PAGE-27, PAGE-32). No error is in flight on these paths, so
+      // a close failure here surfaces on its own, which is what PAGE-15 asks for.
       if (held !== undefined) await held.close();
     }
   }
@@ -1242,6 +1420,90 @@ test('the page view is single-use — a second call throws (PAGE-14)', () => {
   });
   paginator.pages();
   expect(() => paginator.pages()).toThrow(PaginationError);
+});
+
+test('the page view is single-use at the ITERATOR level too (PAGE-14)', async () => {
+  // The guard that matters. `for await` calls Symbol.asyncIterator afresh every time, so a view guarded only at
+  // the pages() level would let a second loop over the *same* view silently restart the whole walk — the exact
+  // "silently restart" PAGE-14 forbids, and invisible to the test above.
+  const transport = transportOf(2);
+  const paginator = new Paginator({transport, initialRequest: initialRequest(), strategy: twoPageStrategy()});
+  const view = paginator.pages();
+
+  for await (const _page of view) {
+    /* drain */
+  }
+  const sendsAfterFirstPass = transport.sendCount;
+
+  // `[Symbol.asyncIterator]()` throws synchronously, which `for await` inside an async IIFE turns into a
+  // rejection — so assert on the promise, not with a synchronous `toThrow`.
+  await expect(
+    (async () => {
+      for await (const _page of view) {
+        /* must not restart */
+      }
+    })(),
+  ).rejects.toBeInstanceOf(PaginationError);
+  expect(transport.sendCount).toBe(sendsAfterFirstPass);
+});
+
+test('a transport failure surfaces the original cause, unwrapped (PAGE-28)', async () => {
+  const transportFailure = new IoError('connection reset');
+  const transport = {
+    send: () => Promise.reject(transportFailure),
+  } as unknown as FakeTransport;
+  const paginator = new Paginator({transport, initialRequest: initialRequest(), strategy: twoPageStrategy()});
+
+  let caught: unknown;
+  try {
+    for await (const _page of paginator.pages()) {
+      /* never reached */
+    }
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  // No pagination-flavored wrapper: PAGE-28 wants the cause the caller can actually act on.
+  expect(caught).toBe(transportFailure);
+  expect(caught).not.toBeInstanceOf(PaginationError);
+});
+
+test('a walk failure keeps priority over a failing release of the held page (PAGE-15, PAGE-28)', async () => {
+  // Page 1 is delivered and held; page 2's fetch fails. Releasing page 1 then fails too. The transport failure
+  // is what the caller needs; the close failure rides along as suppressed. A bare `finally` would invert this.
+  const transportFailure = new IoError('connection reset');
+  const closeFailure = new IoError('close failed');
+  let sends = 0;
+  const transport = {
+    send: () => {
+      sends += 1;
+      if (sends > 1) return Promise.reject(transportFailure);
+      return Promise.resolve(
+        countingResponse({
+          status: 200,
+          headers: {'X-Page': '1'},
+          body: '{}',
+          onCancel: () => {
+            throw closeFailure;
+          },
+        }),
+      );
+    },
+  } as unknown as FakeTransport;
+  const paginator = new Paginator({transport, initialRequest: initialRequest(), strategy: twoPageStrategy()});
+
+  let caught: unknown;
+  try {
+    for await (const _page of paginator.pages()) {
+      /* advance to the failing second fetch */
+    }
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(SuppressedError);
+  expect((caught as SuppressedError).error).toBe(transportFailure);
+  expect((caught as SuppressedError).suppressed).toBe(closeFailure);
 });
 
 test('a parse failure closes the response inline and propagates the parse error (PAGE-13)', async () => {
@@ -1965,13 +2227,24 @@ test('a relative path reference resolves against the response URL (PAGE-19)', as
 });
 
 test('an unresolvable target ends the stream rather than throwing (PAGE-19)', async () => {
+  // Picking this fixture takes care. With a base supplied, WHATWG `URL` resolves almost *anything* as a
+  // relative reference rather than failing — `ht!tp://%%%` has no valid scheme, so it parses happily as a path
+  // and yields a defined next request, which would make this test assert nothing. A genuinely unparseable
+  // target needs a valid scheme and a broken authority, so the absolute-URL path is taken and fails: `http://[`
+  // opens an IPv6 literal that never closes.
   const strategy = linkHeaderStrategy<string>({extract: () => Promise.resolve(['a'])});
   const info = await strategy.parse(
-    response({headers: {link: ['<ht!tp://%%%>; rel="next"']}}),
+    response({headers: {link: ['<http://[>; rel="next"']}}),
     template('https://api.test/items'),
   );
   expect(info.nextRequest).toBeUndefined();
   expect(info.items).toEqual(['a']);
+});
+
+test('the fixture above really is unparseable — the guard is not vacuous (PAGE-19)', () => {
+  expect(() => new URL('http://[', 'https://api.test/items')).toThrow();
+  // And the near-miss that does NOT throw, pinned so nobody "simplifies" the fixture back to it later.
+  expect(() => new URL('ht!tp://%%%', 'https://api.test/items')).not.toThrow();
 });
 
 test('no Link header ends the stream (PAGE-18)', async () => {
@@ -2299,13 +2572,15 @@ test('pages are closed as the consumer advances and at exhaustion (PAGE-3, PAGE-
   expect(closed).toEqual(['a', 'b']);
 });
 
-test('the cap bounds a fetcher pair that never terminates (PAGE-9)', async () => {
+test('the cap bounds a fetcher pair that never terminates, fetching nothing extra (PAGE-9)', async () => {
+  const closed: string[] = [];
   let calls = 0;
   const iterable = paginateWithFetchers<string>({
-    first: () => Promise.resolve({page: fakePage(['a'], () => undefined), nextLink: '/loop'}),
+    first: () => Promise.resolve({page: fakePage(['a'], () => closed.push('a')), nextLink: '/loop'}),
     next: () => {
       calls += 1;
-      return Promise.resolve({page: fakePage(['x'], () => undefined), nextLink: '/loop'});
+      const label = `x${String(calls)}`;
+      return Promise.resolve({page: fakePage([label], () => closed.push(label)), nextLink: '/loop'});
     },
     maxPages: 3,
   });
@@ -2314,7 +2589,39 @@ test('the cap bounds a fetcher pair that never terminates (PAGE-9)', async () =>
   for await (const _page of iterable) delivered += 1;
 
   expect(delivered).toBe(3);
+  // Three pages delivered means the fetcher ran twice, not three times: the third call would produce a fourth
+  // page the cap forbids delivering, and a page fetched but never delivered is a page nobody closes.
   expect(calls).toBe(2);
+  // Every page that was fetched was also closed — no leak on the capped path.
+  expect(closed.sort()).toEqual(['a', 'x1', 'x2']);
+});
+
+test('a throwing fetcher releases the held page, keeping its own failure primary (PAGE-15)', async () => {
+  const fetcherFailure = new Error('page 2 fetch blew up');
+  const closeFailure = new Error('close failed');
+  const iterable = paginateWithFetchers<string>({
+    first: () =>
+      Promise.resolve({
+        page: fakePage(['a'], () => {
+          throw closeFailure;
+        }),
+        nextLink: '/p2',
+      }),
+    next: () => Promise.reject(fetcherFailure),
+  });
+
+  let caught: unknown;
+  try {
+    for await (const _page of iterable) {
+      /* advance to the failing fetch */
+    }
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(SuppressedError);
+  expect((caught as SuppressedError).error).toBe(fetcherFailure);
+  expect((caught as SuppressedError).suppressed).toBe(closeFailure);
 });
 ```
 
@@ -2390,17 +2697,40 @@ export function paginateWithFetchers<T>(init: FetcherPaginationInit<T>): AsyncIt
         let current = await init.first(options);
 
         while (current !== undefined) {
-          if (init.maxPages !== undefined && delivered >= init.maxPages) return;
-
           if (held !== undefined) await held.close();
           held = current.page;
           delivered += 1;
           yield held;
 
+          // PAGE-9: stop *before* fetching the page that would exceed the cap. Checking at the top of the loop
+          // instead is subtly wrong twice over: it calls the next-page fetcher one extra time, and the page
+          // that fetcher returns is never assigned to `held`, so the `finally` below cannot close it and its
+          // response leaks. The strategy-based engine gets this right by checking before `transport.send`;
+          // here the fetch happens at the bottom of the loop, so the check has to move with it.
+          if (init.maxPages !== undefined && delivered >= init.maxPages) return;
+
           const key = nextKey(current);
           if (key === undefined) return;
           current = await init.next(key, options);
         }
+      } catch (primary: unknown) {
+        // A fetcher threw. Release the held page before propagating, keeping the fetcher's failure primary if
+        // the release also fails — same shape as `Paginator.#walk`, deliberately, so the two engines cannot
+        // drift on suppression ordering.
+        const stranded = held;
+        held = undefined;
+        if (stranded !== undefined) {
+          try {
+            await stranded.close();
+          } catch (closeError: unknown) {
+            throw new SuppressedError(
+              primary,
+              closeError,
+              'a pagination fetcher failed and releasing the current page also failed',
+            );
+          }
+        }
+        throw primary;
       } finally {
         if (held !== undefined) await held.close();
       }
@@ -2420,7 +2750,7 @@ function nextKey<T>(page: FetcherPage<T>): string | undefined {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/core && bun test src/pagination/fetchers.test.ts`
-Expected: all pass (11 cases counting the `test.each` expansion).
+Expected: all pass (13 cases counting the `test.each` expansion).
 
 - [ ] **Step 5: Commit**
 
@@ -2490,9 +2820,23 @@ test('nothing under src/pagination/ uses URLSearchParams (PAGE-21)', async () =>
 });
 ```
 
-The last two use `node:fs`, which is permitted in a test file — the zero-`node:` invariant governs shipped
-source under `src/`, and `verify:seam-1` checks the built output, not the test tree. If the project's lint rule
-does not carve out `*.test.ts`, move these two assertions into a `scripts/` check instead of weakening the rule.
+Two caveats on the last two assertions.
+
+`node:fs` in a test file is permitted — the zero-`node:` invariant governs shipped source under `src/`, and
+`verify:seam-1` checks the built output, not the test tree. If the project's lint rule does not carve out
+`*.test.ts`, move these two assertions into a `scripts/` check rather than weakening the rule.
+
+More importantly, `readdirSync('src/pagination')` is **relative to the process working directory**, so it only
+resolves under `cd packages/core && bun test` and silently throws under a repo-root `bun test` — which is what
+Task 11 Step 7's gate runs. Anchor it to the module instead:
+
+```typescript
+const paginationDir = new URL('./pagination/', import.meta.url);
+const names = readdirSync(paginationDir).filter((f) => f.endsWith('.ts'));
+const sourceOf = (name: string) => readFileSync(new URL(name, paginationDir), 'utf8');
+```
+
+A guard that quietly does not run in CI is worse than no guard, because it reads as coverage.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2534,7 +2878,13 @@ Add the pagination engine: `Paginator` with item- and page-level views, `Page`/`
 unchanged.
 ```
 
-- [ ] **Step 5: Write the `sdk-design-nodejs/07` erratum**
+- [ ] **Step 5: Write the `PAGE-11` erratum — in _both_ documents that carry the wrong ordering**
+
+`docs/knowledge/pagination.md` reproduces the same close-after-yield claim in its Reference section, directly
+beside the correct close-before-yield MUST in its Rules section. The knowledge corpus is the standing
+tie-breaker every later phase consults, so an erratum that lands only in `sdk-design-nodejs/07` leaves the
+contradiction live exactly where the next phase will look. Both get amended; the knowledge note's `## Conflicts`
+section is the structural home for a Rules-vs-Reference disagreement.
 
 Append to §7.1 of `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md`, immediately after the
 item-level generator snippet:
@@ -2548,6 +2898,12 @@ item-level generator snippet:
 > `PAGE-11`'s own stated conformance test, which is why this is recorded here rather than silently corrected —
 > the checklist is weaker than the requirement.
 ```
+
+Then confirm `docs/knowledge/pagination.md` carries the same correction: an `## Conflicts` entry naming the
+Rules-vs-Reference disagreement, `PAGE-11` as the governing side, and `lifecycle.test.ts`'s ordering assertion as
+the proof — plus an inline "**Erratum (Phase 6c)**" marker on the Reference bullet itself, so a reader who only
+skims that section still sees it. (This was written during the 2026-07-28 plans review; verify it is present
+rather than re-adding it.)
 
 - [ ] **Step 6: Close out the roadmap rows**
 
@@ -2588,3 +2944,6 @@ git commit -m "feat(core): promote the pagination surface and close Phase 6 (PAG
 | One engine, not a blocking one and an async one | `§12.9`'s framing | One async primitive in this runtime. `PAGE-6` explicitly anticipates a port where "invoking a walk method is itself the consumption trigger" |
 | `items()` is re-iterable while `pages()` is single-use | `PAGE-14` | `PAGE-14` scopes single-use to the page-level view; `PAGE-8` requires independent iterations to work. The asymmetry is in the spec, not introduced here |
 | The two-outstanding-pages buffer is one held page, not a look-ahead slot | `PAGE-12` | An async iterator has no separate `hasNext()` probe to strand a prefetched page — a pull either delivers a page or ends. The generator's `finally` covers the one window that does exist |
+| Byte-for-byte query preservation yields to the WHATWG query percent-encode set | `PAGE-21` | Assigning to `URL.search` encodes C0 controls, space, `"`, `#`, `<`, `>`, and `'`. Every one is a character RFC 3986 already requires to be encoded inside a query, so only already-non-conformant inputs are affected and the rewrite moves them toward conformance. Avoiding it entirely would mean returning a string instead of a `URL`, pushing the problem onto every caller. Pinned by a named test rather than left to be discovered |
+| `PAGE-12`'s "up to two live pages, wrap in a scoped construct" is discharged as documentation plus `await using` | `PAGE-12` | Only one page is ever live here (a page is assigned to `held` before it is yielded), so the reference's two-page window does not open. The residual hazard is a hand-driven iterator abandoned without `.return()`, which no engine can defend against — hence the MUST-level *telling* the requirement actually asks for, on `pages()`' TSDoc, plus `Page`'s optional `[Symbol.asyncDispose]` |
+| `[Symbol.asyncDispose]` on `Page` is optional and runtime-guarded, not an `implements AsyncDisposable` | `styleguide/typescript/13` §13.1–13.2 | The symbol landed in Node 18.18, one patch past the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not polyfill it for a declaring library. `close()` stays the supported path everywhere; dispose delegates to it. Unconditional once the floor moves. Identical treatment to 6b's `SseStream` |
