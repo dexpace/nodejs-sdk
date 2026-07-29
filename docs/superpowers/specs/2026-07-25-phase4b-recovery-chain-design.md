@@ -1,6 +1,11 @@
 # Phase 4b — Recovery-Chain Primitives — Design
 
-**Status:** Draft, approved for planning.
+**Status:** Draft, approved for planning. **⛔ Two open decisions block execution** — see the blocking notice at
+the top of `docs/superpowers/plans/2026-07-25-phase4b-recovery-chain.md`. In short: `RECOV-12`'s
+`SuppressedError` does not exist on the declared `engines.node` floor (a cross-phase problem shared with 5a, 6b
+and 6c), and this phase's zero-assertion module contradicts the corpus's 2-per-function average. Both are
+tracked in the roadmap's "Open Findings — Phase 4b Validation Review (2026-07-28)" section. The rest of that
+review's findings are applied to this document.
 
 **Purpose:** Implement the recovery-chain primitives — `Outcome<T>`, the request and response recovery chains,
 the unified dispatch orchestrator, the cancellation-wrapping helper, and the status→typed-exception mapping step
@@ -18,6 +23,13 @@ throughout), `docs/sdk-design-nodejs/05-pipeline-architecture.md` (Node-port map
 Every `RECOV-N` in `§8.2` is dispositioned here. Retry itself (backoff, budget, pacing headers) is Phase 5's
 resilience layer built *on top of* these primitives (per `§8.3`) — 4b ships the fold/orchestrator machinery a
 retry step will later wrap, not retry behavior itself.
+
+Concretely, appendix C's remaining `RECOV-*` IDs land as follows, so none of them reads as a silent drop against
+the consolidated index: `RECOV-17`–`RECOV-31` and `RECOV-34` (classification, re-sendability, budgets, backoff,
+pacing headers, attempt stamping, config validation) → **Phase 5a**; `RECOV-32` (idempotency-key injection) →
+**Phase 5a**, which ships it despite it not being retry mechanics because it is retry-*semantic*; `RECOV-33`
+(client-identity header composition) → **Phase 7a**, alongside the `CFG-36` build/runtime descriptor that feeds
+it. Note `RECOV-33` is **not** Phase 5 — the "Phase 5's resilience layer" sentence above does not cover it.
 
 **Primitives only, no default chain.** 4b ships `Outcome`/`fold`, the two recovery chain classes, the
 orchestrator, the cancellation helper, and the status-mapping step as standalone building blocks. No
@@ -143,6 +155,12 @@ only copies the response chain's lists and retains the request chain's caller-su
 an asymmetry the spec text itself flags and recommends a port not copy. This design copies both anyway, per the
 spec's own "a port SHOULD copy there too," logged as a deliberate divergence in the ledger below.
 
+`RECOV-14`'s **second** normative clause — steps safe for concurrent invocation, per-request state never on the
+step instance — is satisfied structurally and must stay that way: after construction a chain holds nothing but a
+frozen-by-convention step array, and `apply()` keeps every piece of per-call state (`current`) in a local. One
+chain instance is therefore safe under concurrent `apply()` calls, and a later phase must not add per-call
+bookkeeping to a chain field. Tested, not just asserted — see Testing below.
+
 ## Orchestrator (`dispatchWithRecovery`)
 
 ```typescript
@@ -224,12 +242,22 @@ there and carry the disposition wholly in Phase 10's ledger rather than keeping 
 ## Status→Typed-Exception Mapping Step (`RECOV-15`/`RECOV-16`)
 
 ```typescript
-const statusMappingStep: ResponseStep = async (response) => {
+async function statusMappingStep(response: Response): Promise<Response> {
   const httpError = await toHttpError(response);
   if (httpError === null) return response;
   throw httpError;
-};
+}
+
+statusMappingStep satisfies ResponseStep;
 ```
+
+A named `function` declaration, not `const statusMappingStep: ResponseStep = async (response) => …`:
+`docs/knowledge/function-design.md:18-21` reserves arrows for inline callbacks and requires top-level named
+declarations for module symbols, which also survive in stack traces more reliably — worth something for a
+function whose whole job is to `throw`. `func-style`'s `allowArrowFunctions: true` would not have flagged the
+arrow form, so this is a corpus rule the lint gate does not enforce. The trailing `satisfies` keeps the
+compile-time proof that the signature still conforms to `ResponseStep`, which the discarded type annotation was
+providing.
 
 `toHttpError()` (Phase 3b, unchanged) already satisfies both requirements in full: it treats only 400..599 as
 errors and returns non-error statuses unchanged (`RECOV-15`), and it buffers the error body into a bounded
@@ -258,6 +286,8 @@ the violation — retrofit it before Phase 3b is executed, or record it in Phase
 ## File Layout
 
 ```
+packages/core/src/invariant.ts   # MODIFY: add assertNever()
+
 packages/core/src/recovery/
   outcome.ts          # Outcome<T>, success(), failure(), fold()
   request-chain.ts    # RequestRecoveryChain
@@ -267,8 +297,15 @@ packages/core/src/recovery/
   status-mapping.ts   # statusMappingStep()
 ```
 
-No new error leaf files: the only new failure surface is `wrapCancellation()`'s `invariant()` crash, which is a
-programmer-error assertion, not a catchable `DexpaceError` subclass.
+`invariant.ts` is the one file outside `recovery/` this sub-phase touches. `docs/knowledge/data-modeling.md`
+requires every discriminated-union `switch` to close with `default: return assertNever(x)`, "defined once and
+imported everywhere," and no prior phase plan actually adds it — `fold()` is the codebase's first such `switch`,
+so `assertNever` lands here as a small addition alongside the `invariant()`/`InvariantViolation` that module
+already exports.
+
+No new error leaf files: the only new failure surface is `assertNever`'s `InvariantViolation` crash, which is a
+programmer-error assertion, not a catchable `DexpaceError` subclass. `wrapCancellation()` does **not** crash —
+see its section above for why an `invariant()` there would violate `RECOV-2`.
 
 ## Deviation Ledger (for Phase 10)
 
@@ -279,6 +316,8 @@ programmer-error assertion, not a catchable `DexpaceError` subclass.
 | `RECOV-11`'s cancellation re-assertion is a no-op — `wrapCancellation` is `failure(error)` and never throws | `RECOV-11`'s literal "re-assert the cancellation signal" | `AbortSignal.aborted` is durable once fired, unlike a clearable `Thread.interrupt()` flag, and the SDK never holds the caller's `AbortController` — nothing to re-assert. Not reframed as an `invariant()` crash on a signal mismatch: `Transport` is a third-party seam, so that is an operational failure rather than a violated precondition, and throwing from inside the orchestrator's catch would violate `RECOV-2` |
 | No new per-status typed-exception hierarchy for `RECOV-15` | `RECOV-15`'s "matching typed exception" (which some ports read as a per-status class family) | Phase 3b's flat `HttpStatusError` (carrying `status` + buffered body) already satisfies this, and the corpus caps custom error hierarchies at two levels; a per-status class family would violate that cap |
 | No default/preset recovery chain shipped in 4b | none — scope decision | Matches 4a's "primitives only" discipline; Phase 5 (retry) is the first real consumer and decides its own composition |
+| `#private` fields and methods on both chain classes (`#steps`, `#responseSteps`, `#recoverySteps`, `#runResponsePhase`, `#runRecoveryPhase`) | `docs/knowledge/data-modeling.md:20-23` — `private` is the default; `#private` requires a comment justifying a genuine runtime-privacy requirement | **No runtime-privacy claim is made.** These classes are unfrozen holders of a readonly array, unlike 3b's `Response`, whose `#closed` genuinely must survive `Object.freeze(this)`. `#private` is the established package-wide field style (Phase 1, 3b, and 4a's `ContextStore` all use it), so switching 4b alone would fragment the package and trip the corpus's own "never mix two styles within a module/package" rule. Recorded as a project-wide deviation for Phase 10 to reconcile in one pass, not fixed here |
+| `fold(outcome, onSuccess, onFailure)` takes three positional parameters | `docs/knowledge/function-design.md:22-23` — "an options object when it has 3 or more parameters" | The prose rule is one parameter stricter than its own stated enforcement (`max-params: ['error', 3]` errors at four), so this passes lint while violating the corpus text — flagged as a corpus conflict in the roadmap, not silently ignored. Three positional parameters match Phase 2's already-shipped `Transport.send(request, options?, signal?)`; `fold(outcome, {onSuccess, onFailure})` would make 4b the only module in the package reading differently for a canonical two-branch fold |
 
 ## Testing
 
@@ -290,9 +329,15 @@ building a shared test double before a real consumer needs one.
 
 - `RequestRecoveryChain.apply()` — for an arbitrary sequence of pure request transforms, the result equals
   applying each in order; an empty chain is the identity (`RECOV-3`).
-- `ResponseRecoveryChain.apply()` — for an arbitrary mix of throwing/non-throwing response and recovery steps,
-  `apply()` never throws (`RECOV-8`), and the response-step phase never runs when the input outcome is already a
-  `Failure` (`RECOV-4`).
+- `ResponseRecoveryChain.apply()` — for an arbitrary mix of throwing/non-throwing **response and recovery**
+  steps, over a seed outcome that is arbitrarily a `Success` or a `Failure`: `apply()` always settles and never
+  re-raises a step's throw (`RECOV-8`), and no response step runs on any generated case whose seed was already a
+  `Failure` (`RECOV-4`). Both halves must be generated — a generator emitting recovery steps only, or seeding
+  `Success` only, proves the first law and leaves the second to an example test.
+
+**Concurrency (`RECOV-14`'s second clause):** two `apply()` calls interleaved on a *single* chain instance do not
+observe each other's state — each sees only the outcome it was handed. Guards the structural property that all
+per-call state lives in `apply()`'s locals rather than on a chain field.
 
 **Conformance examples** transcribed from `§8.2`'s own *Conformance:* clauses (`RECOV-2`: a throwing request step
 and a throwing transport each surface as a `Failure` to a recovery hook; `RECOV-15`/`16`: 400..599 produce a

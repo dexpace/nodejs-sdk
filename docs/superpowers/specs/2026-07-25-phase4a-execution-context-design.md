@@ -70,12 +70,21 @@ type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
 
 Free functions: `createDispatchContext(init?)`, `createRequestContext(request, init?)`,
 `createExchangeContext(request, response, init?)` (direct, off-chain construction for all three flavors, each
-defaulting `key` to a fresh `Symbol()` per call — `CTX-5` — and accepting an explicit key to pin for
-value-equality — `CTX-6`), and the
+defaulting `key` to a fresh `Symbol()` per call and accepting an explicit key to pin for value-equality —
+both halves of `CTX-5`; `Symbol()`'s per-call freshness is also what satisfies `CTX-6`'s "globally distinct
+across the whole process and across all three context flavors"), and the
 two promotions: `promoteToRequest(context: DispatchContext, request: Request, operationName?: string):
 RequestContext`, `promoteToExchange(context: RequestContext, response: Response): ExchangeContext`. Both carry
 `key` and `instrumentation` forward by reference, unchanged (`CTX-2`, `CTX-3`), and return a fresh frozen object
 rather than mutating the source (`CTX-2`, `CTX-7`).
+
+**Each `create*` freezes the `instrumentation` bundle it is handed.** `Object.freeze` is shallow
+(`docs/knowledge/data-modeling.md:42`), so freezing the context object alone leaves a caller-supplied bundle
+writable behind the `instrumentation` slot — a caller keeping that reference could flip `traceId`/`isValid`
+after construction and every context in the chain would change underneath, breaking `CTX-7`'s "contexts MUST be
+immutable." The factories therefore call `Object.freeze(instrumentation)` in place before building, which keeps
+the reference identity `CTX-2`'s carry-forward and the tests both depend on. `noopInstrumentationBundle` is
+already frozen, so the default path is a no-op.
 
 The `create*` trio takes its optional inputs as one trailing `ContextInit` object
 (`{operationName?, instrumentation?, key?}`, each spelled `?: T | undefined` for `exactOptionalPropertyTypes`)
@@ -111,10 +120,16 @@ const noopInstrumentationBundle: InstrumentationBundle = Object.freeze({
 });
 ```
 
-**No `contextsEqual()` utility.** `CTX-6` — "two default-constructed contexts with otherwise identical fields are
-NOT equal" — reads as a *description* of a consequence (default contexts get distinct `Symbol()` keys, so any
-would-be equality check naturally differs), not a mandate to ship a new equality API. Nothing in `§7` or the next
-two sub-phases calls for comparing contexts by value. Revisit if 4b or 4c turns out to need one.
+`tracerFactory` closing over nothing and returning `undefined` is `CTX-20`'s "defaults to a no-op that emits
+nothing, so untraced call sites pay zero tracing cost"; its concurrency clause ("safe to invoke concurrently
+from multiple threads") is satisfied by construction — the function reads no state, and Node runs one JS thread.
+
+**No `contextsEqual()` utility.** `CTX-5` — "two directly-constructed contexts with otherwise identical fields
+are NOT equal" — reads as a *description* of a consequence (default contexts get distinct `Symbol()` keys, so any
+would-be equality check naturally differs), not a mandate to ship a new equality API. Its operative half —
+"callers who require value-equality MUST be able to pin an explicit shared key at construction" — *is*
+implemented, via `ContextInit.key`. Nothing in `§7` or the next two sub-phases calls for comparing contexts by
+value. Revisit if 4b or 4c turns out to need one.
 
 ## `ContextStore`
 
@@ -129,7 +144,7 @@ class ContextStore {
   readonly #maxEntries: number;
 
   // rejects maxEntries < 1, which is what lets #drain skip an otherwise-unreachable in-loop guard
-  constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) { /* RangeError on a non-positive-integer cap */ }
+  constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) { /* invariant() on a non-positive-integer cap */ }
 
   install(context: ExecutionContext): void { /* CTX-8: install-or-replace, never throws */ }
   installIfAbsent(context: ExecutionContext): void { /* CTX-8: reject-on-duplicate */ }
@@ -139,8 +154,14 @@ class ContextStore {
   get size(): number { /* current entry count -- the observable 4b/4c tests assert the cap and eviction against */ }
 }
 
-export const contextStore = new ContextStore(); // CTX-4/5: one process-wide store
+export const contextStore = new ContextStore(); // the one registry 4c's Runtime installs into
 ```
+
+A non-positive or non-integer cap is a violated precondition — a programmer error — so it fails through
+`invariant` from `../invariant.js` (`docs/knowledge/assertions.md:4`, `docs/knowledge/error-handling.md:36`),
+not an ad-hoc `if (!x) throw`. `install`/`installIfAbsent`/`close` additionally assert their postconditions
+(`assertions.md:6`'s 2-per-function average), which is what makes a drain that failed to converge crash at the
+insert rather than surface later as an unexplained cap breach.
 
 `CTX-7`'s thread-safety requirement is satisfied by construction: Node's single-threaded event loop means no two
 synchronous `Map` mutations ever interleave, collapsing the reference's real concurrency primitive (a
@@ -152,11 +173,24 @@ Draining (`CTX-11`/`12`) is a post-insert loop, not a single check-then-evict, e
 (`Map` iteration order) each round — a valid, cheap choice given `CTX-13` disclaims any retention guarantee at
 all, including for the just-inserted entry; callers must not rely on which entry survives.
 
+The store holds its contexts in a plain `Map` — a strong reference, never a `WeakRef`/`WeakMap` — which is
+`CTX-19`: a registered context must keep its whole `Request`+`Response` graph reachable while it stays in the
+store, and the bounded cap (`CTX-11`), not garbage collection, is the leak backstop.
+
 Both the class and the singleton are exported: the class so a test can construct an isolated, small-capped
-instance to exercise draining without depending on or polluting global state; the singleton because 4b/4c's real
-code imports and uses exactly that one process-wide store, per `CTX-4`/`CTX-5`'s "globally distinct... across the
-whole process" framing — a true singleton is the direct, faithful translation of "process-wide" into Node, not a
-per-client instance.
+instance to exercise draining without depending on or polluting global state; the singleton because 4c's
+`Runtime.send()` needs one registry shared by every call, and threading a store handle down through the pipeline
+builder, the runtime, and every step just to reach it would be a wide API change for no observable gain.
+
+**This is a deliberate deviation from `docs/knowledge/variables-and-declarations.md:22`'s ban on module-level
+mutable state, and it is a real cost, not a free one.** No `CTX-N` requires the store to be a module global —
+`CTX-4`/`CTX-5`/`CTX-6`'s "globally distinct... across the whole process" governs *call-key* uniqueness, not
+store topology, and the styleguide's sanctioned alternative ("a store passed as a parameter") would satisfy `§7`
+just as well. The reason to accept the deviation is 4c's ergonomics; the cost the rule names — "it poisons test
+determinism by carrying state between test cases in the same process" — is real and lands on both 4a's and 4c's
+suites, since `bun test` runs every file in one process. The mitigation is a testing rule, not a code one:
+**tests construct their own `new ContextStore()` and never assert against the singleton's `size`** (see Testing
+below). Logged in the Deviation Ledger for Phase 10.
 
 **One new error leaf:** `DuplicateContextKeyError extends DexpaceError` (flat, per the discipline 3b's checkpoint
 retrofit established), thrown only by `installIfAbsent`, carrying `readonly key: symbol`.
@@ -193,11 +227,21 @@ applies regardless of whether the barrel is further re-exported. 4c's pipeline i
 | `noopInstrumentationBundle.activeSpan` is `undefined`, not a no-op span *object* | `CTX-15`'s "a no-op span" | Follows from the row above: with `activeSpan` typed `unknown` there is no `Span` shape to build a no-op instance of, so absence is the only honest encoding. Partial, not total — every other `CTX-15` sentinel (all-zero ids, zero flags, empty state, `isValid`/`isRemote` false, no-op `tracerFactory`) ships exactly as specified. Revisit when Phase 7's tracing adapter defines `Span` |
 | `CTX-17`'s registration-at-promotion half not implemented in 4a | `CTX-17` | Only the negative half (no auto-register at construction) is structural here; installing on first promotion needs the pipeline that owns the store handle. Retargeted to **4c**, whose plan must close it — not a permanent deviation |
 | `create*` take a `ContextInit` options object, not positional `instrumentation`/`key`/`operationName` | — (no spec text; an ergonomics/lint decision) | `max-params` 3 counts optional parameters, and Phase 1 reserves the disable for private builder constructors; the object also keeps all three factory signatures uniform |
-| No `contextsEqual()` utility | `CTX-6`'s value-equality framing | Read as descriptive, not a mandate; no consumer needs it yet |
+| No `contextsEqual()` utility | `CTX-5`'s value-equality framing | Read as descriptive, not a mandate; `CTX-5`'s operative half (pin an explicit key) ships via `ContextInit.key`; no consumer needs an equality function yet |
+| `contextStore` is a module-level mutable singleton | `docs/knowledge/variables-and-declarations.md:22`'s ban on module-level mutable state (and Phase 1's own refusal of an intern map on the same grounds) | No `CTX-N` mandates it — the alternative (a store threaded as a parameter) satisfies `§7` equally. Accepted for 4c's ergonomics: `Runtime.send()` needs one shared registry and threading a handle through builder → runtime → every step is a wide API change for no observable gain. Cost is test-order coupling, mitigated by tests constructing their own `ContextStore` and never asserting on the singleton's `size` |
 
 ## Testing
 
 `bun test`, colocated `*.test.ts`, every file citing the `CTX-N` IDs it exercises.
+
+**Every store test builds its own `new ContextStore()`.** `contextStore` is a module-level singleton shared by
+every test file in the run, so a test asserting on its `size` reads a counter any sibling file can move, and a
+blanket `contextStore.clear()` in an `afterEach` wipes entries a sibling installed — 4c's `runtime.test.ts`
+installs into that same object. `docs/knowledge/testing.md:52` ("never share a mutable fixture across tests") and
+`:50` ("every test must run alone, in any order, and survive parallel execution") both forbid it, and `bun test
+--concurrent` would make it fail rather than merely flake. The only assertion made against the singleton itself
+is that it is a `ContextStore` instance; everything behavioural runs on a local instance. Where a test must
+observe the singleton (4c's case), it asserts key-scoped (`contextStore.get(key) === undefined`), never on `size`.
 
 **Property tests:** `ContextStore` stays at or under its cap across a burst of synchronous inserts exceeding it
 (`CTX-11`/`12`); N default-constructed contexts (any flavor) all receive pairwise-distinct keys (`CTX-5`).

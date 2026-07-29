@@ -56,6 +56,7 @@ Every `IO-N`, and how this phase discharges it.
 | IO-3 | MUST | `invariant` on every size-taking method, before any transfer |
 | IO-4 | MUST | `BufferedSink.write` / `ByteQueue.write` — exact head removal, `EndOfStreamError` rather than a partial write |
 | IO-5, IO-18 | MUST / SHOULD | `flush()` and `emit()` on the sink surface; both no-ops returning `this` on a pure in-memory sink |
+| IO-6 | MUST | Wrapper ownership — `BufferedSource.close()` cancels the reader, releasing the caller's stream; `BufferedSink.close()` closes the caller's stream; the IO-16 bridges close their owning source/sink. Wrapping a byte array owns no external resource |
 | IO-7–IO-10 | MUST / SHOULD | `ByteQueue` — FIFO source+sink, non-consuming `snapshot()`/`copyTo()`, `clear()`, `AllocationLimitError` |
 | IO-11, IO-12, IO-14, IO-15 | MUST | `BufferedSource` typed reads, line reads, exact reads, skip |
 | IO-13 | MUST | Read side fully general via `TextDecoder` (`BufferedSource`); **write side bounded to UTF-8 and ISO-8859-1** (`BufferedSink`) — `TextEncoder` is UTF-8-only and `SEAM-1` forbids an encoding dependency, so the "symmetric write-side encodings" clause is only partly satisfiable. Ledgered |
@@ -305,6 +306,10 @@ ISO-8859-1 is not an arbitrary choice: `IO-13`'s own conformance note names it a
 round-trip, and it and UTF-8 are the only encodings HTTP realistically needs. Ledgered below as a bounded
 deviation.
 
+The reference's `writeUtf8(begin, end)` substring-range overload is not ported: `writeUtf8(text.slice(a, b))`
+at the call site is the idiomatic equivalent, and the copy the JVM overload avoids is a JVM-specific
+`String` internals concern with no JS analogue. Folded into the same ledger row.
+
 ### `tee-sink.ts` — `TeeSink`
 
 Mirrors written bytes into a bounded in-memory tap while forwarding the full, untruncated payload to its primary
@@ -370,8 +375,12 @@ DexpaceError                          (Phase 2)
 the same delivered-of-requested shape, so it reuses that class rather than earning its own.
 
 **Programmer errors go through `invariant` (5.6, 8.7), not the typed tree** — `IO-3`'s negative counts, `IO-21`'s
-eagerly-rejected negative offset or count, `IO-10`'s out-of-range window, and `IO-28`'s attempt to reach the tee's
-backing buffer. `IO-3` explicitly permits this: "a port MAY use whichever argument-error type is idiomatic."
+eagerly-rejected negative offset or count, and `IO-10`'s out-of-range window. `IO-3` explicitly permits this: "a
+port MAY use whichever argument-error type is idiomatic." `IO-28`'s attempt to reach the tee's backing buffer
+throws `IoError` instead: the refusal must carry the "use the typed write methods" redirect as an ordinary
+catchable message, and a `never`-typed getter body reads cleaner as a throw than as an assertion call.
+Charset-label rejection (`readString`/`writeString`) also uses `IoError`, so the sink and tee refuse a label
+identically and the platform's `RangeError` chains as `cause`.
 
 Conventions carried from Phases 1 and 2: `cause` on every rethrow (8.2), `this.name = new.target.name`, no bare
 `throw new Error(...)`.
@@ -390,7 +399,7 @@ layer where the temptation to dump the offending bytes into the message is stron
 | `TeeSink` as a sink decorator | `sdk-design/03` §3.1 phrasing | `TransformStream` queueing muddies `IO-27`'s mirror-before-forward ordering; §3.1's substantive point is untouched |
 | `IO-30` resolution half, `IO-39` not built | product-spec §5.6 | No registry exists — same class as `SEAM-5`–`SEAM-10` |
 | `IO-38` not applicable | product-spec §5.4 | The requirement is about a close on one thread invalidating a slice being read on another, so it presupposes an instance can reach a second thread. None can. **Class instances are not structured-cloneable at all** — `postMessage`/`structuredClone` preserve neither prototypes nor `#private` fields, so a `ByteQueue` or `BufferedSource` sent to a worker arrives as a plain object with no methods and no close state to observe. `BufferedSource` is doubly excluded: a `ReadableStreamDefaultReader` is neither cloneable nor transferable. A raw `ArrayBuffer` *can* be transferred, but it carries no close state and derives no slices, so the hazard has no subject |
-| Write-side charsets limited to UTF-8 and ISO-8859-1 | `IO-13`'s "symmetric write-side encodings" | `TextEncoder` is UTF-8-only and `SEAM-1` forbids an encoding dependency. Read side stays fully general via `TextDecoder`; the write side covers the two encodings HTTP needs, and `IO-13`'s own conformance note names ISO-8859-1 as the non-UTF-8 case. Any other label throws rather than silently corrupting bytes |
+| Write-side charsets limited to UTF-8 and ISO-8859-1 | `IO-13`'s "symmetric write-side encodings" | `TextEncoder` is UTF-8-only and `SEAM-1` forbids an encoding dependency. Read side stays fully general via `TextDecoder`; the write side covers the two encodings HTTP needs, and `IO-13`'s own conformance note names ISO-8859-1 as the non-UTF-8 case. Any other label throws rather than silently corrupting bytes. The `writeUtf8(begin, end)` substring-range overload is subsumed by `String.prototype.slice` at the call site |
 
 ## Testing
 
@@ -420,6 +429,8 @@ direct tests rather than paraphrased, continuing Phase 2's convention.
 **Negative space and cleanup** (11.9, 13.9):
 
 - Double-close throws nothing and closes the underlying resource at most once (`IO-41`).
+- Closing a stream-backed wrapper cancels/closes the caller stream it took ownership of (`IO-6`),
+  asserted with a cancel/close spy on the fake streams.
 - Read-after-close **rejects** on a stream-backed source but **succeeds** on `ByteQueue`'s snapshot path. `IO-42`
   names both directions as the trap, so both get an assertion.
 - Closing a parent invalidates outstanding slices loudly, with `ClosedResourceError` rather than EOF (`IO-22`,

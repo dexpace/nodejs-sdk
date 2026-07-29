@@ -1,6 +1,10 @@
 # Phase 4c — Stage-Based Pipeline — Design
 
-**Status:** Draft, approved for planning.
+**Status:** Draft, approved for planning. **One open finding (2026-07-29 validation review, F9):** whether
+`Cursor` should observe the caller's `AbortSignal` between steps, and as which error type — tracked in the
+roadmap's "Open Findings — Phase 4c Validation Review (2026-07-29)" section
+(`docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`). Decide before Phase 5a Task 1 lands
+`StepContext.signal`. Everything else from that review is applied.
 
 **Purpose:** Implement the stage-based pipeline — the fixed-stage step composition runtime, its builder with
 surgical edit operations, the per-call cursor/fork mechanism, and the execution-context-store wiring —
@@ -132,8 +136,8 @@ type Next = (request?: Request) => Promise<Response>;
 
 interface StepContext {
   readonly next: Next;
-  readonly fork?: () => Next;          // present only when the invoking cursor position is a pillar stage
-  readonly context: ExecutionContext;  // current promoted context (4a), read-only
+  readonly fork?: (() => Next) | undefined;  // present only when the invoking cursor position is a pillar stage
+  readonly context: ExecutionContext;        // current promoted context (4a), read-only
 }
 
 type Step = (request: Request, ctx: StepContext) => Promise<Response>;
@@ -162,6 +166,17 @@ every invocation whether or not a step reads it. In practice it is always the `R
 `ExchangeContext` happens after the drive completes, so no step ever observes an exchange-stage context. It is
 typed as the union rather than `RequestContext` so that a later phase can hand steps a further-promoted context
 without changing `StepContext`'s shape; a step that needs the narrower type narrows on `kind`.
+
+**`StepContext` carries neither the caller's `options` nor its `signal` in 4c — a partial deferral of `PIPE-17`,
+targeted at Phase 5a Task 1.** `Cursor` accepts both and threads them into the terminal dispatch, which is
+`PIPE-17`'s "threaded into the terminal transport dispatch" and "carried unchanged across every re-drive fork"
+halves. Its remaining clause — options "MUST be readable by any step" — is *not* satisfied here: no step in 4c
+exists to read them, and adding two fields whose only consumer is a phase that has not been designed yet would
+freeze their shape before the first real reader (5a's retry engine, which needs the signal for `RETRY-26`'s
+cancellable wait and the options for `RETRY-41`'s per-call `maxRetries` override) states what it needs. Phase 5a
+Task 1 lands both as one additive amendment to `step.ts`/`cursor.ts` — `signal?: AbortSignal | undefined` and
+`options?: RequestOptions | undefined`, populated from the cursor's own fields on every invocation. Recorded in
+the roadmap's Deferred Items Log so the MUST is deferred to a named phase rather than silently.
 
 ## Cursor and fork
 
@@ -260,8 +275,8 @@ class PipelineBuilder {
   appendAll(descriptors: readonly StepDescriptor[]): this { /* PIPE-38: batch order preserved */ }
   prependAll(descriptors: readonly StepDescriptor[]): this { /* PIPE-38: each prepended individually -> reversed batch order */ }
   insertAfter(anchorType: symbol, descriptor: StepDescriptor): this { /* PIPE-18 */ }
-  insertBefore(anchorType: symbol, descriptor: StepDescriptor): this { /* PIPE-19 */ }
-  replace(anchorType: symbol, descriptor: StepDescriptor): this { /* PIPE-18/19 replace path */ }
+  insertBefore(anchorType: symbol, descriptor: StepDescriptor): this { /* PIPE-18 */ }
+  replace(anchorType: symbol, descriptor: StepDescriptor): this { /* PIPE-19 */ }
   remove(type: symbol): this { /* PIPE-20: every instance, order-preserving, no-op if absent */ }
   reload(descriptors: readonly StepDescriptor[]): this { /* PIPE-23: all-or-nothing bulk */ }
 
@@ -271,8 +286,13 @@ class PipelineBuilder {
 
 Validation is synchronous and fail-fast at the mutating call, not deferred to `build()`:
 
-- `append`/`prepend`/`appendAll`/`insertAfter`/`insertBefore`/`replace` onto an occupied pillar stage with a
+- `append`/`prepend`/`appendAll`/`prependAll`/`insertAfter`/`insertBefore` onto an occupied pillar stage with a
   **different** `type` symbol → `PillarCollisionError` naming both types and the stage (`PIPE-5`).
+- **`replace` is deliberately absent from that list.** `PIPE-5`'s own text exempts it — "Replace itself cannot
+  trigger this collision: it swaps a single occupant within its own stage 1:1" — and the collision error points
+  the caller *at* `replace` as the sanctioned way past it, so running the pillar check inside `replace` would
+  make replacing a pillar step impossible (the incoming type is distinct by definition). `replace` runs the
+  anchor and cross-stage checks only.
 - The same call with the **same** `type` symbol (reference-identical) on an already-occupied pillar → idempotent
   no-op, not an error (`PIPE-6`).
 - `insertAfter`/`insertBefore`/`replace` whose `anchorType` matches nothing → `AnchorNotFoundError` naming the
@@ -367,7 +387,8 @@ dispatch — so promoting straight off `requestContext` would pair the response 
 process, against `CTX-1`'s "the exchange stage exposes the request and the response." `Cursor` exposes its
 in-flight `request`; when it is reference-identical to the original (the overwhelmingly common case, and always
 so until Phase 5 ships a step that substitutes) the original context is promoted unchanged. Otherwise
-`#exchangeSource` rebuilds a `RequestContext` off-chain around the final request, pinned to the same `key` and
+`exchangeSource` (the module-level helper above, not a private method) rebuilds a `RequestContext` off-chain
+around the final request, pinned to the same `key` and
 carrying the same `instrumentation` reference — exactly the explicit-key path `CTX-6` provides for. This keeps
 `promoteToExchange` itself strictly additive (`CTX-2`: a promotion adds one artifact, it never rewrites an
 existing one), rather than widening 4a's promotion API with a request-override parameter.
@@ -387,6 +408,13 @@ leaf, matching the two-level cap 4b's ledger already established:
 - `PillarCollisionError` — carries the occupied `Stage`, the existing `type` symbol, and the incoming `type`
   symbol (`PIPE-5`).
 - `AnchorNotFoundError` — carries the missing anchor `type` symbol and the attempted operation name (`PIPE-21`).
+
+**Every one of these renders its identifying fields into its own message, not only onto the instance.** `PIPE-5`
+asks the error to "name both step types," `PIPE-21` to identify "the missing type," and
+`docs/knowledge/error-handling.md:40` requires the message itself to carry the identifying inputs the reader
+cannot otherwise see — a `symbol` field is invisible in a stack trace or a log line. Symbols render via
+`String(type)` (`Symbol(retry)`), the same form 4a's `DuplicateContextKeyError` already uses for a context key.
+Structured fields stay on the instance as well (`error-handling.md:44`), so both audiences are served.
 - `CrossStageEditError` — carries the anchor's `Stage` and the incoming descriptor's `Stage` (`PIPE-18`/`19`).
 - `CursorAlreadyAdvancedError` — carries the `Stage` of the step that attempted the double-invocation
   (`PIPE-15`/`11`).
@@ -449,18 +477,28 @@ first ships a pillar step.
   wants to derive one pipeline from another — Phase 5's retry preset is the likely candidate.
 - `PIPE-2`'s redirect/retry conformance clause and `PIPE-40`'s 2-hop-redirect conformance clause. Both need a
   real redirect pillar step; they move to Phase 5/6 with the step that makes them testable.
+- `PIPE-17`'s "options MUST be readable by any step" clause, together with exposing the call's `AbortSignal` to
+  steps. `Cursor` carries both and threads them to the terminal dispatch; `StepContext` exposes neither, and 4c
+  ships no step that could read them (see "Steps"). Targeted at **Phase 5a Task 1**, which lands
+  `StepContext.options` and `StepContext.signal` as one additive amendment for the retry engine's per-call
+  `maxRetries` override (`RETRY-41`) and cancellable wait (`RETRY-26`).
 
 ## Testing
 
 `bun test`, colocated `*.test.ts`, every file citing the `PIPE-N` IDs it exercises. File-local minimal `Transport`
 stubs per test file, matching 4a/4b's precedent (see the `FakeTransport` disposition above).
 
-**Property tests:**
+**Property tests** — real `fast-check` properties over generated inputs, not hand-picked examples; `build()` is
+an invariant-bearing assembler, which `docs/knowledge/testing.md:29` puts squarely in property-test territory:
 
-- An arbitrary sequence of `append`/`prepend`/`insertAfter`/`insertBefore`/`replace`/`remove` edits followed by
-  `build()` produces the same flattened order as constructing the equivalent final set from scratch (`PIPE-22`).
-- `appendAll` preserves the batch's iteration order within a stage; `prependAll` (each element prepended
-  individually) results in the reversed batch order (`PIPE-38`).
+- An arbitrary sequence of `append`/`prepend` edits followed by `build()` produces the same flattened order as
+  constructing the equivalent final set from scratch (`PIPE-22`). Generated over the non-pillar stages, where an
+  arbitrary-length edit sequence is legal — a generator that also emitted pillar stages would spend most of its
+  cases hitting `PIPE-5`'s collision rather than exercising ordering. The anchored edits
+  (`insertAfter`/`insertBefore`/`replace`/`remove`) need a generated *anchor* that exists, which makes the model
+  larger than the property it proves; they stay on the example-based tests below.
+- `appendAll` preserves the batch's iteration order within a stage, and `prependAll` (each element prepended
+  individually) results in the reversed batch order, for a batch of any size (`PIPE-38`).
 
 **Conformance examples** transcribed from `§8.1`'s own *Conformance:* clauses, adapted to what 4c actually
 ships (plumbing, no pillar steps — a test that needs redirect or retry *behavior* cannot be written here):

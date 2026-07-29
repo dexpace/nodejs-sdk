@@ -16,9 +16,45 @@ reuse Phase 3b's already-async `toHttpError()` directly. **Nothing in this phase
 barrel** — `recovery/` is resilience-layer plumbing; `api-extractor`'s committed report must come back
 byte-identical.
 
-**Tech Stack:** TypeScript 5.8+, native `SuppressedError` (already available since Phase 3b's checkpoint lib
-bump), `fast-check` for the invariant-bearing-function property tests. No new runtime dependencies — `SEAM-1`
-untouched.
+**Tech Stack:** TypeScript 5.8+, `fast-check` for the invariant-bearing-function property tests. No new runtime
+dependencies — `SEAM-1` untouched.
+
+> ### ⛔ BLOCKED — do not execute this plan yet
+>
+> **`RECOV-12`'s `SuppressedError` is not available on the declared runtime floor.** An earlier draft of this
+> plan claimed it was "already available since Phase 3b's checkpoint lib bump" — that is false and has been
+> removed. The checkpoint raised `engines.node` only to the first release exposing `Symbol.dispose`/
+> `Symbol.asyncDispose` (`plans/2026-07-25-checkpoint-scaffold-through-phase3a.md:57`, believed `18.18.0`,
+> which also forbids any further floor movement as "unreviewed drift"). Node backported those two symbols on
+> its own; `SuppressedError` is a V8 global from the full Explicit Resource Management proposal and is absent
+> on every 18.x runtime.
+>
+> Adding `esnext.disposable` to `lib` supplies the *type* only. So `new SuppressedError(...)` at Task 3 type-
+> checks, passes `bun test` locally, and then throws `ReferenceError: SuppressedError is not defined` at call
+> time — precisely the `NFR-10` trap `docs/knowledge/tooling-and-quality-gates.md:60-61` describes. Task 7's
+> `bun run verify:node-floor`, `bun run test:node`, and the `node-floor-conformance` job pinned to `18.17.0`
+> would all fail.
+>
+> **Needs a decision, and it is cross-phase** — Phases 5a, 6b and 6c reach for `SuppressedError` on the same
+> premise (`plans/2026-07-26-phase5a-retry.md:36`, `specs/2026-07-28-phase6b-sse-design.md:163`,
+> `specs/2026-07-28-phase6c-pagination-design.md:192`), so whichever option lands must land in all four:
+>
+> - **(a) Raise `engines.node`** past the first release shipping Explicit Resource Management. Consumer-visible
+>   breaking change, and the checkpoint forbids unsanctioned floor moves. Confirm the exact release first.
+> - **(b) A runtime-guarded `suppress(primary, secondary)` helper** in `packages/core/src/`, using native
+>   `SuppressedError` when `globalThis.SuppressedError` exists and attaching a `suppressed` property otherwise —
+>   the same guarded shape the roadmap already sanctioned for `Symbol.asyncDispose`. Changes Task 3's
+>   `expect(wrapped).toBeInstanceOf(SuppressedError)` assertion.
+>
+> **Second open decision, non-blocking: assertion density.** This phase ships zero `invariant()` calls across
+> roughly a dozen functions, against `docs/knowledge/assertions.md:6-7`'s 2-per-function module average. The
+> concrete cost: no `apply()` checks that a step returned a value at all, so a step returning `undefined`
+> poisons the fold silently and surfaces layers away. Project-wide inconsistency rather than 4b's alone —
+> Phases 1/2/3b/4a ship zero, 4c ships fifteen. Resolve as either postcondition assertions at the fold sites
+> or a Deviation Ledger row, ideally project-wide at Phase 10.
+>
+> Both items are tracked in the roadmap's "Open Findings — Phase 4b Validation Review (2026-07-28)" section.
+> Everything else that review raised (F3–F10) is already applied to this plan and its design.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, and 4a are already implemented exactly as their own
 plans specify. Concretely: `packages/core/src/http/*` exports `DexpaceError`, `Request`, `Response`,
@@ -87,7 +123,20 @@ addition alongside the existing `invariant()`/`InvariantViolation` it already ex
   the real `Transport` interface — matching 4a's precedent of not building a shared test double before a real
   consumer (Phase 5) needs one.
 - No new error leaf classes in this phase. The only new failure surface is `assertNever`'s
-  `InvariantViolation` crash — a programmer error, not a catchable `DexpaceError` subclass.
+  `InvariantViolation` crash — a programmer error, not a catchable `DexpaceError` subclass. `wrapCancellation`
+  does **not** crash; see its constraint above.
+- **`#private` fields and methods stay `#private`; `fold` keeps three positional parameters.** Both are known
+  corpus deviations, both are recorded in the design's Deviation Ledger, and neither is to be "corrected" while
+  executing this plan. `docs/knowledge/data-modeling.md:20-23` prefers `private` and requires a justifying
+  comment for `#private` — no runtime-privacy claim is made here, but `#private` is the package-wide style
+  (Phases 1, 3b and 4a), so a 4b-only switch would fragment the package. `docs/knowledge/function-design.md:22-23`
+  wants an options object at 3+ parameters, one stricter than the `max-params: ['error', 3]` gate it cites, and
+  `fold(outcome, onSuccess, onFailure)` matches Phase 2's shipped `Transport.send(request, options?, signal?)`.
+  Phase 10 reconciles both project-wide, in one pass.
+- **`statusMappingStep` is a named `function` declaration, not a `const` arrow** (Task 5), per
+  `docs/knowledge/function-design.md:18-21`. `func-style`'s `allowArrowFunctions: true` will not flag the arrow
+  form, so this is on the author, not the gate. Keep the trailing `statusMappingStep satisfies ResponseStep;`
+  — it is the only thing still proving the signature conforms once the `: ResponseStep` annotation is gone.
 - Existing lint/coverage gates apply unchanged: `max-lines-per-function` 70, `max-depth` 3, `max-params` 3,
   explicit return types on exports, 80% aggregate coverage floor (`NFR-5`), no constructor parameter properties
   (`erasableSyntaxOnly`) — every test-local class stub assigns fields in the constructor body, never via a
@@ -514,7 +563,8 @@ git commit -m "feat(core): add RequestRecoveryChain (RECOV-3, RECOV-14)"
 // order is response-then-recovery), RECOV-7 (a throwing response step converts to a Failure fed to
 // recovery, not propagated), RECOV-8 (a throwing recovery step wraps into a Failure fed to the NEXT step;
 // apply() never throws), RECOV-12 (close-on-throw with correct SuppressedError priority), RECOV-13 (no
-// auto-close on a deliberate outcome substitution), RECOV-14 (defensive copy of both lists)
+// auto-close on a deliberate outcome substitution), RECOV-14 (defensive copy of both lists AND the
+// second clause: steps safe for concurrent invocation, per-call state never on the chain instance)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {Protocol} from '../http/protocol.js';
@@ -753,22 +803,65 @@ describe('RECOV-14: both step lists are defensively copied', () => {
 
 describe('apply() never throws (RECOV-8 property)', () => {
   // Canonical law for an invariant-bearing function: for an arbitrary mix of throwing and non-throwing
-  // recovery steps, apply() always settles (resolves or rejects its own returned promise cleanly, never
-  // synchronously throws / never leaves an unhandled rejection) and never re-raises a step's throw.
-  test('apply() settles without throwing for arbitrary throwing/non-throwing recovery step sequences', async () => {
+  // RESPONSE AND RECOVERY steps, over a seed outcome that is arbitrarily a Success or a Failure, apply()
+  // always settles (resolves or rejects its own returned promise cleanly, never synchronously throws /
+  // never leaves an unhandled rejection) and never re-raises a step's throw (RECOV-8) -- and no response
+  // step runs on any generated case whose seed was already a Failure (RECOV-4).
+  //
+  // BOTH phases and BOTH seed variants must be generated. A generator emitting recovery steps only, or
+  // seeding Success only, proves the RECOV-8 law and silently leaves RECOV-4 to the example test above.
+  test('apply() settles and skips the response phase on a Failure seed, for arbitrary step sequences', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(fc.boolean(), {maxLength: 8}), async (shouldThrowFlags) => {
-        const steps: RecoveryStep[] = shouldThrowFlags.map((shouldThrow, index) => async (outcome) => {
-          if (shouldThrow) throw new Error(`step ${index} failed`);
-          return outcome;
-        });
-        const chain = new ResponseRecoveryChain([], steps);
+      fc.asyncProperty(
+        fc.array(fc.boolean(), {maxLength: 4}),
+        fc.array(fc.boolean(), {maxLength: 4}),
+        fc.boolean(),
+        async (responseFlags, recoveryFlags, seedIsSuccess) => {
+          let responseStepRuns = 0;
+          const responseSteps: ResponseStep[] = responseFlags.map((shouldThrow, index) => async (response) => {
+            responseStepRuns += 1;
+            if (shouldThrow) throw new Error(`response step ${index} failed`);
+            return response;
+          });
+          const recoverySteps: RecoveryStep[] = recoveryFlags.map((shouldThrow, index) => async (outcome) => {
+            if (shouldThrow) throw new Error(`recovery step ${index} failed`);
+            return outcome;
+          });
+          const chain = new ResponseRecoveryChain(responseSteps, recoverySteps);
+          const seed = seedIsSuccess ? success(aResponse()) : failure(new Error('seed failure'));
 
-        const result = await chain.apply(success(aResponse()));
+          const result = await chain.apply(seed);
 
-        expect(result.kind === 'success' || result.kind === 'failure').toBe(true);
-      }),
+          expect(result.kind === 'success' || result.kind === 'failure').toBe(true);
+          if (!seedIsSuccess) expect(responseStepRuns).toBe(0); // RECOV-4
+        },
+      ),
     );
+  });
+});
+
+describe('RECOV-14: steps are safe for concurrent invocation', () => {
+  // RECOV-14's SECOND normative clause: per-request state lives in the passed value, never on the step or
+  // the chain. Guards the structural property that apply()'s only per-call state is its `current` local --
+  // a later phase adding per-call bookkeeping to a chain field would fail here.
+  test('two interleaved apply() calls on ONE chain instance do not observe each other', async () => {
+    const gate: Array<() => void> = [];
+    const slowStep: RecoveryStep = async (outcome) => {
+      await new Promise<void>((resolve) => gate.push(resolve));
+      return outcome;
+    };
+    const chain = new ResponseRecoveryChain([], [slowStep]);
+    const successSeed = success(aResponse());
+    const failureSeed = failure(new Error('second call'));
+
+    const first = chain.apply(successSeed);
+    const second = chain.apply(failureSeed);
+    await Promise.resolve();
+    for (const release of gate) release();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.kind).toBe('success');
+    expect(secondResult.kind === 'failure' && (secondResult.error as Error).message).toBe('second call');
   });
 });
 ```
@@ -862,7 +955,7 @@ export class ResponseRecoveryChain {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/response-chain.test.ts`
-Expected: PASS, 12 tests (including the fast-check property).
+Expected: PASS, 13 tests (including the fast-check property and the RECOV-14 concurrency test).
 
 - [ ] **Step 5: Commit**
 
@@ -990,10 +1083,11 @@ git commit -m "feat(core): add wrapCancellation (RECOV-11)"
 - Create: `packages/core/src/recovery/status-mapping.test.ts`
 
 **Interfaces:**
-- Consumes: `toHttpError`, `HttpStatusError` (`../body/http-status-error.js`, Phase 3b, unchanged), `ResponseStep`
-  (Task 3).
-- Produces: `const statusMappingStep: ResponseStep`. Not consumed by any other task in this plan -- a future
-  consumer (Phase 5 or 4c) installs it into a `ResponseRecoveryChain`'s response-step list.
+- Consumes: `toHttpError`, `HttpStatusError` (`../body/http-status-error.js`, Phase 3b, unchanged), `Response`
+  (`../http/response.js`, type-only), `ResponseStep` (Task 3, type-only, for the `satisfies` check).
+- Produces: `async function statusMappingStep(response: Response): Promise<Response>`. Not consumed by any other
+  task in this plan -- a future consumer (Phase 5 or 4c) installs it into a `ResponseRecoveryChain`'s
+  response-step list.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1064,6 +1158,7 @@ Expected: FAIL — `Cannot find module './status-mapping.js'`.
 ```typescript
 // packages/core/src/recovery/status-mapping.ts
 import {toHttpError} from '../body/http-status-error.js';
+import type {Response} from '../http/response.js';
 import type {ResponseStep} from './response-chain.js';
 
 /**
@@ -1078,12 +1173,22 @@ import type {ResponseStep} from './response-chain.js';
  *
  * @internal
  */
-export const statusMappingStep: ResponseStep = async (response) => {
+export async function statusMappingStep(response: Response): Promise<Response> {
   const httpError = await toHttpError(response);
   if (httpError === null) return response;
   throw httpError;
-};
+}
+
+// A named declaration, not `const statusMappingStep: ResponseStep = async (response) => ...`: arrows are
+// reserved for inline callbacks (docs/knowledge/function-design.md:18-21), and a named declaration survives
+// in stack traces -- which this function, whose job is to throw, actually depends on. `func-style`'s
+// `allowArrowFunctions: true` would not have flagged the arrow form. `satisfies` keeps the compile-time
+// conformance proof the discarded `: ResponseStep` annotation was giving.
+statusMappingStep satisfies ResponseStep;
 ```
+
+`Response` is now imported (type-only) because the explicit parameter and return annotations a `function`
+declaration needs replace the inference the `: ResponseStep` annotation was supplying.
 
 - [ ] **Step 4: Run and confirm it passes**
 
@@ -1481,8 +1586,10 @@ git commit -m "chore(core): verify full gate sequence for Phase 4b"
   the original throwable primary).
 - `RECOV-13` → Task 3 (a step's normal return, without a throw, never touches `toFailureClosingSuccess` — no
   auto-close path exists for that case).
-- `RECOV-14` → Task 2 and Task 3 (`[...steps]` at construction in both `RequestRecoveryChain` and
-  `ResponseRecoveryChain`, including the request chain the reference does not copy).
+- `RECOV-14` → Task 2 and Task 3, **both** its clauses: `[...steps]` at construction in `RequestRecoveryChain`
+  and `ResponseRecoveryChain` (including the request chain the reference does not copy), and the
+  concurrent-invocation clause — after construction a chain holds nothing but its step array and `apply()` keeps
+  all per-call state in locals, guarded by Task 3's interleaved-`apply()` test.
 - `RECOV-15`, `RECOV-16` → Task 5 (`statusMappingStep` wraps Phase 3b's unchanged `toHttpError()`/
   `HttpStatusError`, which already satisfies the 400..599 mapping and the bounded/replayable/shared-cap
   buffering).

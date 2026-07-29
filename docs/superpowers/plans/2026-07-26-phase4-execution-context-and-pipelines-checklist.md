@@ -174,6 +174,29 @@ All are fixed in the plans (and their design docs) rather than left for the impl
 
 ---
 
+## Review findings applied (2026-07-29, Phase 4c validation pass)
+
+A second pass over 4c alone (`docs/validation-prompts/phase4c-stage-pipeline-validation-prompt.md`) returned
+**NEEDS WORK — no blockers**; eight findings are applied to 4c's design and plan and one is open. The rows above
+stay accurate except where noted here. Full text in the roadmap's *Open Findings — Phase 4c Validation Review
+(2026-07-29)*.
+
+- **"Property tests where invariants exist ✅" was aspirational for 4c.** The design asked for two properties;
+  `builder.test.ts` shipped two hand-picked examples and no `fast-check` import. Three real `fc.assert`
+  properties now cover `PIPE-22` and `PIPE-38`; Task 5's expected count moves 19 → 22.
+- **"no patched `contextStore` singleton" was half true.** Nothing patched a method, but `runtime.test.ts` and
+  `builder.test.ts` both ran `afterEach(() => contextStore.clear())`, which 4a's plan forbids by name — a
+  blanket clear wipes entries a sibling file installed. Both hooks are gone; `Runtime.send()`'s own `finally`
+  was already doing the work.
+- **`NFR-13`'s SPDX header was missing from every 4c file** (4a's carry it). Added, plus Task 6 Step 3b's grep.
+  Project-wide drift: 4b, 5a, 5b, 5c, 6b and 6c plans are still missing it — Phase 9's `NFR-13` sweep closes it.
+- **`PIPE-17` is a partial deferral, not a satisfied MUST.** Options are threaded to the terminal dispatch and
+  shared across forks, but "readable by any step" waits on 5a Task 1's `StepContext.options`/`.signal`. Both 4c
+  documents now name that target.
+- **Open:** whether `Cursor` checks the caller's `AbortSignal` between steps, and as which error type (F9).
+
+---
+
 ## Deferred out of Phase 4
 
 | Item | Target | Note |

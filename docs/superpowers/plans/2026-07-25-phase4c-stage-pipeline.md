@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Open finding (2026-07-29 validation review, F9):** `Cursor` threads the caller's `AbortSignal` to the
+> terminal transport but never checks it between steps, against `docs/knowledge/concurrency-and-async.md:46`.
+> The fix is not mechanical — a raw `throwIfAborted()` raises a `DOMException` the SDK taxonomy does not own —
+> so it is recorded, undecided, in the roadmap's "Open Findings — Phase 4c Validation Review (2026-07-29)"
+> section (`docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`). Build this plan as written; do
+> not improvise a cancellation check. Every other finding from that review is already applied below.
+
 **Goal:** Ship the stage-based pipeline in `@dexpace/core` — the fixed-stage step composition runtime, its
 builder with surgical edit operations, the per-call cursor/fork mechanism, and the execution-context-store
 wiring — satisfying `product-spec/08-execution-pipelines.md` §8.1 (`PIPE-1`–`PIPE-40`), per
@@ -19,7 +26,8 @@ flattened once at `build()`. **Nothing in this phase enters the public package b
 real consumer yet (Phase 5's retry/redirect/auth steps are the first); `api-extractor`'s committed report must
 come back byte-identical.
 
-**Tech Stack:** TypeScript 5.8+, native `Symbol`/`Map`/`Object.freeze`. No new runtime dependencies — `SEAM-1`
+**Tech Stack:** TypeScript 5.8+, native `Symbol`/`Map`/`Object.freeze`, `fast-check` (already a devDependency
+since the scaffold) for `PipelineBuilder`'s two ordering properties. No new runtime dependencies — `SEAM-1`
 untouched.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, 4a, and 4b are already implemented exactly as their
@@ -34,6 +42,8 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
 
 ## Global Constraints
 
+- **SPDX header, line 1 of every new file (production and test):** `// SPDX-License-Identifier: MIT` (`NFR-13`,
+  binding since Phase 1's plan for all phases onward; 4a's files carry it). Every code block below shows it.
 - **No TypeScript `enum`.** `Stage` is a string-literal union plus an explicit `STAGE_ORDER: readonly Stage[]`
   array. The roadmap's "Dual JS/TS consumption" constraint bars TS-only runtime syntax (`erasableSyntaxOnly`);
   no prior phase in this codebase uses `enum` (`Protocol`/`Status` use a class-with-static-instances pattern
@@ -44,6 +54,12 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
   unchanged.
 - **`ctx.fork` is present only when the invoking step's `StepDescriptor.stage` is in `PILLAR_STAGES`.** An
   ordinary step's `ctx.fork` is `undefined` — do not add a fork capability to every step "for consistency."
+- **`StepContext` exposes `next`, `fork`, and `context` — and nothing else in this phase.** `PIPE-17`'s
+  "options MUST be readable by any step" clause and the equivalent `AbortSignal` exposure are deferred to
+  **Phase 5a Task 1**, which adds `options?: RequestOptions | undefined` and `signal?: AbortSignal | undefined`
+  as one additive amendment to `step.ts`/`cursor.ts` for the retry engine that first reads them. `Cursor`
+  already carries and threads both to the terminal dispatch here, which is the rest of `PIPE-17`. Do not add
+  the two fields early — 4c ships no step that could read them, and their shape belongs to their first reader.
 - **`Cursor`'s one-shot-continuation guard is scoped to the specific closure a step was handed, not to the
   `Cursor` instance as a whole.** A step that never calls `next` at all (a short-circuit) is normal and needs no
   opt-out. Do not add a `Cursor`-instance-level `#advanced` flag — build both `ctx.next` and every `ctx.fork()`
@@ -102,12 +118,18 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
   pipeline constructible and no caller yet holds one to seed from. Do not add a `seedFrom`/copy-constructor
   "while we're here"; the future shape is an explicit, non-defaulted mode argument, decided by the phase that
   needs it.
-- **No test patches a method on the `contextStore` singleton.** It is process-wide and shared by every test
-  file in the run, so a patched `install`/`close` leaks beyond the test that installed it the moment anything
-  runs concurrently, and it is a mock of an owned interface, which `docs/knowledge/testing.md` rejects. What
-  needs asserting about the exchange context is `exchangeSource`'s two branches — a pure function, exported
+- **No test patches a method on the `contextStore` singleton, and no test `clear()`s it.** It is process-wide
+  and shared by every test file in the run, so a patched `install`/`close` leaks beyond the test that installed
+  it the moment anything runs concurrently, and it is a mock of an owned interface, which
+  `docs/knowledge/testing.md` rejects. A blanket `afterEach(() => contextStore.clear())` is the same defect from
+  the other side — it wipes entries a sibling file installed, which 4a's plan Global Constraints forbid by name
+  (`docs/knowledge/testing.md:50,52`). Nothing in this phase needs it: `Runtime.send()` evicts its own entry in
+  a `finally` on both the success and the throw path, so a 4c test leaves the store exactly as it found it.
+  What needs asserting about the exchange context is `exchangeSource`'s two branches — a pure function, exported
   `@internal` from `runtime.ts` and tested directly. Prefer key-scoped assertions
-  (`contextStore.get(key) === undefined`) over absolute `contextStore.size` checks for the same reason.
+  (`contextStore.get(key) === undefined`) over absolute `contextStore.size` checks for the same reason; the one
+  size read below is a before/after **delta** within a single test, which no sibling file can move under
+  `bun test`'s per-file sequencing.
 - **Non-null assertions (`!`) are banned outside test fixtures.** Every place an array/`Map` lookup is provably
   non-`undefined` by surrounding control flow but TypeScript can't prove it (`noUncheckedIndexedAccess`), use
   `invariant(x !== undefined, '…')` to narrow instead (`docs/knowledge/variables-and-declarations.md`).
@@ -170,6 +192,7 @@ directly in Task 5).
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/stage.test.ts
 // Exercises: PIPE-2 (the mandatory chain, outermost pre-redirect slot through terminal SEND), PIPE-3
 // (pre/post extension slots around every pillar), PIPE-4 (exactly the 5 configurable pillars), PIPE-8 (SEND
@@ -230,6 +253,7 @@ Expected: FAIL — `Cannot find module './stage.js'`.
 - [ ] **Step 3: Write `stage.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/stage.ts
 
 /**
@@ -318,6 +342,7 @@ git commit -m "feat(core): add pipeline Stage, STAGE_ORDER, PILLAR_STAGES (PIPE-
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/errors.test.ts
 // Exercises: PIPE-5 (PillarCollisionError), PIPE-21 (AnchorNotFoundError), PIPE-18/19 (CrossStageEditError),
 // PIPE-11/15 (CursorAlreadyAdvancedError), PIPE-8 (ReservedStageError)
@@ -343,6 +368,9 @@ describe('PillarCollisionError (PIPE-5)', () => {
     expect(error.stage).toBe('RETRY');
     expect(error.existingType).toBe(existing);
     expect(error.incomingType).toBe(incoming);
+    // PIPE-5: the message itself names both types, not just the instance fields.
+    expect(error.message).toContain('Symbol(existing)');
+    expect(error.message).toContain('Symbol(incoming)');
   });
 });
 
@@ -355,6 +383,7 @@ describe('AnchorNotFoundError (PIPE-21)', () => {
     expect(error).toBeInstanceOf(DexpaceError);
     expect(error.anchorType).toBe(anchorType);
     expect(error.operation).toBe('insertAfter');
+    expect(error.message).toContain('Symbol(missing)'); // PIPE-21: the message identifies the type
   });
 });
 
@@ -395,6 +424,7 @@ Expected: FAIL — `Cannot find module './errors.js'`.
 - [ ] **Step 3: Write `errors.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/errors.ts
 import {DexpaceError} from '../http/errors.js';
 import type {Stage} from './stage.js';
@@ -406,8 +436,11 @@ export class PillarCollisionError extends DexpaceError {
   readonly incomingType: symbol;
 
   constructor(stage: Stage, existingType: symbol, incomingType: symbol, options?: ErrorOptions) {
+    // PIPE-5: the error names BOTH step types and points at the replace path. Symbols are rendered with
+    // String() (`Symbol(retry)`) -- a bare symbol field is invisible in a stack trace or log line
+    // (docs/knowledge/error-handling.md:40), the same reason 4a's DuplicateContextKeyError renders its key.
     super(
-      `pillar stage '${stage}' already holds a different step type; install rejected (use replace() to swap it)`,
+      `pillar stage '${stage}' already holds ${String(existingType)}; cannot install ${String(incomingType)} (use replace() to swap it)`,
       options,
     );
     this.stage = stage;
@@ -422,7 +455,8 @@ export class AnchorNotFoundError extends DexpaceError {
   readonly operation: string;
 
   constructor(anchorType: symbol, operation: string, options?: ErrorOptions) {
-    super(`${operation}: no step with the given anchor type is present in the pipeline`, options);
+    // PIPE-21: "fail with an error identifying the missing type" -- in the message, not only as a field.
+    super(`${operation}: no step of type ${String(anchorType)} is present in the pipeline`, options);
     this.anchorType = anchorType;
     this.operation = operation;
   }
@@ -500,6 +534,7 @@ git commit -m "feat(core): add pipeline error leaves (PIPE-5, PIPE-8, PIPE-11, P
 - [ ] **Step 1: Write `step.ts` (no test — pure types, no independent runtime behavior)**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/step.ts
 import type {ExecutionContext} from '../context/context.js';
 import type {Request} from '../http/request.js';
@@ -520,11 +555,15 @@ export type Next = (request?: Request) => Promise<Response>;
  * What a step receives on each invocation (PIPE-12). `fork` is present only when the invoking step occupies
  * a pillar stage (PIPE-15/16); an ordinary step's `ctx.fork` is `undefined`.
  *
+ * The call's per-call `options` and `AbortSignal` are deliberately absent here: `Cursor` carries both and
+ * threads them into the terminal dispatch, but PIPE-17's "readable by any step" clause has no reader until
+ * Phase 5a's retry engine, which adds both fields as one additive amendment (5a Task 1).
+ *
  * @internal
  */
 export interface StepContext {
   readonly next: Next;
-  readonly fork?: () => Next;
+  readonly fork?: (() => Next) | undefined;
   readonly context: ExecutionContext;
 }
 
@@ -553,6 +592,7 @@ export interface StepDescriptor {
 - [ ] **Step 2: Write the failing test for `cursor.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/cursor.test.ts
 // Exercises: PIPE-9 (Cursor-level: an exhausted position dispatches to the terminal transport), PIPE-11/15
 // (a reused next()/fork() continuation throws CursorAlreadyAdvancedError), PIPE-12 (ctx.context, ctx.fork
@@ -797,6 +837,7 @@ Expected: FAIL — `Cannot find module './cursor.js'`.
 - [ ] **Step 4: Write `cursor.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/cursor.ts
 import type {ExecutionContext} from '../context/context.js';
 import type {Request} from '../http/request.js';
@@ -931,6 +972,7 @@ git commit -m "feat(core): add Step/StepDescriptor types and the per-call Cursor
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/runtime.test.ts
 // Exercises: PIPE-9 (an empty pipeline dispatches directly, no cursor/context allocated), PIPE-10 (each
 // send() allocates its own per-call state), PIPE-14 (a substituted request reaches the wire, and is what the
@@ -938,7 +980,7 @@ git commit -m "feat(core): add Step/StepDescriptor types and the per-call Cursor
 // (Runtime itself satisfies the Transport SPI with one send() method), PIPE-27 (close() never touches the
 // wrapped transport), CTX-17's positive half (the first store entry is installed by the first promotion),
 // CTX-1/2/3/6 (exchangeSource pins the call key and instrumentation when it rebuilds)
-import {afterEach, describe, expect, test} from 'bun:test';
+import {describe, expect, test} from 'bun:test';
 import {createRequestContext, type ExecutionContext} from '../context/context.js';
 import {contextStore} from '../context/store.js';
 import {Protocol} from '../http/protocol.js';
@@ -983,9 +1025,9 @@ class RecordingTransport implements Transport {
   }
 }
 
-afterEach(() => {
-  contextStore.clear();
-});
+// No `afterEach(() => contextStore.clear())`: the singleton is shared by every test file in the run, so a
+// blanket clear wipes entries a sibling installed (4a's plan forbids it by name; testing.md:50,52). Nothing
+// here needs one -- `Runtime.send()` evicts its own entry in a `finally`, on the success and the throw path.
 
 describe('Runtime.send empty pipeline (PIPE-9)', () => {
   test('dispatches directly to the terminal transport, threading options and signal, no context installed', async () => {
@@ -1109,6 +1151,7 @@ Expected: FAIL — `Cannot find module './runtime.js'`.
 - [ ] **Step 3: Write `runtime.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/runtime.ts
 import {
   createDispatchContext,
@@ -1240,6 +1283,7 @@ git commit -m "feat(core): add Runtime, the Transport-implementing built pipelin
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/builder.test.ts
 // Exercises: PIPE-4/5/6 (a pillar admits at most one step; a distinct collision throws; the same type is
 // idempotent), PIPE-7 (non-pillar stages preserve insertion order through append/prepend), PIPE-8 (SEND
@@ -1249,8 +1293,8 @@ git commit -m "feat(core): add Runtime, the Transport-implementing built pipelin
 // scratch), PIPE-23 (a colliding reload leaves prior content untouched, and a same-type pillar repeat inside
 // one batch seats only one step), PIPE-25 (flatten order), PIPE-38 (appendAll preserves batch order;
 // prependAll reverses it), PIPE-1/PIPE-2 (a built pipeline, driven: entry in STAGE_ORDER, exit reversed)
-import {afterEach, describe, expect, test} from 'bun:test';
-import {contextStore} from '../context/store.js';
+import {describe, expect, test} from 'bun:test';
+import fc from 'fast-check';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import {Response} from '../http/response.js';
@@ -1259,7 +1303,7 @@ import type {Transport} from '../seams/transport.js';
 import {PipelineBuilder} from './builder.js';
 import {AnchorNotFoundError, CrossStageEditError, PillarCollisionError, ReservedStageError} from './errors.js';
 import type {Runtime} from './runtime.js';
-import {STAGE_ORDER} from './stage.js';
+import {PILLAR_STAGES, STAGE_ORDER, type Stage} from './stage.js';
 import type {Step, StepDescriptor} from './step.js';
 
 function aRequest(url: string): Request {
@@ -1288,10 +1332,9 @@ class StubTransport implements Transport {
   async close(): Promise<void> {}
 }
 
-// A driven pipeline installs a context per call; keep the process-wide singleton clean between tests.
-afterEach(() => {
-  contextStore.clear();
-});
+// A driven pipeline installs a context per call and evicts it again in `Runtime.send()`'s own `finally`, so
+// this file leaves the process-wide `contextStore` exactly as it found it -- no `afterEach(clear)`, which
+// would wipe entries a sibling test file installed (4a's plan Global Constraints; testing.md:50,52).
 
 const noopStep: Step = async (_request, ctx) => ctx.next();
 
@@ -1522,6 +1565,74 @@ describe('PipelineBuilder edit-order independence (PIPE-22)', () => {
     expect(labelsOf(edited)).toEqual(['b', 'a', 'c']);
   });
 });
+
+// The two ordering laws the design calls for (PIPE-38's split across an append and a prepend test, one act
+// each). `build()` is an invariant-bearing assembler, which
+// docs/knowledge/testing.md:29 puts in property-test territory; the examples above pin concrete regressions,
+// these prove the law over generated input. Generated over the non-pillar stages only: a generator that also
+// emitted pillar stages would spend most of its cases hitting PIPE-5's collision instead of exercising order.
+const editableStages = STAGE_ORDER.filter((stage) => stage !== 'SEND' && !PILLAR_STAGES.has(stage));
+
+describe('PipelineBuilder ordering properties (PIPE-22, PIPE-38)', () => {
+  test('any append/prepend sequence flattens the same as building the final set from scratch (PIPE-22)', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            stage: fc.constantFrom(...editableStages),
+            where: fc.constantFrom('append' as const, 'prepend' as const),
+          }),
+          {maxLength: 24},
+        ),
+        (edits) => {
+          const edited = aBuilder();
+          const model = new Map<Stage, StepDescriptor[]>();
+          for (const [index, edit] of edits.entries()) {
+            const step = descriptor(`s${index}`, edit.stage);
+            const bucket = model.get(edit.stage) ?? [];
+            if (edit.where === 'append') {
+              bucket.push(step);
+              edited.append(step);
+            } else {
+              bucket.unshift(step);
+              edited.prepend(step);
+            }
+            model.set(edit.stage, bucket);
+          }
+          const finalSet = editableStages.flatMap((stage) => model.get(stage) ?? []);
+
+          const fromScratch = aBuilder().appendAll(finalSet).build();
+
+          expect(labelsOf(edited.build())).toEqual(labelsOf(fromScratch));
+        },
+      ),
+    );
+  });
+
+  test('appendAll preserves the batch order within a stage, for a batch of any size (PIPE-38)', () => {
+    fc.assert(
+      fc.property(fc.integer({min: 1, max: 12}), fc.constantFrom(...editableStages), (size, stage) => {
+        const batch = Array.from({length: size}, (_unused, index) => descriptor(`s${index}`, stage));
+
+        const runtime = aBuilder().appendAll(batch).build();
+
+        expect(labelsOf(runtime)).toEqual(batch.map((step) => step.type.description));
+      }),
+    );
+  });
+
+  test('prependAll reverses the batch order within a stage, for a batch of any size (PIPE-38)', () => {
+    fc.assert(
+      fc.property(fc.integer({min: 1, max: 12}), fc.constantFrom(...editableStages), (size, stage) => {
+        const batch = Array.from({length: size}, (_unused, index) => descriptor(`s${index}`, stage));
+
+        const runtime = aBuilder().prependAll(batch).build();
+
+        expect(labelsOf(runtime)).toEqual(batch.map((step) => step.type.description).reverse());
+      }),
+    );
+  });
+});
 ```
 
 - [ ] **Step 2: Run and confirm it fails**
@@ -1532,6 +1643,7 @@ Expected: FAIL — `Cannot find module './builder.js'`.
 - [ ] **Step 3: Write `builder.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/builder.ts
 import {invariant} from '../invariant.js';
 import type {Transport} from '../seams/transport.js';
@@ -1708,7 +1820,7 @@ export class PipelineBuilder {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/pipeline/builder.test.ts`
-Expected: PASS, 19 tests.
+Expected: PASS, 22 tests (including the three `fast-check` properties, each running 100 cases by default).
 
 - [ ] **Step 5: Commit**
 
@@ -1761,6 +1873,16 @@ Expected: exit 0, no matches.
 ```
 
 Expected: exit 0, no matches — `Stage` must stay a string-literal union, never an `enum`.
+
+- [ ] **Step 3b: Verify every new file carries the SPDX header (`NFR-13`)**
+
+```bash
+for file in packages/core/src/pipeline/*.ts; do
+  head -1 "$file" | grep -q 'SPDX-License-Identifier: MIT' || echo "MISSING SPDX: $file"
+done
+```
+
+Expected: no output — production and test files alike, matching 4a's gate.
 
 - [ ] **Step 4: Verify the public API surface did not move**
 
@@ -1823,13 +1945,16 @@ git commit -m "chore(core): verify full gate sequence for Phase 4c"
 - `PIPE-15`, `PIPE-16` → Task 3 (`ctx.fork` only for pillar-stage descriptors; every `fork()` call returns a
   fresh one-shot continuation pinned to the same target position; reusing one throws
   `CursorAlreadyAdvancedError`).
-- `PIPE-17` → Task 3 (`#options` is read-only and shared by every fork, never copied-and-diverged; the
-  two-fork test asserts the identical options object reaches both terminal dispatches).
+- `PIPE-17` → Task 3, **partially** (`#options` is read-only and shared by every fork, never
+  copied-and-diverged, and reaches the terminal dispatch — the two-fork test asserts the identical options
+  object reaches both). Its "readable by any step" clause is **deferred to Phase 5a Task 1**, which adds
+  `StepContext.options` (and `StepContext.signal`) for the retry engine that first reads them; 4c ships no step
+  that could. Recorded in the design's Deferred Items and the roadmap's log.
 - `PIPE-18`, `PIPE-19`, `PIPE-21` → Task 5 (`insertAfter`/`insertBefore`/`replace` against the first anchor
   instance; `CrossStageEditError` on a cross-stage edit; `AnchorNotFoundError` on a missing anchor).
 - `PIPE-20` → Task 5 (`remove` filters every instance of a type, order-preserving, a no-op when absent).
 - `PIPE-22` → Task 5 (structural: flattening is a pure function of the buckets' contents, asserted by the
-  edit-order-independence property test).
+  edit-order-independence example plus a `fast-check` property over arbitrary `append`/`prepend` sequences).
 - `PIPE-23` → Task 5 (`reload` validates the whole batch before `#buckets.clear()`).
 - `PIPE-24`, `PIPE-39` → **not shipped** (no standard-resilience preset until real pillar steps exist).
 - `PIPE-25` → Task 5 (`build()` flattens in `STAGE_ORDER`, skipping `SEND`) and Task 4 (`Runtime`'s
@@ -1845,7 +1970,9 @@ git commit -m "chore(core): verify full gate sequence for Phase 4c"
 - `PIPE-35` → **deferred on its own merits** (not an async/bridge disposition). Roadmap Deferred Items Log.
 - `PIPE-36`, `PIPE-37` → placement/locking contracts on whichever future phase ships the first pillar step
   family; 4c ships none. Design Scope.
-- `PIPE-38` → Task 5 (`appendAll` preserves batch order; `prependAll` reverses it, by construction).
+- `PIPE-38` → Task 5 (`appendAll` preserves batch order; `prependAll` reverses it, by construction — one
+  example each plus a `fast-check` property over batches of any size).
+- `NFR-13` → every file in this phase opens with `// SPDX-License-Identifier: MIT`; Task 6 Step 3b greps for it.
 - `PIPE-40` → Task 3 documents the responsibility on the forking step (not on `Cursor`/`Runtime`); its
   2-hop-redirect conformance clause needs a redirect step and is deferred with `PIPE-2`'s second half.
 - `CTX-17`'s positive half (deferred into 4c by 4a) → Task 4 (`contextStore.install(requestContext)`

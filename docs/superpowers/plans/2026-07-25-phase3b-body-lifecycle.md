@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **⚠ Two open items before this plan is fully executable** — see "Open Findings — Phase 3b Validation Review
+> (2026-07-28)" in [the roadmap](../specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md).
+>
+> - **D1 (Task 13 Step 6):** the changeset bump is **major** by default, because narrowing `RequestBuilder.body`
+>   from `unknown` to `Body | undefined` is a breaking parameter change. If the repo's release policy treats 0.x
+>   breaks as minor, take that branch and record the pointer. Do not restate the old "unknown accepted nothing
+>   usable" argument — it is false.
+> - **D2 (Tasks 9–12):** verify `MAX_ARRAY_BYTES` (`io/byte-queue.ts`), `Status.isError`, and `Protocol.token`
+>   exist under those names before writing the tasks that call them. If a name differs, use the real one; do not
+>   add a duplicate constant or a local helper.
+
 **Goal:** Ship the request/response body lifecycle in `@dexpace/core` — the `Body` model, `materialize()`,
 `Request`/`Response`'s real body types, `TypedResponse<T>`, request/response body-logging tees, and bounded
 error-body buffering — satisfying `product-spec/06-request-and-response-body-lifecycle.md` (`BODY-1`–`BODY-37`,
@@ -47,6 +58,22 @@ Phase 3a resource-owning class already implement it; the full gate sequence is g
   first `await` (Node's single-thread collapse of the reference's atomic-CAS requirement — violating the ordering
   reintroduces the race `BODY-3` exists to prevent).
 - **The 1 MiB error-body cap (`HTTP-52`/`BODY-30`) is fixed, not configurable.** Do not add a parameter for it.
+  It is therefore **not** `BODY-34`'s shared preview-size cap — a spec-fixed value cannot be the configurable
+  one. `BODY-34`'s single shared cap covers the two logging tees, which each take it as a parameter this phase;
+  Phase 7 supplies the one config value that feeds both.
+- **Every byte-capped operation validates its cap (`BODY-32`).** `withRequestLogging`'s `tapCapBytes` and
+  `withResponseLogging`'s `capBytes` both `invariant` on non-negative and clamp to the platform's max
+  single-array size. A negative cap must fail loudly, never silently mirror nothing.
+- **`ReadableStream.cancel()` rejects with `TypeError` on a locked stream**, and reading to `{done: true}` does
+  *not* release the reader's lock. Every site that takes a reader and later closes the stream — `Response.bytes`,
+  `toHttpError`, `withResponseLogging`'s `closeDelegate`, `StreamBody.#writeExactly` — must
+  `reader.releaseLock()` before the cancel. A `finally`-scoped close that skips this replaces a successful read
+  with a `TypeError`.
+- **Assertion density (styleguide ch05 §5.7, Rule 8):** `invariant` preconditions on caps and lengths,
+  postconditions on every derived value. The corpus minimum is an average of two per function; a module
+  averaging zero does not pass review.
+- **`fast-check` property tests are required**, not optional: the corpus mandates one per serializer and
+  invariant-bearing function, and the design names four. Each is a numbered step in its own task below.
 - **Error tree stays flat.** New leaves (`ConsumedBodyError`, `MultipartBoundaryError`) `extends DexpaceError`
   directly. The `io/errors.ts` retrofit (Task 1) changes the four `IO-*` leaves' `extends IoError` to `extends
   DexpaceError`; `IoError` itself is **not removed** — it stays a directly-usable flat leaf (used bare at 4 sites
@@ -364,9 +391,12 @@ Expected: FAIL — `Cannot find module './errors.js'`.
  */
 export interface Body {
   readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
-  readonly mediaType: string | null;
+  /** Absent = `undefined`, per the styleguide's interior-absence rule; `null` is not used here. */
+  readonly mediaType: string | undefined;
+  /** Exact byte count the write will produce, or -1 when unknown (BODY-35). */
   readonly contentLength: number;
   readonly replayable: boolean;
+  /** Writes every byte, then closes `sink` -- the sink is this body's to close, not the caller's. */
   writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 ```
@@ -380,7 +410,20 @@ import {DexpaceError} from '../http/errors.js';
 /**
  * A single-use body's second write (BODY-3). `bodyKind` names which Body variant refused the write.
  *
- * @internal
+ * Public: a caller can trigger this and needs to catch it. Deliberately NOT `@internal` --
+ * `api-extractor` strips `@internal` symbols from the rollup and errors when one is reachable from the
+ * entry point, and Task 13 promotes this to `packages/core/src/index.ts`.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   await body.writeTo(sink);
+ * } catch (error) {
+ *   if (error instanceof ConsumedBodyError) {
+ *     // materialize() first if you need to send this body more than once
+ *   }
+ * }
+ * ```
  */
 export class ConsumedBodyError extends DexpaceError {
   readonly bodyKind: string;
@@ -392,9 +435,8 @@ export class ConsumedBodyError extends DexpaceError {
 }
 
 /**
- * A caller-supplied multipart boundary violates RFC 2046's grammar (HTTP-51).
- *
- * @internal
+ * A caller-supplied multipart boundary violates RFC 2046's grammar (HTTP-51). Public, for the same
+ * reason as {@link ConsumedBodyError}.
  */
 export class MultipartBoundaryError extends DexpaceError {
   readonly boundary: string;
@@ -407,9 +449,7 @@ export class MultipartBoundaryError extends DexpaceError {
 
 /**
  * Groups both leaves without a class tier (checkpoint §5.2's prescribed remedy, reused here from the
- * start rather than retrofitted later).
- *
- * @internal
+ * start rather than retrofitted later). Public, for the same reason as {@link ConsumedBodyError}.
  */
 export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError {
   return error instanceof ConsumedBodyError || error instanceof MultipartBoundaryError;
@@ -474,8 +514,8 @@ describe('ByteArrayBody', () => {
     expect(body.replayable).toBe(true);
   });
 
-  test('defaults mediaType to null', () => {
-    expect(byteArrayBody(Uint8Array.from([1])).mediaType).toBeNull();
+  test('defaults mediaType to undefined -- absence is undefined, never null', () => {
+    expect(byteArrayBody(Uint8Array.from([1])).mediaType).toBeUndefined();
   });
 
   test('writeTo emits the exact bytes, twice, byte-for-byte identical (BODY-1)', async () => {
@@ -556,12 +596,12 @@ async function writeAllBytes(sink: WritableStream<Uint8Array>, bytes: Uint8Array
 /** A replayable body backed by an in-memory byte array (BODY-35). */
 export class ByteArrayBody implements Body {
   readonly kind = 'byte-array' as const;
-  readonly mediaType: string | null;
+  readonly mediaType: string | undefined;
   readonly contentLength: number;
   readonly replayable = true;
   readonly #bytes: Uint8Array;
 
-  constructor(bytes: Uint8Array, mediaType: string | null = null) {
+  constructor(bytes: Uint8Array, mediaType?: string) {
     this.#bytes = bytes.slice(); // independent copy -- caller mutation afterwards must not change this
     this.mediaType = mediaType;
     this.contentLength = this.#bytes.length;
@@ -575,12 +615,12 @@ export class ByteArrayBody implements Body {
 /** A replayable body backed by a UTF-8-encoded string (BODY-35). */
 export class StringBody implements Body {
   readonly kind = 'string' as const;
-  readonly mediaType: string | null;
+  readonly mediaType: string | undefined;
   readonly contentLength: number;
   readonly replayable = true;
   readonly #bytes: Uint8Array;
 
-  constructor(text: string, mediaType: string | null = null) {
+  constructor(text: string, mediaType?: string) {
     this.#bytes = new TextEncoder().encode(text);
     this.mediaType = mediaType;
     this.contentLength = this.#bytes.length;
@@ -616,11 +656,11 @@ export class FormUrlEncodedBody implements Body {
   }
 }
 
-export function byteArrayBody(bytes: Uint8Array, mediaType: string | null = null): ByteArrayBody {
+export function byteArrayBody(bytes: Uint8Array, mediaType?: string): ByteArrayBody {
   return new ByteArrayBody(bytes, mediaType);
 }
 
-export function stringBody(text: string, mediaType: string | null = null): StringBody {
+export function stringBody(text: string, mediaType?: string): StringBody {
   return new StringBody(text, mediaType);
 }
 
@@ -632,7 +672,7 @@ export function formUrlEncodedBody(params: ReadonlyMap<string, string>): FormUrl
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/body/simple-bodies.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -660,8 +700,11 @@ git commit -m "feat(core): add ByteArrayBody, StringBody, FormUrlEncodedBody (BO
 // packages/core/src/body/stream-body.test.ts
 // Exercises: BODY-9 (always single-use -- no generic mark/reset on Node's ReadableStream), BODY-3
 // (second write fails loudly and is race-safe), BODY-8 (caller's stream is not force-closed -- read to
-// natural exhaustion via pipeTo)
+// natural exhaustion), HTTP-39/BODY-10 (declared length verified, short stream raises
+// delivered-of-declared), IO-3 (a contentLength below the -1 sentinel is rejected)
 import {describe, expect, test} from 'bun:test';
+import {InvariantViolation} from '../invariant.js';
+import {EndOfStreamError} from '../io/errors.js';
 import {ConsumedBodyError} from './errors.js';
 import {streamBody} from './stream-body.js';
 
@@ -716,7 +759,28 @@ describe('StreamBody', () => {
   test('a second write throws ConsumedBodyError (BODY-3)', async () => {
     const body = streamBody(readableOf([1]));
     await body.writeTo(collectingSink().sink);
-    expect(body.writeTo(collectingSink().sink)).rejects.toThrow(ConsumedBodyError);
+    await expect(body.writeTo(collectingSink().sink)).rejects.toThrow(ConsumedBodyError);
+  });
+
+  test('a declared length the stream cannot satisfy raises EndOfStreamError (HTTP-39/BODY-10)', async () => {
+    const body = streamBody(readableOf([1, 2]), undefined, 5);
+    await expect(body.writeTo(collectingSink().sink)).rejects.toThrow(EndOfStreamError);
+  });
+
+  test('a satisfied declared length writes exactly that many bytes (HTTP-39/BODY-10)', async () => {
+    const {sink, written} = collectingSink();
+    await streamBody(readableOf([1, 2], [3]), undefined, 3).writeTo(sink);
+    expect([...written()]).toEqual([1, 2, 3]);
+  });
+
+  test('a declared length of 0 is a legitimate empty write (BODY-10)', async () => {
+    const {sink, written} = collectingSink();
+    await streamBody(new ReadableStream({start: (c) => c.close()}), undefined, 0).writeTo(sink);
+    expect(written().length).toBe(0);
+  });
+
+  test('a contentLength below the -1 sentinel is rejected at construction (IO-3)', () => {
+    expect(() => streamBody(readableOf([1]), undefined, -2)).toThrow(InvariantViolation);
   });
 
   test('concurrent first writes: exactly one proceeds, the other rejects (BODY-3 race-safety)', async () => {
@@ -740,24 +804,31 @@ Expected: FAIL — `Cannot find module './stream-body.js'`.
 
 ```typescript
 // packages/core/src/body/stream-body.ts
+import {EndOfStreamError} from '../io/errors.js';
+import {invariant} from '../invariant.js';
 import {ConsumedBodyError} from './errors.js';
 import type {Body} from './body.js';
 
 /**
  * A single-use body backed by a caller-supplied stream. Always single-use (BODY-9: Node's ReadableStream
  * has no generic mark/reset, ledgered as narrower than BODY-9's SHOULD). Does not close or cancel the
- * caller's stream -- writeTo reads it to natural exhaustion via pipeTo, leaving cancellation ownership
- * with the caller (BODY-8).
+ * caller's stream -- writeTo reads it to natural exhaustion, leaving cancellation ownership with the
+ * caller (BODY-8).
+ *
+ * When the caller declares a contentLength, writeTo verifies it (HTTP-39/BODY-10): a stream that ends
+ * short raises EndOfStreamError naming delivered-of-declared rather than sending a truncated body. A
+ * bare `pipeTo` cannot do this -- it has no notion of a declared length.
  */
 export class StreamBody implements Body {
   readonly kind = 'stream' as const;
-  readonly mediaType: string | null;
+  readonly mediaType: string | undefined;
   readonly contentLength: number;
   readonly replayable = false;
   readonly #stream: ReadableStream<Uint8Array>;
   #consumed = false;
 
-  constructor(stream: ReadableStream<Uint8Array>, mediaType: string | null = null, contentLength = -1) {
+  constructor(stream: ReadableStream<Uint8Array>, mediaType?: string, contentLength = -1) {
+    invariant(contentLength >= -1, `contentLength must be >= -1 (-1 = unknown), got ${contentLength}`); // IO-3
     this.#stream = stream;
     this.mediaType = mediaType;
     this.contentLength = contentLength;
@@ -766,13 +837,41 @@ export class StreamBody implements Body {
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     if (this.#consumed) throw new ConsumedBodyError('stream');
     this.#consumed = true; // set before the first await -- BODY-3's race-safety guard
-    await this.#stream.pipeTo(sink);
+
+    if (this.contentLength < 0) {
+      await this.#stream.pipeTo(sink);
+      return;
+    }
+    await this.#writeExactly(sink, this.contentLength);
+  }
+
+  /** HTTP-39/BODY-10: writes precisely `declared` bytes or raises naming delivered-of-declared. */
+  async #writeExactly(sink: WritableStream<Uint8Array>, declared: number): Promise<void> {
+    const reader = this.#stream.getReader();
+    const writer = sink.getWriter();
+    let delivered = 0;
+    try {
+      for (;;) {
+        // Serial by necessity: each read depends on the previous one advancing the cursor.
+        const {done, value} = await reader.read();
+        if (done) break;
+        delivered += value.length;
+        await writer.write(value);
+      }
+    } finally {
+      reader.releaseLock(); // BODY-8: release our handle, never cancel the caller's stream
+      await writer.close();
+    }
+
+    if (delivered !== declared) {
+      throw new EndOfStreamError(delivered, declared);
+    }
   }
 }
 
 export function streamBody(
   stream: ReadableStream<Uint8Array>,
-  mediaType: string | null = null,
+  mediaType?: string,
   contentLength = -1,
 ): StreamBody {
   return new StreamBody(stream, mediaType, contentLength);
@@ -782,7 +881,7 @@ export function streamBody(
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/body/stream-body.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -870,6 +969,7 @@ Expected: FAIL — `Cannot find module './materialize.js'`.
 
 ```typescript
 // packages/core/src/body/materialize.ts
+import {invariant} from '../invariant.js';
 import {byteArrayBody} from './simple-bodies.js';
 import type {Body} from './body.js';
 
@@ -892,13 +992,18 @@ export async function materialize(body: Body): Promise<Body> {
     },
   });
   await body.writeTo(collector);
+
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return byteArrayBody(bytes, body.mediaType);
+  invariant(offset === total, `materialized ${offset} bytes, expected ${total}`);
+
+  const replayed = byteArrayBody(bytes, body.mediaType);
+  invariant(replayed.replayable, 'materialize must return a replayable body'); // BODY-3's postcondition
+  return replayed;
 }
 ```
 
@@ -907,7 +1012,35 @@ export async function materialize(body: Body): Promise<Body> {
 Run: `cd packages/core && bun test src/body/materialize.test.ts`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the `BODY-3` concurrency property test**
+
+Append to `materialize.test.ts`:
+
+```typescript
+import fc from 'fast-check';
+
+test('under N concurrent callers exactly one drains; every other observes ConsumedBodyError (BODY-3)', async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.integer({min: 2, max: 8}), async (callers) => {
+      const body = streamBody(readableOf(1, 2, 3));
+      const results = await Promise.allSettled(Array.from({length: callers}, () => materialize(body)));
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      expect(fulfilled.length).toBe(1);
+      for (const result of results.filter((r) => r.status === 'rejected')) {
+        expect(result.reason).toBeInstanceOf(ConsumedBodyError);
+      }
+    }),
+    {seed: 0x3b},
+  );
+});
+```
+
+Note the guarantee this asserts: the losers **fail loudly**, they do not share the winner's materialized
+result. The consumed-once guard lives on `StreamBody`, not on `materialize`, so there is no shared in-flight
+promise to await — and `BODY-3` wants the loud failure, not a silent second reader.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/core/src/body/materialize.ts packages/core/src/body/materialize.test.ts
@@ -1043,6 +1176,8 @@ Expected: FAIL — `Cannot find module './multipart-body.js'`.
 
 ```typescript
 // packages/core/src/body/multipart-body.ts
+import type {Builder} from '../http/builder.js';
+import {invariant} from '../invariant.js';
 import {MultipartBoundaryError} from './errors.js';
 import type {Body} from './body.js';
 
@@ -1085,7 +1220,7 @@ function renderPartHeader(part: MultipartPart, boundary: string): Uint8Array {
   header += `Content-Disposition: form-data; name="${quoteParam(part.name)}"`;
   if (part.filename !== undefined) header += `; filename="${quoteParam(part.filename)}"`;
   header += '\r\n';
-  if (part.body.mediaType !== null) header += `Content-Type: ${part.body.mediaType}\r\n`;
+  if (part.body.mediaType !== undefined) header += `Content-Type: ${part.body.mediaType}\r\n`;
   header += '\r\n';
   return new TextEncoder().encode(header);
 }
@@ -1129,10 +1264,17 @@ export class MultipartBody implements Body {
   constructor(parts: readonly MultipartPart[], boundary?: string) {
     if (boundary !== undefined) validateBoundary(boundary);
     this.#boundary = boundary ?? generateBoundary();
-    this.#parts = parts;
+    // Defensive copy: `readonly T[]` is a compile-time view only, and a caller mutating the array they
+    // passed would desynchronize the contentLength/replayable computed here from the bytes writeTo
+    // emits -- the exact drift HTTP-51 exists to prevent (HTTP-1, XCUT-15).
+    this.#parts = [...parts];
     this.mediaType = `multipart/form-data; boundary=${this.#boundary}`;
-    this.replayable = parts.every((part) => part.body.replayable);
-    this.contentLength = computeContentLength(parts, this.#boundary);
+    this.replayable = this.#parts.every((part) => part.body.replayable);
+    this.contentLength = computeContentLength(this.#parts, this.#boundary);
+    invariant(
+      this.contentLength === -1 || this.contentLength >= trailerBytes(this.#boundary).length,
+      `framing computed an impossible length ${this.contentLength}`,
+    );
   }
 
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
@@ -1153,6 +1295,50 @@ export class MultipartBody implements Body {
 export function multipartBody(parts: readonly MultipartPart[], boundary?: string): MultipartBody {
   return new MultipartBody(parts, boundary);
 }
+
+/**
+ * HTTP-3 names "the multipart body" in its enumerated list of builder-based models that MUST expose a
+ * newBuilder()-style derivation pre-populated with the instance's current fields. Phase 1 could not
+ * satisfy it because MultipartBody did not exist yet, so it lands here. The parts list is copied on
+ * derivation so the returned builder never aliases the source body's internal collection (HTTP-3's
+ * "MUST NOT alias" clause, HTTP-5).
+ */
+export class MultipartBodyBuilder implements Builder<MultipartBody> {
+  #parts: MultipartPart[] = [];
+  #boundary: string | undefined;
+
+  parts(parts: readonly MultipartPart[]): this {
+    this.#parts = [...parts];
+    return this;
+  }
+
+  addPart(part: MultipartPart): this {
+    this.#parts.push(part);
+    return this;
+  }
+
+  boundary(boundary: string | undefined): this {
+    this.#boundary = boundary;
+    return this;
+  }
+
+  build(): MultipartBody {
+    return new MultipartBody(this.#parts, this.#boundary);
+  }
+}
+```
+
+Add the two derivation entry points to `MultipartBody` itself, mirroring `Request`/`Response`'s shape:
+
+```typescript
+  static newBuilder(): MultipartBodyBuilder {
+    return new MultipartBodyBuilder();
+  }
+
+  /** HTTP-3: pre-populated with this instance's parts and boundary, aliasing neither. */
+  newBuilder(): MultipartBodyBuilder {
+    return new MultipartBodyBuilder().parts(this.#parts).boundary(this.#boundary);
+  }
 ```
 
 - [ ] **Step 4: Run and confirm it passes**
@@ -1160,11 +1346,48 @@ export function multipartBody(parts: readonly MultipartPart[], boundary?: string
 Run: `cd packages/core && bun test src/body/multipart-body.test.ts`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the `HTTP-51` framing property test**
+
+The corpus requires a `fast-check` property per serializer, and the framing routine is one. Append to
+`multipart-body.test.ts`:
+
+```typescript
+import fc from 'fast-check';
+
+test('declared length always equals the bytes written, for any part set (HTTP-51)', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(fc.record({name: fc.string(), content: fc.string()}), {minLength: 1, maxLength: 8}),
+      async (specs) => {
+        const body = multipartBody(specs.map((s) => ({name: s.name, body: stringBody(s.content)})));
+        const written = new TextEncoder().encode(await drain(body)).length;
+        expect(written).toBe(body.contentLength);
+      },
+    ),
+    {seed: 0x3b},
+  );
+});
+
+test('a part name containing CR/LF or a quote never breaks the framing (HTTP-51)', async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.string(), async (name) => {
+      const rendered = await drain(multipartBody([{name, body: stringBody('x')}], 'B'));
+      const headerBlock = rendered.slice(0, rendered.indexOf('\r\n\r\n'));
+      // exactly two CRLFs of framing (boundary line, disposition line) -- no injected extras
+      expect(headerBlock.split('\r\n').length).toBe(2);
+    }),
+    {seed: 0x3b},
+  );
+});
+```
+
+Log the seed on failure per the corpus rule — `fast-check` prints it in its counterexample report by default.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/core/src/body/multipart-body.ts packages/core/src/body/multipart-body.test.ts
-git commit -m "feat(core): add MultipartBody (BODY-2, HTTP-51)"
+git commit -m "feat(core): add MultipartBody and its builder (BODY-2, HTTP-3, HTTP-51)"
 ```
 
 ---
@@ -1335,7 +1558,7 @@ Replace `packages/core/src/http/response.test.ts` in full:
 // packages/core/src/http/response.test.ts
 // Exercises: HTTP-6 (required fields), HTTP-41/BODY-14 (single-use body, same reference on repeat
 // access), HTTP-41/BODY-15, HTTP-43 (idempotent close, releases the connection whether or not the body
-// was read), HTTP-16-body/BODY-16 (convenience readers close in a finally-style guarantee), HTTP-42
+// was read), HTTP-41/BODY-16 (convenience readers close in a finally-style guarantee), HTTP-42
 // (charset default and UTF-8 fallback)
 import {describe, expect, test} from 'bun:test';
 import {Headers} from './headers.js';
@@ -1598,12 +1821,17 @@ export class Response {
     let total = 0;
     try {
       for (;;) {
+        // Serial by necessity: each read depends on the previous one advancing the cursor.
         const {done, value} = await reader.read();
         if (done) break;
         chunks.push(value);
         total += value.length;
       }
     } finally {
+      // MUST precede close(): ReadableStream.cancel() rejects with TypeError on a locked stream, and
+      // reading to done does NOT release the lock. Without this the finally replaces the read value
+      // with a TypeError and bytes()/text() never succeed.
+      reader.releaseLock();
       await this.close();
     }
     const result = new Uint8Array(total);
@@ -1639,7 +1867,13 @@ export class Response {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    await this.#body?.cancel();
+    if (this.#body === null) return;
+    // BODY-15 forbids assuming the body was read, so an external consumer may still hold the reader
+    // lock -- cancel() rejects with TypeError in that case. Swallow only that: the caller asked to
+    // release the connection, and the lock holder's own close will finish the job.
+    await this.#body.cancel().catch((error: unknown) => {
+      if (!(error instanceof TypeError)) throw error;
+    });
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -1716,7 +1950,7 @@ git commit -m "feat(core): Response gets a real body, text()/bytes()/close() (BO
 
 **Interfaces:**
 - Consumes: `Response` (`../http/response.js`, Task 8), `Headers`/`Request`/`Status` (type-only, `../http/*.js`).
-- Produces: `class TypedResponse<T>` with `status`, `headers`, `protocol: string`, `reason: string | null`,
+- Produces: `class TypedResponse<T>` with `status`, `headers`, `protocol: string`, `reason: string | undefined`,
   `request`, `value(): Promise<T>`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1822,7 +2056,7 @@ export class TypedResponse<T> {
   readonly status: Status;
   readonly headers: Headers;
   readonly protocol: string;
-  readonly reason: string | null;
+  readonly reason: string | undefined;
   readonly request: Request;
   readonly #response: Response;
   readonly #parse: (response: Response) => Promise<T>;
@@ -1834,7 +2068,7 @@ export class TypedResponse<T> {
     this.status = response.status;
     this.headers = response.headers;
     this.protocol = response.protocol.token;
-    this.reason = response.reasonPhrase ?? null;
+    this.reason = response.reasonPhrase; // already `string | undefined`; do not re-convert to null
     this.request = response.request;
   }
 
@@ -1984,7 +2218,8 @@ Expected: FAIL — `Cannot find module './request-body-logging.js'`.
 
 ```typescript
 // packages/core/src/body/request-body-logging.ts
-import {ByteQueue} from '../io/byte-queue.js';
+import {invariant} from '../invariant.js';
+import {ByteQueue, MAX_ARRAY_BYTES} from '../io/byte-queue.js';
 import type {Body} from './body.js';
 import {materialize} from './materialize.js';
 
@@ -2003,6 +2238,10 @@ export interface LoggedBody extends Body {
  * until Phase 7 supplies a Logger to drive it.
  */
 export function withRequestLogging(delegate: Body, tapCapBytes: number): LoggedBody {
+  // BODY-32: reject a negative cap, clamp to the platform's max single-array size. Without the guard a
+  // negative cap makes `tap.size < cap` permanently false and the tee silently mirrors nothing.
+  invariant(tapCapBytes >= 0, `tapCapBytes must be non-negative, got ${tapCapBytes}`);
+  const cap = Math.min(tapCapBytes, MAX_ARRAY_BYTES);
   const tap = new ByteQueue();
 
   function wrap(inner: Body): LoggedBody {
@@ -2018,11 +2257,14 @@ export function withRequestLogging(delegate: Body, tapCapBytes: number): LoggedB
         const writer = sink.getWriter();
         const tapped = new WritableStream<Uint8Array>({
           write: async (chunk) => {
-            if (tap.size < tapCapBytes) {
-              const room = tapCapBytes - tap.size;
+            if (tap.size < cap) {
+              const room = cap - tap.size;
+              // BODY-20/IO-27: mirror BEFORE forwarding, so a failing primary write still captures
+              // the chunk that failed.
               tap.writeBytes(room >= chunk.length ? chunk : chunk.subarray(0, room));
             }
             await writer.write(chunk); // BODY-19: the full payload always reaches the primary
+            invariant(tap.size <= cap, `tap grew past its ${cap}-byte cap`);
           },
           close: async () => {
             await writer.close();
@@ -2046,11 +2288,41 @@ export function withRequestLogging(delegate: Body, tapCapBytes: number): LoggedB
 Run: `cd packages/core && bun test src/body/request-body-logging.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the `BODY-17` tap-independence property test**
+
+Append to `request-body-logging.test.ts`:
+
+```typescript
+import fc from 'fast-check';
+
+test('the primary always receives the exact payload, independent of the tap cap (BODY-17)', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.uint8Array({minLength: 0, maxLength: 512}),
+      fc.integer({min: 0, max: 600}),
+      async (payload, tapCap) => {
+        const logged = withRequestLogging(byteArrayBody(payload), tapCap);
+        const {sink, written} = collectingSink();
+        await logged.writeTo(sink);
+
+        expect([...written()]).toEqual([...payload]); // wire body never reduced or altered
+        expect(logged.snapshot().length).toBe(Math.min(payload.length, tapCap)); // tap bounded
+      },
+    ),
+    {seed: 0x3b},
+  );
+});
+
+test('a negative tap cap is rejected at construction (BODY-32)', () => {
+  expect(() => withRequestLogging(byteArrayBody(Uint8Array.from([1])), -1)).toThrow(InvariantViolation);
+});
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/core/src/body/request-body-logging.ts packages/core/src/body/request-body-logging.test.ts
-git commit -m "feat(core): add withRequestLogging tee (BODY-17..21, BODY-37)"
+git commit -m "feat(core): add withRequestLogging tee (BODY-17..21, BODY-32, BODY-37)"
 ```
 
 ---
@@ -2062,19 +2334,26 @@ git commit -m "feat(core): add withRequestLogging tee (BODY-17..21, BODY-37)"
 - Create: `packages/core/src/body/response-body-logging.test.ts`
 
 **Interfaces:**
-- Consumes: `ByteQueue` (`../io/byte-queue.js`, Phase 3a).
-- Produces: `interface LoggedResponseBody {read(), snapshot(), close(), [Symbol.asyncDispose]()}`, `function
-  withResponseLogging(delegate, capBytes): LoggedResponseBody`. `@internal` — not exported from
-  `packages/core/src/index.ts`.
+- Consumes: `ByteQueue` and `MAX_ARRAY_BYTES` (`../io/byte-queue.js`, Phase 3a), `invariant`
+  (`../invariant.js`), `ConsumedBodyError` (Task 2).
+- Produces: `interface LoggedResponseBody {read(), snapshot(), error(), contentLength, close(),
+  [Symbol.asyncDispose]()}`, `function withResponseLogging(delegate, capBytes, declaredLength?):
+  LoggedResponseBody`. `@internal` — not exported from `packages/core/src/index.ts`.
+- **Verify before writing:** Phase 3a must already export a platform-max-single-array constant from
+  `io/byte-queue.ts` (it backs `AllocationLimitError`'s `limit` argument). If it is named something other
+  than `MAX_ARRAY_BYTES` or lives elsewhere in `io/`, use the real name here and in Task 10 — do not add a
+  second constant.
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/body/response-body-logging.test.ts
 // Exercises: BODY-22 (lazy, drain-once), BODY-23 (fits-cap: full capture, repeatable non-consuming
-// reads), BODY-24 (exceeds-cap: prefix+tail once, second read fails), BODY-27 (close-once shared guard),
-// BODY-28 (captured buffer survives close)
+// reads), BODY-24 (exceeds-cap: prefix+tail once, second read fails), BODY-26 (drain failure cached,
+// partial bytes retained, error() does not drain), BODY-27 (close-once shared guard), BODY-28 (captured
+// buffer survives close), BODY-29 (reported length), BODY-32 (negative cap rejected)
 import {describe, expect, test} from 'bun:test';
+import {InvariantViolation} from '../invariant.js';
 import {withResponseLogging} from './response-body-logging.js';
 
 function readableOf(...chunks: number[][]): ReadableStream<Uint8Array> {
@@ -2146,6 +2425,44 @@ describe('withResponseLogging', () => {
   test('[Symbol.asyncDispose] delegates to close()', async () => {
     await withResponseLogging(readableOf([1]), 100)[Symbol.asyncDispose]();
   });
+
+  test('a drain failure is cached: read() re-throws it, snapshot keeps the partial bytes (BODY-26)', async () => {
+    const boom = new Error('upstream reset');
+    const failing = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+      },
+      pull(controller) {
+        controller.error(boom);
+      },
+    });
+    const logged = withResponseLogging(failing, 100);
+
+    await expect(logged.read()).rejects.toBe(boom);
+    await expect(logged.read()).rejects.toBe(boom); // same cached error, upstream never re-read
+    expect([...logged.snapshot()]).toEqual([1, 2]); // partial capture retained, snapshot does not throw
+    expect(logged.error()).toBe(boom);
+  });
+
+  test('error() reports null without triggering a drain (BODY-26)', () => {
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    expect(logged.error()).toBeNull();
+    expect(logged.snapshot().length).toBe(0); // still undrained -- error() did not read anything
+  });
+
+  test('contentLength is the captured size when it fits, the declared length when it does not (BODY-29)', async () => {
+    const fits = withResponseLogging(readableOf([1, 2, 3]), 100, 3);
+    await fits.read();
+    expect(fits.contentLength).toBe(3);
+
+    const exceeds = withResponseLogging(readableOf([1, 2, 3, 4]), 2, 4);
+    await exceeds.read();
+    expect(exceeds.contentLength).toBe(4); // the delegate's true length, not the 2-byte prefix
+  });
+
+  test('a negative cap is rejected at construction (BODY-32)', () => {
+    expect(() => withResponseLogging(readableOf([1]), -1)).toThrow(InvariantViolation);
+  });
 });
 ```
 
@@ -2158,111 +2475,179 @@ Expected: FAIL — `Cannot find module './response-body-logging.js'`.
 
 ```typescript
 // packages/core/src/body/response-body-logging.ts
-import {ByteQueue} from '../io/byte-queue.js';
+import {invariant} from '../invariant.js';
+import {ByteQueue, MAX_ARRAY_BYTES} from '../io/byte-queue.js';
+import {ConsumedBodyError} from './errors.js';
 
-export interface LoggedResponseBody {
+export interface LoggedResponseBody extends AsyncDisposable {
   /**
    * Returns a stream serving the body. Lazy -- nothing is read from the delegate until the first call
    * (BODY-22). Fits-cap regime: every call, including calls after the first, returns a fresh
    * non-consuming view over the captured bytes (BODY-23). Exceeds-cap regime: exactly one call is
-   * allowed; a second throws (BODY-24).
+   * allowed; a second throws (BODY-24). If the drain failed, every call re-throws the cached error.
    */
   read(): Promise<ReadableStream<Uint8Array>>;
-  /** Non-consuming; reflects whatever has been captured so far. */
+  /** Non-consuming; reflects whatever has been captured so far, even after a failed drain (BODY-26). */
   snapshot(): Uint8Array;
+  /** The cached drain failure, or null. MUST NOT trigger a drain (BODY-26). */
+  error(): Error | null;
+  /** Captured size iff fully captured within the cap, else the delegate's declared length (BODY-29). */
+  readonly contentLength: number;
   close(): Promise<void>;
-  [Symbol.asyncDispose](): Promise<void>;
+}
+
+/**
+ * Mutable state for one wrapper instance. Extracted from the factory closure so the factory stays under
+ * the 70-line function cap and each step below is independently testable.
+ */
+interface DrainState {
+  readonly captured: ByteQueue;
+  readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  readonly delegate: ReadableStream<Uint8Array>;
+  readonly cap: number;
+  regime: 'undrained' | 'fits' | 'exceeds';
+  tailConsumed: boolean;
+  pendingTailChunk: Uint8Array | undefined;
+  failure: Error | null;
+  closed: boolean;
+  started: Promise<void> | undefined;
+}
+
+/** BODY-27: one close-once guard shared by the wrapper's close and the tail stream's completion. */
+async function closeDelegate(state: DrainState): Promise<void> {
+  if (state.closed) return;
+  state.closed = true;
+  // MUST precede cancel(): cancel() rejects with TypeError on a locked stream, and reading to done does
+  // not release the lock (see Response.bytes for the same trap).
+  state.reader.releaseLock();
+  // BODY-28: on the fits-cap path the capture already succeeded, so a close failure is best-effort and
+  // must not surface as a drain error. Narrowed to the one thing cancel() reports here.
+  await state.delegate.cancel().catch((error: unknown) => {
+    if (!(error instanceof TypeError)) throw error;
+  });
+}
+
+/**
+ * Reads until EOF (fits regime) or until the cap is reached (exceeds regime, leaving the delegate open
+ * and the overflow chunk staged). BODY-26: a failure is cached, never allowed to truncate silently.
+ *
+ * BODY-25 note: the requirement's "zero bytes returned for a positive requested count" has no analog
+ * here -- `ReadableStreamDefaultReader.read()` takes no count, and a zero-length chunk is a legal
+ * no-op, not an EOF signal. EOF is signalled only by `{done: true}`, which is what the loop keys on.
+ */
+async function drainOnce(state: DrainState): Promise<void> {
+  try {
+    for (;;) {
+      // Serial by necessity: each read depends on the previous one advancing the cursor.
+      const {done, value} = await state.reader.read();
+      if (done) {
+        state.regime = 'fits';
+        await closeDelegate(state);
+        return;
+      }
+      if (state.captured.size + value.length <= state.cap) {
+        state.captured.writeBytes(value);
+        continue;
+      }
+      const room = state.cap - state.captured.size;
+      if (room > 0) state.captured.writeBytes(value.subarray(0, room));
+      state.pendingTailChunk = value.subarray(room);
+      state.regime = 'exceeds';
+      invariant(state.captured.size <= state.cap, `captured past the ${state.cap}-byte cap`);
+      return;
+    }
+  } catch (error: unknown) {
+    // BODY-26: retain what was read and cache the error rather than discarding a partial capture.
+    state.failure = error instanceof Error ? error : new Error(String(error));
+    throw state.failure;
+  }
+}
+
+/** A fresh, non-consuming view over the fully-captured bytes. Repeatable (BODY-23). */
+function capturedStream(state: DrainState): ReadableStream<Uint8Array> {
+  const bytes = state.captured.snapshot();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (bytes.length > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Replays the captured prefix, then continues from the still-live tail (BODY-24). Pull-driven, one
+ * chunk per pull: looping inside start() would eagerly materialize the whole remaining body in the
+ * controller's queue -- precisely the oversized payloads the cap exists to keep off the heap.
+ */
+function tailStream(state: DrainState): ReadableStream<Uint8Array> {
+  const prefix = state.captured.snapshot();
+  let staged: Uint8Array | undefined = state.pendingTailChunk;
+  let prefixSent = false;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!prefixSent) {
+        prefixSent = true;
+        if (prefix.length > 0) return void controller.enqueue(prefix);
+      }
+      if (staged !== undefined) {
+        const chunk = staged;
+        staged = undefined;
+        if (chunk.length > 0) return void controller.enqueue(chunk);
+      }
+      const {done, value} = await state.reader.read();
+      if (done) {
+        await closeDelegate(state);
+        return void controller.close();
+      }
+      controller.enqueue(value);
+    },
+    async cancel() {
+      await closeDelegate(state);
+    },
+  });
 }
 
 /**
  * Wraps a raw response body stream (BODY-22..29). `@internal` -- unwired until Phase 7 supplies a Logger.
  */
-export function withResponseLogging(delegate: ReadableStream<Uint8Array>, capBytes: number): LoggedResponseBody {
-  const captured = new ByteQueue();
-  let regime: 'undrained' | 'fits' | 'exceeds' = 'undrained';
-  let exceedsRegimeConsumed = false;
-  let pendingTailChunk: Uint8Array | undefined;
-  let closed = false;
-  let drainStarted: Promise<void> | undefined;
-  const reader = delegate.getReader();
-
-  async function closeDelegate(): Promise<void> {
-    if (closed) return;
-    closed = true;
-    try {
-      reader.releaseLock();
-    } catch {
-      // already released by a completed read loop
-    }
-    await delegate.cancel().catch(() => {}); // BODY-28: a close failure must not be reported as a drain error
-  }
-
-  async function drainOnce(): Promise<void> {
-    for (;;) {
-      const {done, value} = await reader.read();
-      if (done) {
-        regime = 'fits';
-        await closeDelegate();
-        return;
-      }
-      if (captured.size + value.length <= capBytes) {
-        captured.writeBytes(value);
-        continue;
-      }
-      const room = capBytes - captured.size;
-      if (room > 0) captured.writeBytes(value.subarray(0, room));
-      pendingTailChunk = value.subarray(room);
-      regime = 'exceeds';
-      return;
-    }
-  }
-
-  function drain(): Promise<void> {
-    drainStarted ??= drainOnce();
-    return drainStarted;
-  }
-
-  function tailStream(): ReadableStream<Uint8Array> {
-    const prefix = captured.snapshot();
-    const firstTailChunk = pendingTailChunk;
-    return new ReadableStream<Uint8Array>({
-      async start(controller) {
-        if (prefix.length > 0) controller.enqueue(prefix);
-        if (firstTailChunk !== undefined && firstTailChunk.length > 0) controller.enqueue(firstTailChunk);
-        for (;;) {
-          const {done, value} = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-        await closeDelegate();
-        controller.close();
-      },
-    });
-  }
+export function withResponseLogging(
+  delegate: ReadableStream<Uint8Array>,
+  capBytes: number,
+  declaredLength = -1,
+): LoggedResponseBody {
+  invariant(capBytes >= 0, `capBytes must be non-negative, got ${capBytes}`); // BODY-32
+  const state: DrainState = {
+    captured: new ByteQueue(),
+    reader: delegate.getReader(),
+    delegate,
+    cap: Math.min(capBytes, MAX_ARRAY_BYTES), // BODY-32: clamp, do not attempt an impossible allocation
+    regime: 'undrained',
+    tailConsumed: false,
+    pendingTailChunk: undefined,
+    failure: null,
+    closed: false,
+    started: undefined,
+  };
 
   return {
     async read(): Promise<ReadableStream<Uint8Array>> {
-      await drain();
-      if (regime === 'fits') {
-        const bytes = captured.snapshot();
-        return new ReadableStream<Uint8Array>({
-          start(controller) {
-            if (bytes.length > 0) controller.enqueue(bytes);
-            controller.close();
-          },
-        });
+      state.started ??= drainOnce(state);
+      await state.started; // a cached failure re-throws here on every call (BODY-26)
+      if (state.regime === 'fits') return capturedStream(state);
+      if (state.tailConsumed) {
+        throw new ConsumedBodyError('logged-response');
       }
-      if (exceedsRegimeConsumed) {
-        throw new Error('response body already consumed past the buffered prefix (BODY-24)');
-      }
-      exceedsRegimeConsumed = true;
-      return tailStream();
+      state.tailConsumed = true;
+      return tailStream(state);
     },
-    snapshot(): Uint8Array {
-      return captured.snapshot();
+    snapshot: () => state.captured.snapshot(),
+    error: () => state.failure, // deliberately does not drain (BODY-26)
+    get contentLength(): number {
+      // BODY-29: the capture is the true length only when the whole body fit within the cap.
+      return state.regime === 'fits' ? state.captured.size : declaredLength;
     },
-    close: closeDelegate,
-    [Symbol.asyncDispose]: closeDelegate,
+    close: () => closeDelegate(state),
+    [Symbol.asyncDispose]: () => closeDelegate(state),
   };
 }
 ```
@@ -2270,13 +2655,45 @@ export function withResponseLogging(delegate: ReadableStream<Uint8Array>, capByt
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/body/response-body-logging.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the two-regime property test**
+
+Append to `response-body-logging.test.ts`:
+
+```typescript
+import fc from 'fast-check';
+
+test('for any (cap, body) pair the consumer receives every byte and the tap stays bounded', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.uint8Array({minLength: 0, maxLength: 512}),
+      fc.integer({min: 0, max: 600}),
+      async (payload, cap) => {
+        const source = new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (payload.length > 0) controller.enqueue(payload);
+            controller.close();
+          },
+        });
+        const logged = withResponseLogging(source, cap);
+
+        // BODY-34: the consumer gets the complete body whichever regime triggered.
+        expect([...(await readAll(await logged.read()))]).toEqual([...payload]);
+        // BODY-23/BODY-24: the capture is bounded by the cap either way.
+        expect(logged.snapshot().length).toBe(Math.min(payload.length, cap));
+      },
+    ),
+    {seed: 0x3b},
+  );
+});
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/core/src/body/response-body-logging.ts packages/core/src/body/response-body-logging.test.ts
-git commit -m "feat(core): add withResponseLogging, two-regime response body wrapper (BODY-22..29)"
+git commit -m "feat(core): add withResponseLogging, two-regime response body wrapper (BODY-22..29, BODY-32)"
 ```
 
 ---
@@ -2393,18 +2810,21 @@ Expected: FAIL — `Cannot find module './http-status-error.js'`.
 // packages/core/src/body/http-status-error.ts
 import {DexpaceError} from '../http/errors.js';
 import type {Response} from '../http/response.js';
+import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {byteArrayBody} from './simple-bodies.js';
 
-const ERROR_BODY_CAP_BYTES = 1024 * 1024; // 1 MiB, HTTP-52/BODY-30 -- fixed, not configurable
+// Fixed by HTTP-52. Deliberately NOT BODY-34's shared preview cap, which is configurable and covers the
+// two logging tees only -- a spec-fixed value cannot be the configurable one.
+const ERROR_BODY_CAP_BYTES = 1024 * 1024; // 1 MiB, HTTP-52/BODY-30
 
 /** A 4xx/5xx response turned into an exception (HTTP-52/BODY-30, BODY-31). */
 export class HttpStatusError extends DexpaceError {
   readonly status: number;
   readonly #bodyBytes: Uint8Array | undefined;
-  readonly #mediaType: string | null;
+  readonly #mediaType: string | undefined;
 
-  constructor(status: number, bodyBytes: Uint8Array | undefined, mediaType: string | null, options?: ErrorOptions) {
+  constructor(status: number, bodyBytes: Uint8Array | undefined, mediaType: string | undefined, options?: ErrorOptions) {
     super(`HTTP ${status}`, options);
     this.status = status;
     this.#bodyBytes = bodyBytes;
@@ -2432,14 +2852,21 @@ export class HttpStatusError extends DexpaceError {
  * (BODY-31) -- the caller keeps the response, body intact.
  */
 export async function toHttpError(response: Response): Promise<HttpStatusError | null> {
-  if (response.status.code < 400) return null;
-  const mediaType = response.headers.get('content-type') ?? null;
+  // BODY-31: error statuses only, i.e. HTTP-11's 400-599 band. A bare `code < 400` would sweep a
+  // non-standard 6xx -- which HTTP-10 requires Status.of to accept and return -- into the error path
+  // and consume a body BODY-31 says must be handed back intact.
+  if (!response.status.isError) return null;
+  const mediaType = response.headers.get('content-type');
+  if (response.body === null) {
+    await response.close();
+    return new HttpStatusError(response.status.code, undefined, mediaType);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    if (response.body === null) return new HttpStatusError(response.status.code, undefined, mediaType);
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
     for (;;) {
+      // Serial by necessity: each read depends on the previous one advancing the cursor.
       const {done, value} = await reader.read();
       if (done) break;
       if (total >= ERROR_BODY_CAP_BYTES) continue; // keep draining to release the connection; drop the bytes
@@ -2448,23 +2875,27 @@ export async function toHttpError(response: Response): Promise<HttpStatusError |
       chunks.push(piece);
       total += piece.length;
     }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return new HttpStatusError(response.status.code, bytes, mediaType);
   } finally {
+    // Release before close(): cancel() rejects with TypeError on a locked stream (see Response.bytes).
+    reader.releaseLock();
     await response.close();
   }
+  invariant(total <= ERROR_BODY_CAP_BYTES, `buffered ${total} bytes past the ${ERROR_BODY_CAP_BYTES} cap`);
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new HttpStatusError(response.status.code, bytes, mediaType);
 }
 ```
 
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/body/http-status-error.test.ts`
-Expected: PASS, 8 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2498,7 +2929,7 @@ export type {Body} from './body.js';
 export {ConsumedBodyError, isBodyError, MultipartBoundaryError} from './errors.js';
 export {HttpStatusError, toHttpError} from './http-status-error.js';
 export {materialize} from './materialize.js';
-export {multipartBody, MultipartBody, type MultipartPart} from './multipart-body.js';
+export {multipartBody, MultipartBody, MultipartBodyBuilder, type MultipartPart} from './multipart-body.js';
 export {withRequestLogging, type LoggedBody} from './request-body-logging.js';
 export {withResponseLogging, type LoggedResponseBody} from './response-body-logging.js';
 export {
@@ -2521,20 +2952,29 @@ Append to `packages/core/src/index.ts` (after Phase 2's seam exports, which stay
 // Deliberately NOT `export * from './body/index.js';` — that barrel also carries withRequestLogging/
 // withResponseLogging, internal until Phase 7 supplies a Logger to drive them. Naming each public export
 // here instead keeps that boundary enforced at the barrel, not by convention.
+// The concrete body classes are exported as TYPES ONLY. Exporting the class as a value publishes
+// `new ByteArrayBody(...)` as a field-wise constructor, which HTTP-2 forbids ("constructible only
+// through their builder or dedicated factory") and which duplicates the factory functions for no
+// stated need (NFR-3). Callers construct via the factories and annotate with the types.
 export type {Body} from './body/body.js';
 export {ConsumedBodyError, isBodyError, MultipartBoundaryError} from './body/errors.js';
 export {HttpStatusError, toHttpError} from './body/http-status-error.js';
 export {materialize} from './body/materialize.js';
-export {multipartBody, MultipartBody, type MultipartPart} from './body/multipart-body.js';
+export {
+  multipartBody,
+  type MultipartBody,
+  MultipartBodyBuilder,
+  type MultipartPart,
+} from './body/multipart-body.js';
 export {
   byteArrayBody,
-  ByteArrayBody,
+  type ByteArrayBody,
   formUrlEncodedBody,
-  FormUrlEncodedBody,
+  type FormUrlEncodedBody,
   stringBody,
-  StringBody,
+  type StringBody,
 } from './body/simple-bodies.js';
-export {streamBody, StreamBody} from './body/stream-body.js';
+export {streamBody, type StreamBody} from './body/stream-body.js';
 export {TypedResponse} from './body/typed-response.js';
 ```
 
@@ -2585,11 +3025,18 @@ either logging tee.
 bun run changeset
 ```
 
-Select `@dexpace/core`, choose **minor** (new public API, no breaking change — `Request.body`'s type narrowed
-from `unknown` to `Body | undefined` and `Response.body`'s from `unknown` to `ReadableStream<Uint8Array> | null`
-are not breaking for any real caller, since `unknown` accepted nothing usable before), summary:
-`Add the request/response body model: Body variants, materialize(), TypedResponse, HttpStatusError. Request.body
-and Response.body are now real types instead of unknown.`
+Select `@dexpace/core`, choose **major**. This is a narrowed parameter type, which
+`styleguide/typescript/10-api-design.md` classes as breaking: `RequestBuilder.body` went from accepting
+`unknown` to accepting `Body | undefined`, and `ResponseBuilder.body` from `unknown` to
+`ReadableStream<Uint8Array> | null`. Do **not** reason that "`unknown` accepted nothing usable before" — it
+accepted everything, which is exactly why Step 1 of Task 7 had to rewrite every `.body('x')` call site in the
+existing test suite. Any downstream caller passing a string or a `Blob` stops compiling.
+
+Summary: `Add the request/response body model: Body variants, materialize(), TypedResponse, HttpStatusError.
+BREAKING: Request.body and Response.body are now real types instead of unknown.`
+
+If the package is still pre-1.0 and the repo's release policy treats 0.x breaks as minor, record that here with
+a pointer to the policy rather than restating the (incorrect) not-breaking argument.
 
 - [ ] **Step 7: Commit**
 
@@ -2609,36 +3056,62 @@ git commit -m "feat(core): promote the body-lifecycle public surface, verify ful
 - `BODY-3`/`HTTP-37` → Task 4 (`StreamBody`'s guard), Task 5 (`materialize`).
 - `BODY-8` → Task 4 (`StreamBody`'s TSDoc + `pipeTo`, which never cancels the source).
 - `BODY-9` → Task 4, ledgered (always single-use, no mark/reset).
-- `HTTP-39`/`BODY-10` → satisfied by `pipeTo`'s own exact-transfer semantics inside Task 4; no separate exact-copy
-  primitive needed since Task 4 doesn't hand-roll a copy loop.
+- `HTTP-39`/`BODY-10` → Task 4's `StreamBody.#writeExactly`. `pipeTo` alone does **not** satisfy this: it has no
+  notion of a declared `contentLength`, so a stream that ends short would send a truncated body silently, which
+  is precisely what `HTTP-39` forbids. The declared-length path counts forwarded bytes and raises
+  `EndOfStreamError(delivered, declared)`; `contentLength < -1` is rejected at construction (`IO-3`).
 - `HTTP-38`/`BODY-35` → Task 3 (replayability by source, form encoding).
 - `BODY-4`, `BODY-5` → contract-obligation-only, noted in the design's disposition table; no task builds
   consultation (Phase 5's job).
 - `HTTP-41`/`BODY-14`, `BODY-15`, `HTTP-43` → Task 8 (`Response.body`, `close`).
-- `HTTP-16-body`/`BODY-16` → Task 8 (`bytes`/`text`'s `finally`).
+- `HTTP-41`/`BODY-16` → Task 8 (`bytes`/`text`'s `finally`, releasing the reader lock before close).
 - `HTTP-42` → Task 8 (`#charset`, fallback in `text`).
 - `HTTP-44`, `HTTP-45` → Task 9 (`TypedResponse`).
 - `BODY-17`–`19`, `21`, `37` → Task 10.
 - `BODY-20` → Task 10 (partial-failure snapshot test).
 - `BODY-22`–`29` → Task 11.
 - `HTTP-52`/`BODY-30`, `BODY-31` → Task 12.
-- `BODY-32` → not separately tested as a standalone byte-capped-snapshot primitive; `toHttpError`'s own cap
-  loop (Task 12) is the one byte-capped snapshot this phase builds, and its cap-clamping behavior (drop beyond
-  cap, never over-allocate) is covered by the "drops bytes beyond the 1 MiB cap" test. No general-purpose
-  snapshot utility is built standalone, so `BODY-32`'s negative-cap/capless-snapshot clauses don't apply to a
-  primitive this phase ships.
+- `BODY-25` → structurally inapplicable and ledgered, not silently dropped: the wrapper reads through a
+  `ReadableStreamDefaultReader`, which takes no requested count, so "returns zero for a positive requested
+  count" has no analog. A zero-length chunk is a legal no-op, and EOF is signalled only by `{done: true}` —
+  which is what `drainOnce`'s loop keys on, so the silent-truncation failure mode `BODY-25` guards against
+  cannot arise. Documented at the `drainOnce` TSDoc in Task 11.
+- `BODY-26` → Task 11: `state.failure` caches the drain error, `read()` re-throws it on every call via the
+  memoized `state.started` promise, `snapshot()` returns the partial capture without throwing, and `error()`
+  surfaces it without triggering a drain.
+- `BODY-29` → Task 11's `contentLength` getter: the captured size in the fits-cap regime, the delegate's
+  declared length otherwise.
+- `BODY-32` → Tasks 10 and 11. This phase ships **two** byte-capped capture operations —
+  `withRequestLogging(_, tapCapBytes)` and `withResponseLogging(_, capBytes)` — and both now `invariant` on a
+  non-negative cap and clamp it to the platform's max single-array size. (The earlier claim that this phase
+  ships no byte-capped primitive was wrong: a cap parameter *is* the primitive, and an unvalidated negative cap
+  silently mirrored nothing.) The capless-snapshot clause is inherited — every `snapshot()` here delegates to
+  Phase 3a's `ByteQueue.snapshot()`, which already raises `AllocationLimitError` over the platform max (`IO-9`).
+  `toHttpError`'s 1 MiB loop is additionally covered by the "drops bytes beyond the 1 MiB cap" test.
 - `BODY-33` → Task 12 (`preview`).
-- `BODY-34` → satisfied by construction: `toHttpError`'s cap is fixed (not user-configurable, so nothing to
-  desynchronize), and the two logging tees (Tasks 10, 11) each take their own `capBytes` parameter — Phase 7 is
-  responsible for threading one shared value through all three when it wires a real `Logger`/config; this phase
-  ships the parameter, not the wiring.
+- `BODY-34` → the shared preview cap governs the **two logging tees only** (Tasks 10, 11), each of which takes
+  it as a parameter; Phase 7 supplies the single config value that feeds both when it wires a real
+  `Logger`/config. `toHttpError`'s 1 MiB cap is explicitly *not* that shared cap — `HTTP-52` fixes its value, so
+  it cannot be the configurable one, and there is nothing to desynchronize. This phase ships the parameter, not
+  the wiring; the deferral is logged below.
 - Error-tree flattening (checkpoint retrofit) → Task 1.
 - `Request`/`Response` real body types → Tasks 7, 8.
 - `FileBody` → explicitly out of scope, logged in the roadmap.
 
+- `HTTP-2`/`HTTP-3` → Task 6 adds `MultipartBodyBuilder` with static and instance `newBuilder()`. `HTTP-3`
+  enumerates "the multipart body" among the models that MUST expose a pre-populated builder derivation, and this
+  is the only phase that can satisfy it — Phase 1 had no `MultipartBody`. `HTTP-2`'s "never a public field-wise
+  constructor" is honored by exporting the concrete body classes from the public barrel as **types only**
+  (Task 13); callers construct through the factory functions.
+
 **Placeholder scan:** no `TBD`/`TODO`, no "add appropriate error handling," no bare "write tests for the above."
-Every step has real code. The one deliberately-partial item (`BODY-32`'s standalone-primitive clauses) is stated
-as N/A with a reason, not silently dropped.
+Every step has real code. The one genuinely-inapplicable item (`BODY-25`, whose count-based read has no analog
+in the Web Streams reader model) is stated as such with a reason and a TSDoc anchor, not silently dropped.
+
+**Deferred out of this phase, each to a named owner:** `FileBody` (`HTTP-40`/`BODY-11`/`BODY-12`/`BODY-13`/
+`BODY-36`) → Phase 8, already in the roadmap's log. `BODY-34`'s single shared preview-cap *value* → Phase 7,
+which owns the `Logger`/config surface; this phase ships both tees' parameters and Phase 7 threads one value
+through them. `BODY-4`/`BODY-5`'s replayability consultation → Phase 5's retry/redirect/auth steps.
 
 **Type consistency:** `Body`'s `kind` union (`'byte-array' | 'string' | 'stream' | 'form-urlencoded' |
 'multipart'`) matches every variant's `readonly kind = '...' as const` across Tasks 3, 4, 6. `writeTo(sink:

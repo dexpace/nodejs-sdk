@@ -48,7 +48,10 @@ gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`
 - `END_OF_STREAM` is the exported constant `-1`. Never write the literal `-1` at a call site.
 - Typed `Error` subclasses only (styleguide ch08); `cause` chaining on wrap-and-rethrow; `this.name =
   new.target.name`. `IoError extends DexpaceError` (Phase 2's root). Argument-validation failures use
-  `invariant`, not the typed tree (`IO-3` permits this explicitly).
+  `invariant`, not the typed tree (`IO-3` permits this explicitly). One deliberate exception:
+  charset-label rejection (`decoderFor` in Task 7, `encodeText` in Task 9) throws `IoError` instead, so
+  the sink and the tee refuse a label identically and the platform's `RangeError` chains as `cause` —
+  `invariant` carries neither.
 - **An I/O error message never includes buffer contents.** These buffers carry request and response bodies —
   credentials, tokens, PII (styleguide 8.8). Error messages carry counts and limits, never bytes.
 - `exactOptionalPropertyTypes: true` — optional properties are spelled `?: T | undefined`, never bare `?: T`.
@@ -1033,13 +1036,14 @@ git commit -m "feat(core): add ByteQueue close semantics and property tests (IO-
 **Interfaces:**
 - Consumes: `ByteQueue` (Tasks 2–4), `ClosedResourceError`/`SourceContractViolationError` (Task 1).
 - Produces: `interface Cursor { at: number }`; `class RetentionWindow` with `constructor(reader:
-  ReadableStreamDefaultReader<Uint8Array> | undefined)`, `get pulledThrough(): number`, `get closed():
-  boolean`, `register(at: number): Cursor`, `release(cursor: Cursor): void`, `pullThrough(offset: number):
-  Promise<boolean>`, `readInto(cursor: Cursor, dest: ByteQueue, count: number): number`,
-  `peekBytes(cursor: Cursor, count: number): Uint8Array`, `assertUsable(): void`, `close(): void`. Also
-  `fakeReadableStream(chunks: readonly Uint8Array[]): ReadableStream<Uint8Array>` and
-  `collectingWritableStream(): {stream: WritableStream<Uint8Array>; written: () => Uint8Array}` from
-  test-support. Tasks 6, 7, 8, 12, 13 use all of these.
+  ReadableStreamDefaultReader<Uint8Array> | undefined)`, `get pulledThrough(): number`, `get
+  retainedBytes(): number`, `get closed(): boolean`, `register(at: number): Cursor`, `release(cursor:
+  Cursor): void`, `pullThrough(offset: number): Promise<boolean>`, `readInto(cursor: Cursor, dest:
+  ByteQueue, count: number): number`, `peekBytes(cursor: Cursor, count: number): Uint8Array`,
+  `assertUsable(): void`, `close(): void`. Also
+  `fakeReadableStream(chunks: readonly Uint8Array[], onCancel?: () => void): ReadableStream<Uint8Array>` and
+  `collectingWritableStream(): {stream: WritableStream<Uint8Array>; written: () => Uint8Array; isClosed: ()
+  => boolean}` from test-support. Tasks 6, 7, 8, 12, 13 use all of these.
 
 - [ ] **Step 1: Write the test-support fakes**
 
@@ -1049,9 +1053,15 @@ git commit -m "feat(core): add ByteQueue close semantics and property tests (IO-
 // Styleguide 11.3: fake your own interfaces rather than reaching for mock.module.
 
 /** A readable stream that yields exactly the chunks given, at exactly those boundaries. */
-export function fakeReadableStream(chunks: readonly Uint8Array[]): ReadableStream<Uint8Array> {
+export function fakeReadableStream(
+  chunks: readonly Uint8Array[],
+  onCancel?: () => void,
+): ReadableStream<Uint8Array> {
   let index = 0;
   return new ReadableStream<Uint8Array>({
+    cancel(): void {
+      onCancel?.();
+    },
     pull(controller): void {
       if (index >= chunks.length) {
         controller.close();
@@ -1073,11 +1083,16 @@ export function protocolViolatingStream(): ReadableStream<Uint8Array> {
 export function collectingWritableStream(): {
   stream: WritableStream<Uint8Array>;
   written: () => Uint8Array;
+  isClosed: () => boolean;
 } {
   const parts: Uint8Array[] = [];
+  let closed = false;
   const stream = new WritableStream<Uint8Array>({
     write(chunk): void {
       parts.push(chunk.slice());
+    },
+    close(): void {
+      closed = true;
     },
   });
   const written = (): Uint8Array => {
@@ -1090,7 +1105,7 @@ export function collectingWritableStream(): {
     }
     return out;
   };
-  return {stream, written};
+  return {stream, written, isClosed: () => closed};
 }
 
 /** A writable stream whose first write rejects, for asserting failure-path behavior. */
@@ -1423,7 +1438,8 @@ git commit -m "feat(core): add RetentionWindow cursor machinery (IO-19, IO-22, I
 // packages/core/src/io/buffered-source.test.ts
 // Exercises: IO-1 (read protocol), IO-2 (zero-count read), IO-3 (negative count),
 // IO-11 (exhausted, single-byte read, remaining-bytes read), IO-12 (exact-count read),
-// IO-15 (skip), IO-41 (idempotent close), IO-42 (stream-backed rejects after close)
+// IO-15 (skip), IO-41 (idempotent close), IO-42 (stream-backed rejects after close),
+// IO-6 (wrapper owns the caller's stream)
 import {describe, expect, test} from 'bun:test';
 import {BufferedSource} from './buffered-source.js';
 import {ByteQueue} from './byte-queue.js';
@@ -1465,7 +1481,7 @@ describe('BufferedSource core reads', () => {
 
   test('IO-3: a negative count is rejected before any I/O', async () => {
     const source = sourceOver(bytes(1, 2));
-    expect(source.read(new ByteQueue(), -1)).rejects.toThrow(
+    await expect(source.read(new ByteQueue(), -1)).rejects.toThrow(
       'count must be a non-negative integer, got -1',
     );
   });
@@ -1480,7 +1496,7 @@ describe('BufferedSource core reads', () => {
   test('IO-11: readByte returns the next byte, then fails at end', async () => {
     const source = sourceOver(bytes(7));
     expect(await source.readByte()).toBe(7);
-    expect(source.readByte()).rejects.toThrow(EndOfStreamError);
+    await expect(source.readByte()).rejects.toThrow(EndOfStreamError);
   });
 
   test('IO-11: readBytes returns all remaining bytes, and empty when already exhausted', async () => {
@@ -1496,7 +1512,7 @@ describe('BufferedSource core reads', () => {
 
   test('IO-12: readExactly fails rather than returning a short result', async () => {
     const source = sourceOver(bytes(1, 2));
-    expect(source.readExactly(3)).rejects.toThrow(EndOfStreamError);
+    await expect(source.readExactly(3)).rejects.toThrow(EndOfStreamError);
   });
 
   test('IO-15: skip advances past exactly the requested count', async () => {
@@ -1507,7 +1523,7 @@ describe('BufferedSource core reads', () => {
 
   test('IO-15: skip fails when fewer bytes remain', async () => {
     const source = sourceOver(bytes(1, 2));
-    expect(source.skip(3)).rejects.toThrow(EndOfStreamError);
+    await expect(source.skip(3)).rejects.toThrow(EndOfStreamError);
   });
 
   test('IO-15: skip(0) is a no-op, even at and after end of stream', async () => {
@@ -1530,8 +1546,8 @@ describe('BufferedSource core reads', () => {
     // inconsistency porters get wrong; both directions are asserted, here and in Task 4.
     const source = sourceOver(bytes(1, 2));
     await source.close();
-    expect(source.read(new ByteQueue(), 1)).rejects.toThrow(ClosedResourceError);
-    expect(source.readBytes()).rejects.toThrow(ClosedResourceError);
+    await expect(source.read(new ByteQueue(), 1)).rejects.toThrow(ClosedResourceError);
+    await expect(source.readBytes()).rejects.toThrow(ClosedResourceError);
   });
 
   test('overBytes wraps a byte array as an independent copy', async () => {
@@ -1539,6 +1555,17 @@ describe('BufferedSource core reads', () => {
     const source = BufferedSource.overBytes(input);
     input[0] = 99;
     expect([...(await source.readBytes())]).toEqual([1, 2, 3]);
+  });
+
+  test('IO-6: closing the source cancels the caller stream it took ownership of', async () => {
+    let cancelled = false;
+    const source = BufferedSource.overStream(
+      fakeReadableStream([bytes(1)], () => {
+        cancelled = true;
+      }),
+    );
+    await source.close();
+    expect(cancelled).toBe(true);
   });
 });
 ```
@@ -1715,7 +1742,7 @@ function assertCount(count: number): void {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd packages/core && bun test src/io/buffered-source.test.ts`
-Expected: PASS, 16 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1786,7 +1813,7 @@ describe('BufferedSource text reads (IO-13)', () => {
   });
 
   test('readString rejects an unknown charset label', async () => {
-    expect(sourceOver(utf8('x')).readString('not-a-charset')).rejects.toThrow(
+    await expect(sourceOver(utf8('x')).readString('not-a-charset')).rejects.toThrow(
       'unsupported charset: not-a-charset',
     );
   });
@@ -1846,9 +1873,11 @@ describe('BufferedSource line reads (IO-14)', () => {
             if (line === undefined) break;
             read.push(line);
           }
-          // A trailing lone \r before the terminator is content, so compare against the same rule.
+          // A line-content trailing \r merges with an appended \n into \r\n and is stripped by the
+          // reader; with a \r\n terminator only the terminator's own \r is stripped, so a content \r
+          // survives. The oracle mirrors exactly that rule.
           const expected = lines.map((line) =>
-            terminator === '\n' ? line : line.replace(/\r$/, ''),
+            terminator === '\n' ? line.replace(/\r$/, '') : line,
           );
           expect(read).toEqual(expected);
         },
@@ -2047,14 +2076,14 @@ describe('BufferedSource views', () => {
     const source = sourceOver(bytes(1, 2, 3));
     const slice = source.slice(0, 2);
     await source.close();
-    expect(slice.readBytes()).rejects.toThrow(ClosedResourceError);
+    await expect(slice.readBytes()).rejects.toThrow(ClosedResourceError);
   });
 
   test('IO-24: reading an explicitly closed slice fails loudly, distinct from a normal EOF', async () => {
     const source = sourceOver(bytes(1, 2, 3));
     const slice = source.slice(0, 2);
     await slice.close();
-    expect(slice.readBytes()).rejects.toThrow(ClosedResourceError);
+    await expect(slice.readBytes()).rejects.toThrow(ClosedResourceError);
   });
 
   test('IO-23: two slices of one source have independent cursors and budgets', async () => {
@@ -2218,7 +2247,7 @@ git commit -m "feat(core): add BufferedSource peek and slice views (IO-19, IO-20
 // packages/core/src/io/buffered-sink.test.ts
 // Exercises: IO-4 (exact head removal, no partial write), IO-5 (flush, closeable),
 // IO-13 (symmetric write-side encodings), IO-18 (emit vs flush), IO-41 (idempotent close),
-// IO-42 (rejects after close)
+// IO-42 (rejects after close), IO-6 (wrapper owns the caller's stream)
 import {describe, expect, test} from 'bun:test';
 import {BufferedSink} from './buffered-sink.js';
 import {ByteQueue} from './byte-queue.js';
@@ -2246,7 +2275,7 @@ describe('BufferedSink', () => {
     const {stream, written} = collectingWritableStream();
     const sink = BufferedSink.overStream(stream);
     const source = queueOf(1, 2);
-    expect(sink.write(source, 3)).rejects.toThrow(EndOfStreamError);
+    await expect(sink.write(source, 3)).rejects.toThrow(EndOfStreamError);
     await sink.close();
     expect([...written()]).toEqual([]);
     expect(source.size).toBe(2);
@@ -2271,7 +2300,7 @@ describe('BufferedSink', () => {
   test('IO-13: writeString rejects a code point ISO-8859-1 cannot represent', async () => {
     const {stream} = collectingWritableStream();
     const sink = BufferedSink.overStream(stream);
-    expect(sink.writeString('☃', 'iso-8859-1')).rejects.toThrow(
+    await expect(sink.writeString('☃', 'iso-8859-1')).rejects.toThrow(
       'code point 9731 is not representable in iso-8859-1',
     );
   });
@@ -2281,7 +2310,7 @@ describe('BufferedSink', () => {
     // exactly UTF-8 and ISO-8859-1. Anything else throws rather than silently re-encoding as UTF-8.
     const {stream} = collectingWritableStream();
     const sink = BufferedSink.overStream(stream);
-    expect(sink.writeString('x', 'shift_jis')).rejects.toThrow(
+    await expect(sink.writeString('x', 'shift_jis')).rejects.toThrow(
       'unsupported write charset: shift_jis (only utf-8 and iso-8859-1 can be encoded)',
     );
   });
@@ -2306,9 +2335,16 @@ describe('BufferedSink', () => {
     const {stream} = collectingWritableStream();
     const sink = BufferedSink.overStream(stream);
     await sink.close();
-    expect(sink.write(queueOf(1), 1)).rejects.toThrow(ClosedResourceError);
-    expect(sink.flush()).rejects.toThrow(ClosedResourceError);
-    expect(sink.emit()).rejects.toThrow(ClosedResourceError);
+    await expect(sink.write(queueOf(1), 1)).rejects.toThrow(ClosedResourceError);
+    await expect(sink.flush()).rejects.toThrow(ClosedResourceError);
+    await expect(sink.emit()).rejects.toThrow(ClosedResourceError);
+  });
+
+  test('IO-6: closing the sink closes the caller stream it took ownership of', async () => {
+    const {stream, isClosed} = collectingWritableStream();
+    const sink = BufferedSink.overStream(stream);
+    await sink.close();
+    expect(isClosed()).toBe(true);
   });
 });
 ```
@@ -2448,7 +2484,7 @@ function assertCount(count: number): void {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd packages/core && bun test src/io/buffered-sink.test.ts`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2479,11 +2515,13 @@ git commit -m "feat(core): add BufferedSink (IO-4, IO-5, IO-13, IO-18, IO-41, IO
 // Exercises: IO-25 (mirror into a tap AND forward the full untruncated payload),
 // IO-26 (tap capacity limit; unbounded default; a limit of 0 mirrors nothing),
 // IO-27 (mirror BEFORE forwarding; staging cleared even on a failed write),
-// IO-28 (no direct backing-buffer handle), IO-29 (flush/close/emit forward to the primary only)
+// IO-28 (no direct backing-buffer handle), IO-29 (flush/close/emit forward to the primary only),
+// IO-42 (write after close rejects with the source intact)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {BufferedSink} from './buffered-sink.js';
 import {ByteQueue} from './byte-queue.js';
+import {ClosedResourceError} from './errors.js';
 import {TeeSink} from './tee-sink.js';
 import {collectingWritableStream, failingWritableStream} from './test-support/fake-stream.js';
 
@@ -2531,7 +2569,7 @@ describe('TeeSink', () => {
 
   test('IO-27: a failed primary write still captures the attempted bytes in the tap', async () => {
     const tee = new TeeSink(BufferedSink.overStream(failingWritableStream('primary down')));
-    expect(tee.write(queueOf(Uint8Array.from([1, 2, 3])), 3)).rejects.toThrow('primary down');
+    await expect(tee.write(queueOf(Uint8Array.from([1, 2, 3])), 3)).rejects.toThrow('primary down');
     await Promise.resolve();
     expect([...tee.snapshot()]).toEqual([1, 2, 3]);
   });
@@ -2540,7 +2578,7 @@ describe('TeeSink', () => {
     // The staging buffer is per-call, so this holds structurally — but the assertion has to actually
     // drive the failure path to prove it, which is why the first sink is the failing one.
     const failing = new TeeSink(BufferedSink.overStream(failingWritableStream('primary down')));
-    expect(failing.write(queueOf(Uint8Array.from([1, 2])), 2)).rejects.toThrow('primary down');
+    await expect(failing.write(queueOf(Uint8Array.from([1, 2])), 2)).rejects.toThrow('primary down');
 
     const {stream, written} = collectingWritableStream();
     const good = new TeeSink(BufferedSink.overStream(stream));
@@ -2573,6 +2611,16 @@ describe('TeeSink', () => {
     await tee.close();
     expect([...written()]).toEqual([1, 2]);
     expect([...tee.snapshot()]).toEqual([1, 2]);
+  });
+
+  test('IO-42: write after close rejects and leaves the source intact', async () => {
+    const {stream} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    await tee.close();
+    const source = queueOf(Uint8Array.from([1, 2]));
+    await expect(tee.write(source, 2)).rejects.toThrow(ClosedResourceError);
+    expect(source.size).toBe(2);
+    expect([...tee.snapshot()]).toEqual([]);
   });
 
   test('IO-25 property: the primary always receives the exact concatenation of every written byte', async () => {
@@ -2609,7 +2657,7 @@ Expected: FAIL — `Cannot find module './tee-sink.js'`.
 import {invariant} from '../invariant.js';
 import {encodeText, type BufferedSink} from './buffered-sink.js';
 import {ByteQueue} from './byte-queue.js';
-import {IoError} from './errors.js';
+import {ClosedResourceError, IoError} from './errors.js';
 
 /**
  * A sink that mirrors written bytes into a bounded in-memory tap while forwarding the full, untruncated
@@ -2646,6 +2694,9 @@ export class TeeSink {
 
   /** Mirror into the tap, then forward the full payload to the primary (IO-25, IO-27). */
   async write(src: ByteQueue, count: number): Promise<void> {
+    // IO-42: reject before consuming from `src` or touching the tap, so a caller that catches the
+    // rejection still holds its bytes — matching BufferedSink, which rejects before takeBytes.
+    if (this.#primary.closed) throw new ClosedResourceError('TeeSink');
     const staging = new ByteQueue();
     staging.write(src, count);
     // IO-27: mirror BEFORE forwarding, so a failed primary write still captures the attempted bytes.
@@ -2712,7 +2763,7 @@ export class TeeSink {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd packages/core && bun test src/io/tee-sink.test.ts`
-Expected: PASS, 10 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2775,7 +2826,7 @@ describe('writeAll (IO-17)', () => {
     // fail loudly rather than hang or truncate a body.
     const source = BufferedSource.overStream(protocolViolatingStream());
     const {stream} = collectingWritableStream();
-    expect(writeAll(source, BufferedSink.overStream(stream))).rejects.toThrow(
+    await expect(writeAll(source, BufferedSink.overStream(stream))).rejects.toThrow(
       SourceContractViolationError,
     );
   });
@@ -2968,7 +3019,7 @@ import {ByteQueue} from './byte-queue.js';
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd packages/core && bun test src/io/buffered-source.test.ts src/io/buffered-sink.test.ts`
-Expected: PASS, 18 + 11 tests.
+Expected: PASS, 19 + 12 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2992,19 +3043,24 @@ git commit -m "feat(core): add Web Streams host-native bridges (IO-16)"
 **Interfaces:**
 - Consumes: every preceding task.
 - Produces: `newByteQueue()`, `bufferedSourceOverStream(stream)`, `bufferedSourceOverBytes(bytes)`,
-  `bufferedSinkOverStream(stream)`, and the `src/io/index.ts` internal barrel. Phase 3b imports from
-  `./io/index.js`.
+  `bufferedSinkOverStream(stream)`, `bufferedSourceOverPrimitive(source)`,
+  `bufferedSinkOverPrimitive(sink)`, the `PrimitiveSource`/`PrimitiveSink` interfaces, and the
+  `src/io/index.ts` internal barrel. Phase 3b imports from `./io/index.js`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/io/factories.test.ts
-// Exercises: IO-30 (factory half — fresh, independent, empty buffers; stream and byte-array wrapping;
-// the byte-array source is an independent copy)
+// Exercises: IO-30 (factory half — fresh, independent, empty buffers; stream, byte-array, and
+// foreign-primitive wrapping; the byte-array source is an independent copy), IO-17 (a primitive
+// source returning 0 for a positive request fails loudly)
 import {describe, expect, test} from 'bun:test';
+import {SourceContractViolationError} from './errors.js';
 import {
+  bufferedSinkOverPrimitive,
   bufferedSinkOverStream,
   bufferedSourceOverBytes,
+  bufferedSourceOverPrimitive,
   bufferedSourceOverStream,
   newByteQueue,
 } from './factories.js';
@@ -3045,6 +3101,32 @@ describe('IO-30 factories', () => {
     await sink.close();
     expect(new TextDecoder().decode(written())).toBe('hi');
   });
+
+  test('wrapping a foreign primitive source supplies the typed reads', async () => {
+    const backing = newByteQueue();
+    backing.writeBytes(Uint8Array.from([1, 2, 3]));
+    const source = bufferedSourceOverPrimitive({
+      read: (dest, count) => backing.read(dest, count),
+    });
+    expect([...(await source.readBytes())]).toEqual([1, 2, 3]);
+  });
+
+  test('IO-17: a primitive source returning 0 for a positive request fails loudly', async () => {
+    const source = bufferedSourceOverPrimitive({read: () => 0});
+    await expect(source.readBytes()).rejects.toThrow(SourceContractViolationError);
+  });
+
+  test('wrapping a foreign primitive sink supplies the typed writes', async () => {
+    const collected = newByteQueue();
+    const sink = bufferedSinkOverPrimitive({
+      write: (src, count) => {
+        collected.write(src, count);
+      },
+    });
+    await sink.writeUtf8('hi');
+    await sink.close();
+    expect(new TextDecoder().decode(collected.snapshot())).toBe('hi');
+  });
 });
 ```
 
@@ -3060,6 +3142,8 @@ Expected: FAIL — `Cannot find module './factories.js'`.
 import {BufferedSink} from './buffered-sink.js';
 import {BufferedSource} from './buffered-source.js';
 import {ByteQueue} from './byte-queue.js';
+import {SourceContractViolationError} from './errors.js';
+import {END_OF_STREAM} from './limits.js';
 
 /**
  * IO-30's factory half. Named free functions rather than a namespace object, so the module stays
@@ -3092,6 +3176,60 @@ export function bufferedSourceOverBytes(bytes: Uint8Array): BufferedSource {
 export function bufferedSinkOverStream(stream: WritableStream<Uint8Array>): BufferedSink {
   return BufferedSink.overStream(stream);
 }
+
+/**
+ * The raw read protocol of IO-1 — append up to `count` bytes to `dest`'s tail, return the number
+ * transferred or `END_OF_STREAM` — with none of the typed reads, views, or line semantics. What a
+ * "foreign primitive" source implements.
+ */
+export interface PrimitiveSource {
+  read(dest: ByteQueue, count: number): Promise<number> | number;
+}
+
+/** The raw write protocol of IO-4 — remove exactly `count` bytes from `src`'s head, push downstream. */
+export interface PrimitiveSink {
+  write(src: ByteQueue, count: number): Promise<void> | void;
+}
+
+/** How much the primitive-source adapter asks for per pull. */
+const PRIMITIVE_CHUNK = 16 * 1024;
+
+/** Wrap a foreign primitive source with the typed buffered surface (IO-30). */
+export function bufferedSourceOverPrimitive(source: PrimitiveSource): BufferedSource {
+  const staging = new ByteQueue();
+  return BufferedSource.overStream(
+    new ReadableStream<Uint8Array>({
+      async pull(controller): Promise<void> {
+        const read = await source.read(staging, PRIMITIVE_CHUNK);
+        if (read === END_OF_STREAM) {
+          controller.close();
+          return;
+        }
+        if (read === 0) {
+          // IO-17: a zero-byte read for a positive request is a source-contract violation — never
+          // tolerated as end-of-stream, never spun on.
+          throw new SourceContractViolationError(
+            'foreign source returned 0 bytes for a positive request',
+          );
+        }
+        controller.enqueue(staging.takeBytes(read));
+      },
+    }),
+  );
+}
+
+/** Wrap a foreign primitive sink with the typed buffered surface (IO-30). */
+export function bufferedSinkOverPrimitive(sink: PrimitiveSink): BufferedSink {
+  return BufferedSink.overStream(
+    new WritableStream<Uint8Array>({
+      async write(chunk): Promise<void> {
+        const staging = new ByteQueue();
+        staging.writeBytes(chunk);
+        await sink.write(staging, staging.size);
+      },
+    }),
+  );
+}
 ```
 
 - [ ] **Step 4: Write the internal barrel**
@@ -3114,10 +3252,14 @@ export {
   SourceContractViolationError,
 } from './errors.js';
 export {
+  bufferedSinkOverPrimitive,
   bufferedSinkOverStream,
   bufferedSourceOverBytes,
+  bufferedSourceOverPrimitive,
   bufferedSourceOverStream,
   newByteQueue,
+  type PrimitiveSink,
+  type PrimitiveSource,
 } from './factories.js';
 export {END_OF_STREAM, MAX_BYTE_ARRAY_LENGTH} from './limits.js';
 export {writeAll} from './pump.js';
@@ -3242,6 +3384,9 @@ git commit -m "feat(core): add IO-30 factories, internal barrel, and ByteQueue b
 - IO-3 → Tasks 2, 6, 9 via `assertCount`/`invariant`, asserted to reject before any transfer.
 - IO-4 → Task 2 (`ByteQueue.write`), Task 9 (`BufferedSink.write`).
 - IO-5, IO-18 → Task 9 (`flush`/`emit`/`close`).
+- IO-6 → Tasks 6 and 9: `overStream` wrappers own the caller's stream — close cancels/closes it,
+  asserted with the fakes' cancel/close spies; the IO-16 bridges (Task 12) close their owning
+  source/sink, asserted there.
 - IO-7 → Task 2, plus the Task 4 order-preservation property test.
 - IO-8, IO-10 → Task 3, plus Task 4 property tests for snapshot independence and non-consuming `copyTo`.
 - IO-9 → Task 1's constant and `AllocationLimitError`, Task 3's `#materialize` check plus the `RangeError`
@@ -3256,14 +3401,16 @@ git commit -m "feat(core): add IO-30 factories, internal barrel, and ByteQueue b
 - IO-19, IO-20, IO-21, IO-23 → Task 8, with two property tests.
 - IO-22, IO-24 → Task 5 (`RetentionWindow.close`) and Task 8 (parent-close invalidation, closed-slice read).
 - IO-25–IO-29 → Task 10, including the wire-payload-never-reduced property test.
-- IO-30 factory half → Task 13; resolution half, IO-31–IO-36, IO-39 → not built, stated in `factories.ts`'s
-  TSDoc.
+- IO-30 factory half → Task 13 (fresh buffer, stream and byte-array sources, stream sink, and the
+  foreign-primitive `PrimitiveSource`/`PrimitiveSink` wrappers); resolution half, IO-31–IO-36, IO-39 →
+  not built, stated in `factories.ts`'s TSDoc.
 - IO-37 → satisfied by the event-loop model; noted in `ByteQueue` and `BufferedSource` TSDoc.
 - IO-38 → not applicable; no code, per the spec's ledger.
 - IO-40 → enforced by absence: no `AbortSignal`, no timer anywhere in `src/io/`, stated in Global
   Constraints and in both async classes' TSDoc.
 - IO-41, IO-42 → Task 4 (`ByteQueue`, the exempt direction), Task 6 (`BufferedSource`, the rejecting
-  direction), Task 9 (`BufferedSink`); both IO-42 directions asserted, as the design requires.
+  direction), Task 9 (`BufferedSink`), Task 10 (`TeeSink` rejects before consuming from the source);
+  both IO-42 directions asserted, as the design requires.
 
 **Design-decision coverage:** the four locked decisions each have an enforcement point — the sync/async split
 is structural (Tasks 2 and 6); uncapped retention is stated in `RetentionWindow`'s TSDoc and in Global

@@ -37,15 +37,26 @@ factories. All state frozen once, at construction — never re-copied per getter
   constructors; ordinary methods and free functions stay under three.
 - Explicit return types on every exported function/method (styleguide 5.11).
 - `bun test`, colocated `*.test.ts`. `fast-check` property tests are **mandatory** (not optional) for every
-  codec/parser/serializer per styleguide 11.5 — this phase has four: `MediaType` parse/render, `QueryParams`
-  encode/parse, `Headers` case-fold, `Request` URL equality.
+  codec/parser/serializer per styleguide 11.5 — this phase has six: `MediaType` parse/render, `QueryParams`
+  encode/parse, `Headers` case-fold, `Request` URL equality, `ETag` raw-form round-trip, `HttpRange`
+  factory/parse round-trip.
 - Every test file's top-of-file comment cites the `HTTP-N`/`SEAM-N` IDs it exercises.
 - No `zod` in this phase — construction-time invariants on already-typed values use explicit predicate functions
   (styleguide 6.8's "or explicit invariants" allowance).
 - **`NFR-13` starts here:** every new source file (production and test) opens with the SPDX header
   `// SPDX-License-Identifier: MIT` on line 1. A review convention, not a mechanical gate, per the spec's own
   framing — the scaffold's deferral row targets "Phase 1 onward", and this is the phase where real files begin.
-  Applies equally to every later phase's new files without each plan restating it.
+  Applies equally to every later phase's new files without each plan restating it. The code blocks in this plan
+  omit the header for brevity — prepend it as line 1 of every file created or rewritten from them.
+- **TSDoc on the public surface** (styleguide ch14): every symbol the Task 15 barrel exports carries a
+  `/** ... */` block, and every public operation that throws documents each catchable error with a `@throws`
+  tag naming the error class (styleguide 8.10/10.6). The code blocks in this plan omit these blocks for
+  brevity — write them when creating each file; the lint gate's TSDoc plugin checks tag syntax, review checks
+  presence.
+- **Assertion posture, stated once:** these modules are value objects — validation lives in the typed
+  predicate/`requireField` throws guarding every construction path, and trivial getters carry no assertions.
+  That is a deliberate, recorded reduction of styleguide 5.7's two-assertions-per-function average for this
+  module family, not an oversight; every nontrivial `build()`/`parse()` body still fails loudly on bad input.
 
 ---
 
@@ -86,6 +97,7 @@ Each `.ts` file above gets a colocated `.test.ts`. `index.ts`'s only job is re-e
 
 **Interfaces:**
 - Produces: `interface Builder<T> { build(): T }`; `requireField<T>(value: T | null | undefined, name: string): T`;
+  `toError(value: unknown): Error` (the project-wide caught-`unknown` normalizer, styleguide 8.4);
   `class DomainModelError extends Error`; leaf classes `RequiredFieldError`, `HeaderValidationError`,
   `MediaTypeParseError`, `ProtocolParseError`, `UrlConstructionError`, `RequestOptionsValidationError`,
   `EtagParseError`, `HttpRangeValidationError`, `RequestConditionsValidationError` — every later task imports
@@ -97,13 +109,14 @@ Each `.ts` file above gets a colocated `.test.ts`. `index.ts`'s only job is re-e
 // packages/core/src/http/errors.test.ts
 // Exercises: HTTP-4 (field-named errors), HTTP-20 (no value echo, escaped name)
 import {describe, expect, test} from 'bun:test';
-import {RequiredFieldError, HeaderValidationError} from './errors.js';
+import {RequiredFieldError, HeaderValidationError, toError} from './errors.js';
 
 describe('RequiredFieldError', () => {
-  test('message names the missing field', () => {
+  test('message and structured field name the missing field', () => {
     const error = new RequiredFieldError('url');
     expect(error.message).toBe('url is required');
     expect(error.name).toBe('RequiredFieldError');
+    expect(error.fieldName).toBe('url'); // structured field, not just prose (styleguide 8.9)
   });
 });
 
@@ -117,6 +130,17 @@ describe('HeaderValidationError', () => {
     const error = new HeaderValidationError('name', 'a\rb', undefined);
     expect(error.message).not.toContain('\r');
     expect(error.message).toContain('\\r');
+    expect(error.kind).toBe('name');
+    expect(error.escapedName).toBe('a\\rb'); // the raw value is never stored, only the escaped name
+  });
+});
+
+describe('toError', () => {
+  test('returns an Error unchanged and wraps a non-Error without ever throwing', () => {
+    const original = new Error('boom');
+    expect(toError(original)).toBe(original);
+    expect(toError('plain string')).toBeInstanceOf(Error);
+    expect(() => toError(Object.create(null))).not.toThrow(); // String() on a null-prototype object throws
   });
 });
 ```
@@ -125,6 +149,8 @@ describe('HeaderValidationError', () => {
 // packages/core/src/http/builder.test.ts
 // Exercises: SEAM-29 (shared Builder contract), HTTP-4 (requireField single-sourcing)
 import {describe, expect, test} from 'bun:test';
+import {expectTypeOf} from 'expect-type';
+import type {Builder} from './builder.js';
 import {requireField} from './builder.js';
 import {RequiredFieldError} from './errors.js';
 
@@ -142,7 +168,25 @@ describe('requireField', () => {
     expect(() => requireField(undefined, 'status')).toThrow('status is required');
   });
 });
+
+// Type-level contract for the exported generic (styleguide 11.7). The assertions are erased at runtime;
+// the real check is `tsc --noEmit` in the lint/typecheck gate.
+describe('Builder<T> type contract', () => {
+  test('any class with build(): T satisfies Builder<T>; the wrong target type is rejected', () => {
+    class NumberBuilder {
+      build(): number {
+        return 1;
+      }
+    }
+    expectTypeOf<NumberBuilder>().toMatchTypeOf<Builder<number>>();
+    expectTypeOf<NumberBuilder>().not.toMatchTypeOf<Builder<string>>();
+  });
+});
 ```
+
+`expect-type` is the styleguide 11.7 type-level assertion package. If the scaffold does not already carry it:
+`bun add -d expect-type` — types-only, fully erased at runtime, so the `verify:seam-1` runtime-dependency gate
+is unaffected.
 
 - [ ] **Step 2: Run and confirm both fail**
 
@@ -160,9 +204,24 @@ export class DomainModelError extends Error {
   }
 }
 
+// Narrows a caught `unknown` into an Error (styleguide 8.4). Defined once, imported everywhere a caught
+// value becomes a `cause`. Must never itself throw from inside a catch — String() can throw on a
+// null-prototype object or a hostile toString, hence the inner try.
+export function toError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  try {
+    return new Error(String(value));
+  } catch {
+    return new Error('unstringifiable thrown value');
+  }
+}
+
 export class RequiredFieldError extends DomainModelError {
+  readonly fieldName: string;
+
   constructor(fieldName: string) {
     super(`${fieldName} is required`);
+    this.fieldName = fieldName;
   }
 }
 
@@ -173,8 +232,15 @@ function escapeControlChars(input: string): string {
 }
 
 export class HeaderValidationError extends DomainModelError {
+  readonly kind: 'name' | 'value';
+  // Escaped before storage; the raw offending value is deliberately never kept on the error (HTTP-20).
+  readonly escapedName: string;
+
   constructor(kind: 'name' | 'value', offendingName: string, _offendingValue: string | undefined) {
-    super(`invalid header ${kind}: ${escapeControlChars(offendingName)}`);
+    const escapedName = escapeControlChars(offendingName);
+    super(`invalid header ${kind}: ${escapedName}`);
+    this.kind = kind;
+    this.escapedName = escapedName;
   }
 }
 
@@ -211,7 +277,7 @@ export function requireField<T>(value: T | null | undefined, fieldName: string):
 - [ ] **Step 5: Run and confirm both pass**
 
 Run: `cd packages/core && bun test src/http/errors.test.ts src/http/builder.test.ts`
-Expected: PASS — `7 pass, 0 fail`.
+Expected: PASS — `8 pass, 0 fail`.
 
 - [ ] **Step 6: Commit**
 
@@ -232,7 +298,9 @@ git commit -m "feat(core): add shared Builder contract, requireField, and error 
 **Interfaces:**
 - Produces: `type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH'`;
   `isIdempotent(method: Method): boolean`; `isBodyForbidden(method: Method): boolean`;
-  `methodWireToken(method: Method): string`. Task 9 (`Request`) imports `isBodyForbidden` and `methodWireToken`.
+  `methodWireToken(method: Method): string`. Task 9 (`Request`) imports `isBodyForbidden`; `isIdempotent` and
+  `methodWireToken` stay module-internal (HTTP-9 keeps the idempotent set an internal constant — none of the
+  three is re-exported by Task 15's barrel) until the retry/transport phases import them directly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -304,7 +372,7 @@ export function methodWireToken(method: Method): string {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/http/method.test.ts`
-Expected: PASS — `4 pass, 0 fail`.
+Expected: PASS — `5 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -323,7 +391,8 @@ git commit -m "feat(core): add Method type and idempotency classification (HTTP-
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `class Status` with `static of(code: number): Status`, `get code(): number`,
+- Produces: `class Status` with `static of(code: number): Status`, `static recognized(code: number): Status |
+  undefined` (HTTP-10's lookup that returns absent for an unknown code), `get code(): number`,
   `get name(): string | undefined`, `get isRecognized(): boolean`, `get isInformational/isSuccess/isRedirect/
   isClientError/isServerError/isError(): boolean`, `equals(other: Status): boolean`. Task 10 (`Response`) consumes
   `Status.of` and the `Status` type.
@@ -350,6 +419,11 @@ describe('Status.of', () => {
     expect(status.code).toBe(599);
     expect(status.name).toBeUndefined();
     expect(status.isRecognized).toBe(false);
+  });
+
+  test('recognized() returns the canonical instance for a known code and absent for an unknown one', () => {
+    expect(Status.recognized(200)).toBe(Status.of(200));
+    expect(Status.recognized(599)).toBeUndefined();
   });
 
   test('never throws for any integer code, per the total-function property', () => {
@@ -435,6 +509,12 @@ export class Status {
     return Status.#known.get(code) ?? new Status(code, undefined);
   }
 
+  // HTTP-10's second clause verbatim: a lookup that returns absent for an unknown code, distinct from
+  // the total-function `of`.
+  static recognized(code: number): Status | undefined {
+    return Status.#known.get(code);
+  }
+
   get code(): number {
     return this.#code;
   }
@@ -484,7 +564,7 @@ this file can.
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/http/status.test.ts`
-Expected: PASS — `10 pass, 0 fail`.
+Expected: PASS — `11 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -582,7 +662,7 @@ export class Protocol {
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/http/protocol.test.ts`
-Expected: PASS — `5 pass, 0 fail`.
+Expected: PASS — `4 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -713,6 +793,13 @@ describe('construction rejects forbidden bytes (HTTP-26)', () => {
     expect(() => MediaType.of('text', 'plain\r\n')).toThrow(MediaTypeParseError);
     expect(() => MediaType.of('text', 'plain', new Map([['name', 'vålue']]))).toThrow(MediaTypeParseError);
   });
+
+  test('rejects a non-token or empty type, subtype, or parameter key via of()', () => {
+    // Anything of() accepts must round-trip through render/parse (HTTP-25), so non-tokens fail at construction.
+    expect(() => MediaType.of('', 'json')).toThrow(MediaTypeParseError);
+    expect(() => MediaType.of('te;xt', 'plain')).toThrow(MediaTypeParseError);
+    expect(() => MediaType.of('text', 'plain', new Map([['ke=y', 'v']]))).toThrow(MediaTypeParseError);
+  });
 });
 
 describe('wildcard matching (HTTP-27)', () => {
@@ -720,10 +807,14 @@ describe('wildcard matching (HTTP-27)', () => {
     expect(MediaType.parse('application/json').matches(MediaType.parse('*/*'))).toBe(true);
   });
 
-  test('a wildcard in either position matches any value there', () => {
+  test('a wildcard subtype matches any concrete subtype, but not the reverse', () => {
     expect(MediaType.parse('application/json').matches(MediaType.parse('application/*'))).toBe(true);
-    expect(MediaType.parse('application/json').matches(MediaType.parse('*/json'))).toBe(true);
     expect(MediaType.parse('application/json').matches(MediaType.parse('text/*'))).toBe(false);
+  });
+
+  test('rejects a wildcard type with a concrete subtype', () => {
+    // HTTP-27: a wildcard type is permitted only when the subtype is also a wildcard (bare */*).
+    expect(() => MediaType.parse('*/json')).toThrow(MediaTypeParseError);
   });
 });
 
@@ -793,6 +884,12 @@ function validateNoForbiddenBytes(value: string): void {
   }
 }
 
+function validateToken(value: string, label: string): void {
+  if (!TOKEN_RE.test(value)) {
+    throw new MediaTypeParseError(`media type ${label} must be a non-empty RFC token (${value.length} chars)`);
+  }
+}
+
 function renderParameterValue(value: string): string {
   if (TOKEN_RE.test(value)) return value;
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -811,11 +908,17 @@ export class MediaType {
   }
 
   static of(type: string, subtype: string, parameters: ReadonlyMap<string, string> = new Map()): MediaType {
-    validateNoForbiddenBytes(type);
-    validateNoForbiddenBytes(subtype);
+    // Type, subtype, and parameter keys must be RFC tokens (which also implies non-empty and free of
+    // forbidden bytes) — anything else renders to text that parse() rejects or reparses differently,
+    // breaking HTTP-25's parse(render(x)) === x guarantee for constructible values (HTTP-53's grammar).
+    validateToken(type, 'type');
+    validateToken(subtype, 'subtype');
+    if (type === '*' && subtype !== '*') {
+      throw new MediaTypeParseError('a wildcard type is only permitted with a wildcard subtype (*/*) per HTTP-27');
+    }
     const normalized = new Map<string, string>();
     for (const [key, value] of parameters) {
-      validateNoForbiddenBytes(key);
+      validateToken(key, 'parameter key');
       validateNoForbiddenBytes(value);
       normalized.set(key.toLowerCase(), value);
     }
@@ -903,7 +1006,7 @@ export class MediaType {
 - [ ] **Step 8: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/media-type.test.ts`
-Expected: PASS — `11 pass, 0 fail` (the property test runs 100 generated cases by default under one `it`).
+Expected: PASS — `13 pass, 0 fail` (the property test runs 100 generated cases by default under one `it`).
 
 - [ ] **Step 9: Commit**
 
@@ -1010,12 +1113,22 @@ Expected: FAIL — `Cannot find module './headers.js'`.
 // packages/core/src/http/headers.ts
 import type {Builder} from './builder.js';
 
+// HeadersBuilder is a *different* class in this module and TypeScript has no friend classes, so the
+// private constructor is reachable only through this module-scoped hook, assigned exactly once inside
+// the class's static block and never reassigned (the `let` is init-once wiring, not mutable state).
+// This keeps HTTP-2 compiler-enforced: no public field-wise constructor appears in the emitted .d.ts.
+let createHeaders: (
+  valuesByLowerName: ReadonlyMap<string, ReadonlyArray<string>>,
+  originalCasingByLowerName: ReadonlyMap<string, string>,
+  insertionOrder: ReadonlyArray<string>,
+) => Headers;
+
 export class Headers {
   readonly #valuesByLowerName: ReadonlyMap<string, ReadonlyArray<string>>;
   readonly #originalCasingByLowerName: ReadonlyMap<string, string>;
   readonly #insertionOrder: ReadonlyArray<string>;
 
-  constructor(
+  private constructor(
     valuesByLowerName: ReadonlyMap<string, ReadonlyArray<string>>,
     originalCasingByLowerName: ReadonlyMap<string, string>,
     insertionOrder: ReadonlyArray<string>,
@@ -1024,6 +1137,10 @@ export class Headers {
     this.#originalCasingByLowerName = originalCasingByLowerName;
     this.#insertionOrder = insertionOrder;
     Object.freeze(this);
+  }
+
+  static {
+    createHeaders = (values, casing, order) => new Headers(values, casing, order);
   }
 
   static newBuilder(): HeadersBuilder {
@@ -1115,7 +1232,7 @@ export class HeadersBuilder implements Builder<Headers> {
     for (const [lowerName, values] of this.#valuesByLowerName) {
       frozenValues.set(lowerName, Object.freeze([...values]));
     }
-    return new Headers(
+    return createHeaders(
       Object.freeze(frozenValues),
       Object.freeze(new Map(this.#originalCasingByLowerName)),
       Object.freeze([...this.#insertionOrder]),
@@ -1124,12 +1241,12 @@ export class HeadersBuilder implements Builder<Headers> {
 }
 ```
 
-The `Headers` constructor is deliberately not `private` here (unlike `Status`/`Protocol`) because `HeadersBuilder.build()` — a *different* class — must be able to construct one; TypeScript has no "friend class" concept. It stays unexported from the module's *public* surface indirectly: only `Headers` and `HeadersBuilder` are exported from `index.ts` (Task 15), and nothing else in the codebase calls `new Headers(...)` directly — that discipline is enforced by review, not the compiler, and is worth a one-line comment at the constructor site saying so.
+The constructor is `private` even though `HeadersBuilder.build()` — a *different* class — must construct instances: TypeScript has no "friend class" concept, so the module-scoped `createHeaders` hook, assigned once inside the class's `static {}` block, is the builder's only path in. This keeps HTTP-2 compiler-enforced (no public field-wise constructor in the emitted `.d.ts`, so a consumer cannot `new Headers(...)` around the builder's validation) rather than review-enforced. Every builder-based model in this phase repeats the same pattern (`createQueryParams`, `createRequest`, `createResponse`, `createRequestOptions`, `createRequestConditions`).
 
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/http/headers.test.ts`
-Expected: PASS — `8 pass, 0 fail`.
+Expected: PASS — `7 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -1152,10 +1269,13 @@ git commit -m "feat(core): add Headers core storage (HTTP-13/14/15/16, HTTP-3/5 
 **Interfaces:**
 - Consumes: `hasForbiddenOutboundByte` (Task 5), `HeaderValidationError` (Task 1).
 - Produces: two new predicates `hasForbiddenNameByte(value: string): boolean` and
-  `hasForbiddenInboundValueByte(value: string): boolean`; `HeadersBuilder.addInbound(name: string, value: string):
-  this` and `setInbound(name: string, value: string | null): this`; `class HeaderName` with `static of(raw:
-  string): HeaderName`, `get raw(): string`, `get lowerCased(): string`, `equals(other: HeaderName): boolean`.
-  `add`/`set` now validate and trim the name — their signatures are unchanged, but they can now throw.
+  `hasForbiddenInboundValueByte(value: string): boolean`; `HeadersBuilder.addInbound(name: string | HeaderName,
+  value: string): this` and `setInbound(name: string | HeaderName, value: string | null): this`; `class
+  HeaderName` with `static of(raw: string): HeaderName`, `get raw(): string`, `get lowerCased(): string`,
+  `equals(other: HeaderName): boolean`. `add`/`set` and the read accessors `get`/`getAll`/`has` widen to
+  accept `string | HeaderName` (HTTP-21's interchangeability), validate and trim the name, and can now throw.
+  `Headers.newBuilder()`'s derivation loop switches to the inbound append path so deriving from an
+  obs-text-bearing instance never throws.
 
 - [ ] **Step 1: Write the failing tests for the two new predicates**
 
@@ -1235,8 +1355,11 @@ Expected: PASS — `9 pass, 0 fail`.
 Append to `packages/core/src/http/headers.test.ts`:
 
 ```typescript
-// Exercises: HTTP-17 (outbound name validation + trim), HTTP-18 (outbound value validation),
-// HTTP-19 (inbound leniency), HTTP-20 (no value echo, escaped name), HTTP-21/22 (typed HeaderName)
+// Exercises: HTTP-13 (case-fold property), HTTP-17 (outbound name validation + trim), HTTP-18 (outbound
+// value validation), HTTP-19 (inbound leniency), HTTP-20 (no value echo, escaped name), HTTP-21 (typed
+// HeaderName interop; interning dropped — HTTP-22 is a MAY, and an intern map keyed by caller-supplied
+// names is the unbounded caller-influenced map XCUT-14 forbids)
+import fc from 'fast-check';
 import {HeaderName} from './headers.js';
 
 describe('outbound name validation (HTTP-17)', () => {
@@ -1310,7 +1433,7 @@ describe('error messages never leak (HTTP-20)', () => {
   });
 });
 
-describe('HeaderName (HTTP-21/22)', () => {
+describe('HeaderName (HTTP-21)', () => {
   test('compares by case-folded form while preserving original casing', () => {
     const a = HeaderName.of('Content-Type');
     const b = HeaderName.of('content-type');
@@ -1318,14 +1441,32 @@ describe('HeaderName (HTTP-21/22)', () => {
     expect(a.raw).toBe('Content-Type');
   });
 
-  test('interns by lower-cased form, first casing wins', () => {
-    const first = HeaderName.of('X-Trace');
-    const second = HeaderName.of('x-trace');
-    expect(second.raw).toBe('X-Trace');
+  test('is interchangeable with the string-keyed API in both directions', () => {
+    const typedAdded = Headers.newBuilder().add(HeaderName.of('X-Trace'), 'v').build();
+    expect(typedAdded.get('x-trace')).toBe('v');
+
+    const stringAdded = Headers.newBuilder().add('X-Trace', 'v').build();
+    expect(stringAdded.get(HeaderName.of('x-TRACE'))).toBe('v');
+    expect(stringAdded.has(HeaderName.of('X-Trace'))).toBe(true);
   });
 
   test('enforces the same name validation as HTTP-17', () => {
     expect(() => HeaderName.of('a\r\nb')).toThrow();
+  });
+});
+
+describe('case-fold property (HTTP-13)', () => {
+  test('a name added under any casing resolves under every other casing', () => {
+    const nameArb = fc.stringMatching(/^[A-Za-z][A-Za-z0-9-]{0,19}$/);
+    const valueArb = fc.stringMatching(/^[\x20-\x7e]{0,20}$/);
+    fc.assert(
+      fc.property(nameArb, valueArb, (name, value) => {
+        const headers = Headers.newBuilder().add(name, value).build();
+        expect(headers.get(name.toLowerCase())).toBe(value);
+        expect(headers.get(name.toUpperCase())).toBe(value);
+        expect(headers.has(name)).toBe(true);
+      }),
+    );
   });
 });
 ```
@@ -1364,31 +1505,37 @@ function validateInboundValue(name: string, value: string): void {
     throw new HeaderValidationError('value', name, value);
   }
 }
+
+// HTTP-21: the typed HeaderName and the string-keyed API are interchangeable — every name-accepting
+// method takes either form. A HeaderName already passed name validation at its own construction.
+function toRawName(name: string | HeaderName): string {
+  return typeof name === 'string' ? name : name.raw;
+}
 ```
 
 Replace the `HeadersBuilder.add` and `.set` methods (from Task 6) with these, and add the two inbound siblings:
 
 ```typescript
-  add(name: string, value: string): this {
-    const trimmedName = validateName(name);
+  add(name: string | HeaderName, value: string): this {
+    const trimmedName = validateName(toRawName(name));
     validateOutboundValue(trimmedName, value);
     return this.#append(trimmedName, value);
   }
 
-  set(name: string, value: string | null): this {
-    const trimmedName = validateName(name);
+  set(name: string | HeaderName, value: string | null): this {
+    const trimmedName = validateName(toRawName(name));
     if (value !== null) validateOutboundValue(trimmedName, value);
     return this.#replace(trimmedName, value);
   }
 
-  addInbound(name: string, value: string): this {
-    const trimmedName = validateName(name);
+  addInbound(name: string | HeaderName, value: string): this {
+    const trimmedName = validateName(toRawName(name));
     validateInboundValue(trimmedName, value);
     return this.#append(trimmedName, value);
   }
 
-  setInbound(name: string, value: string | null): this {
-    const trimmedName = validateName(name);
+  setInbound(name: string | HeaderName, value: string | null): this {
+    const trimmedName = validateName(toRawName(name));
     if (value !== null) validateInboundValue(trimmedName, value);
     return this.#replace(trimmedName, value);
   }
@@ -1425,12 +1572,45 @@ the outbound and inbound public methods — the only difference between outbound
 validator runs first*; the storage logic is identical, so it's factored out once rather than duplicated four
 ways.
 
+Widen `Headers`' read accessors the same way (HTTP-21's "visible via the other" clause), replacing the Task 6
+versions:
+
+```typescript
+  get(name: string | HeaderName): string | undefined {
+    return this.#valuesByLowerName.get(toRawName(name).toLowerCase())?.[0];
+  }
+
+  getAll(name: string | HeaderName): ReadonlyArray<string> {
+    return this.#valuesByLowerName.get(toRawName(name).toLowerCase()) ?? [];
+  }
+
+  has(name: string | HeaderName): boolean {
+    return this.#valuesByLowerName.has(toRawName(name).toLowerCase());
+  }
+```
+
+And replace `Headers.newBuilder()`'s derivation loop so it appends through `addInbound`, not `add`:
+
+```typescript
+  newBuilder(): HeadersBuilder {
+    const builder = new HeadersBuilder();
+    for (const lowerName of this.#insertionOrder) {
+      const originalName = this.#originalCasingByLowerName.get(lowerName) ?? lowerName;
+      for (const value of this.#valuesByLowerName.get(lowerName) ?? []) {
+        // addInbound, not add: every stored value already passed validation at its original construction,
+        // and the lenient inbound rule is a strict superset of the outbound one — deriving from a Headers
+        // built via addInbound (obs-text values, HTTP-19) must never throw (HTTP-3's derivation contract).
+        builder.addInbound(originalName, value);
+      }
+    }
+    return builder;
+  }
+```
+
 Append the `HeaderName` class at the end of the file:
 
 ```typescript
 export class HeaderName {
-  static readonly #interned = new Map<string, HeaderName>();
-
   readonly #raw: string;
   readonly #lower: string;
 
@@ -1440,14 +1620,14 @@ export class HeaderName {
     Object.freeze(this);
   }
 
+  // No interning: HTTP-22 makes it a MAY, and an intern map keyed by caller-supplied names is exactly
+  // the unbounded, process-lived, caller-influenced map XCUT-14's drain-to-cap rule forbids (and
+  // module-level mutable state the styleguide bans — it also makes first-casing-wins test-order
+  // dependent). The observable contract is value equality by case-folded name (HTTP-21), which needs
+  // no shared instances.
   static of(raw: string): HeaderName {
     const trimmed = validateName(raw);
-    const lower = trimmed.toLowerCase();
-    const existing = HeaderName.#interned.get(lower);
-    if (existing !== undefined) return existing;
-    const created = new HeaderName(trimmed, lower);
-    HeaderName.#interned.set(lower, created);
-    return created;
+    return new HeaderName(trimmed, trimmed.toLowerCase());
   }
 
   get raw(): string {
@@ -1614,14 +1794,28 @@ function safeDecodeComponent(value: string): string {
   }
 }
 
+// Same friend-class workaround as headers.ts: assigned exactly once in the static block, the builder's
+// only path to the private constructor (HTTP-2).
+let createQueryParams: (
+  valuesByName: ReadonlyMap<string, ReadonlyArray<string>>,
+  insertionOrder: ReadonlyArray<string>,
+) => QueryParams;
+
 export class QueryParams {
   readonly #valuesByName: ReadonlyMap<string, ReadonlyArray<string>>;
   readonly #insertionOrder: ReadonlyArray<string>;
 
-  constructor(valuesByName: ReadonlyMap<string, ReadonlyArray<string>>, insertionOrder: ReadonlyArray<string>) {
+  private constructor(
+    valuesByName: ReadonlyMap<string, ReadonlyArray<string>>,
+    insertionOrder: ReadonlyArray<string>,
+  ) {
     this.#valuesByName = valuesByName;
     this.#insertionOrder = insertionOrder;
     Object.freeze(this);
+  }
+
+  static {
+    createQueryParams = (values, order) => new QueryParams(values, order);
   }
 
   static newBuilder(): QueryParamsBuilder {
@@ -1702,7 +1896,7 @@ export class QueryParamsBuilder implements Builder<QueryParams> {
       valuesByName.set(name, Object.freeze([...values]));
       insertionOrder.push(name);
     }
-    return new QueryParams(Object.freeze(valuesByName), Object.freeze(insertionOrder));
+    return createQueryParams(Object.freeze(valuesByName), Object.freeze(insertionOrder));
   }
 }
 ```
@@ -1781,6 +1975,7 @@ Expected: PASS.
 // HTTP-9 (method), HTTP-46 (textual URL equality, no DNS), HTTP-47 (malformed URL), HTTP-3/5 (derivation,
 // immutability)
 import {describe, expect, test} from 'bun:test';
+import fc from 'fast-check';
 import {Request} from './request.js';
 import {Headers} from './headers.js';
 import {RequiredFieldError, UrlConstructionError, RequestBodyNotAllowedError} from './errors.js';
@@ -1808,6 +2003,11 @@ describe('method/body legality (HTTP-7)', () => {
     const request = Request.newBuilder().method('GET').url('https://example.com').body('x').body(undefined).build();
     expect(request.body).toBeUndefined();
   });
+
+  test('a null body clears like undefined — HTTP-7 rejects only a non-null body', () => {
+    const request = Request.newBuilder().method('GET').url('https://example.com').body('x').body(null).build();
+    expect(request.body).toBeUndefined();
+  });
 });
 
 describe('method defaulting (HTTP-8)', () => {
@@ -1833,6 +2033,17 @@ describe('URL equality (HTTP-46)', () => {
     const a = Request.newBuilder().url('https://example.com/a').build();
     const b = Request.newBuilder().url('https://example.com/b').build();
     expect(a.equals(b)).toBe(false);
+  });
+
+  test('equality tracks textual href equality for generated URLs', () => {
+    const pathArb = fc.stringMatching(/^[a-z0-9]{0,10}$/);
+    fc.assert(
+      fc.property(pathArb, pathArb, (left, right) => {
+        const a = Request.newBuilder().url(`https://example.com/${left}`).build();
+        const b = Request.newBuilder().url(`https://example.com/${right}`).build();
+        expect(a.equals(b)).toBe(left === right);
+      }),
+    );
   });
 });
 
@@ -1881,6 +2092,10 @@ function parseUrl(raw: string): URL {
   }
 }
 
+// Same friend-class workaround as headers.ts: assigned exactly once in the static block, the builder's
+// only path to the private constructor (HTTP-2).
+let createRequest: (method: Method, url: URL, headers: Headers, body: unknown) => Request;
+
 export class Request {
   readonly #method: Method;
   readonly #url: URL;
@@ -1888,12 +2103,16 @@ export class Request {
   readonly #body: unknown;
 
   // eslint-disable-next-line max-params -- private, builder-internal; field count fixed by the wire model (HTTP-6)
-  constructor(method: Method, url: URL, headers: Headers, body: unknown) {
+  private constructor(method: Method, url: URL, headers: Headers, body: unknown) {
     this.#method = method;
     this.#url = url;
     this.#headers = headers;
     this.#body = body;
     Object.freeze(this);
+  }
+
+  static {
+    createRequest = (method, url, headers, body) => new Request(method, url, headers, body);
   }
 
   static newBuilder(): RequestBuilder {
@@ -1927,6 +2146,8 @@ export class Request {
       this.#method === other.#method &&
       this.#url.href === other.#url.href && // textual external form only — no DNS resolution (HTTP-46)
       this.#headers.equals(other.#headers) &&
+      // Reference comparison is a placeholder tied to the `unknown` body type: HTTP-46's body-by-value
+      // clause lands with the real Body model in Phase 3b, which supplies value equality.
       this.#body === other.#body
     );
   }
@@ -1954,7 +2175,9 @@ export class RequestBuilder implements Builder<Request> {
   }
 
   body(body: unknown): this {
-    this.#body = body;
+    // null normalizes to undefined: HTTP-7 rejects only a *non-null* body, and the styleguide represents
+    // absence as undefined interior-wide — so .body(null) clears, exactly like .body(undefined).
+    this.#body = body ?? undefined;
     return this;
   }
 
@@ -1963,14 +2186,14 @@ export class RequestBuilder implements Builder<Request> {
 
     if (this.#method === undefined) {
       if (this.#body !== undefined) requireField(undefined, 'method');
-      return new Request('GET', url, this.#headers, this.#body);
+      return createRequest('GET', url, this.#headers, this.#body);
     }
 
     if (this.#body !== undefined && isBodyForbidden(this.#method)) {
       throw new RequestBodyNotAllowedError(this.#method);
     }
 
-    return new Request(this.#method, url, this.#headers, this.#body);
+    return createRequest(this.#method, url, this.#headers, this.#body);
   }
 }
 ```
@@ -1982,7 +2205,7 @@ export class RequestBuilder implements Builder<Request> {
 - [ ] **Step 8: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/request.test.ts`
-Expected: PASS — `12 pass, 0 fail`.
+Expected: PASS — `13 pass, 0 fail`.
 
 - [ ] **Step 9: Commit**
 
@@ -2089,6 +2312,17 @@ import type {Protocol} from './protocol.js';
 import type {Status} from './status.js';
 import {Headers} from './headers.js';
 
+// Same friend-class workaround as headers.ts: assigned exactly once in the static block, the builder's
+// only path to the private constructor (HTTP-2).
+let createResponse: (
+  request: Request,
+  protocol: Protocol,
+  status: Status,
+  reasonPhrase: string | undefined,
+  headers: Headers,
+  body: unknown,
+) => Response;
+
 export class Response {
   readonly #request: Request;
   readonly #protocol: Protocol;
@@ -2098,7 +2332,7 @@ export class Response {
   readonly #body: unknown;
 
   // eslint-disable-next-line max-params -- private, builder-internal; field count fixed by the wire model (HTTP-6)
-  constructor(
+  private constructor(
     request: Request,
     protocol: Protocol,
     status: Status,
@@ -2113,6 +2347,11 @@ export class Response {
     this.#headers = headers;
     this.#body = body;
     Object.freeze(this);
+  }
+
+  static {
+    createResponse = (request, protocol, status, reasonPhrase, headers, body) =>
+      new Response(request, protocol, status, reasonPhrase, headers, body);
   }
 
   static newBuilder(): ResponseBuilder {
@@ -2196,7 +2435,7 @@ export class ResponseBuilder implements Builder<Response> {
     const request = requireField(this.#request, 'request');
     const protocol = requireField(this.#protocol, 'protocol');
     const status = requireField(this.#status, 'status');
-    return new Response(request, protocol, status, this.#reasonPhrase, this.#headers, this.#body);
+    return createResponse(request, protocol, status, this.#reasonPhrase, this.#headers, this.#body);
   }
 }
 ```
@@ -2208,7 +2447,7 @@ instance can mutate it.
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/response.test.ts`
-Expected: PASS — `7 pass, 0 fail`.
+Expected: PASS — `6 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -2295,16 +2534,32 @@ Expected: FAIL — `Cannot find module './request-options.js'`.
 import type {Builder} from './builder.js';
 import {RequestOptionsValidationError} from './errors.js';
 
+// Same friend-class workaround as headers.ts: assigned exactly once in the static block, the builder's
+// only path to the private constructor (HTTP-2).
+let createRequestOptions: (
+  timeoutMs: number | undefined,
+  maxRetries: number | undefined,
+  tags: ReadonlyMap<string, string>,
+) => RequestOptions;
+
 export class RequestOptions {
   readonly #timeoutMs: number | undefined;
   readonly #maxRetries: number | undefined;
   readonly #tags: ReadonlyMap<string, string>;
 
-  constructor(timeoutMs: number | undefined, maxRetries: number | undefined, tags: ReadonlyMap<string, string>) {
+  private constructor(
+    timeoutMs: number | undefined,
+    maxRetries: number | undefined,
+    tags: ReadonlyMap<string, string>,
+  ) {
     this.#timeoutMs = timeoutMs;
     this.#maxRetries = maxRetries;
     this.#tags = tags;
     Object.freeze(this);
+  }
+
+  static {
+    createRequestOptions = (timeoutMs, maxRetries, tags) => new RequestOptions(timeoutMs, maxRetries, tags);
   }
 
   static readonly EMPTY = new RequestOptions(undefined, undefined, Object.freeze(new Map()));
@@ -2357,7 +2612,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   }
 
   build(): RequestOptions {
-    return new RequestOptions(this.#timeoutMs, this.#maxRetries, Object.freeze(new Map(this.#tags)));
+    return createRequestOptions(this.#timeoutMs, this.#maxRetries, Object.freeze(new Map(this.#tags)));
   }
 }
 ```
@@ -2369,7 +2624,7 @@ untouched. Same shape of distinction the `timeoutMs` guard makes for `null`/`und
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/request-options.test.ts`
-Expected: PASS — `9 pass, 0 fail`.
+Expected: PASS — `7 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -2398,6 +2653,7 @@ git commit -m "feat(core): add RequestOptions (HTTP-34/35)"
 // packages/core/src/http/etag.test.ts
 // Exercises: HTTP-48 (strong/weak/any forms, etagc validation, round-trip, absent-for-blank)
 import {describe, expect, test} from 'bun:test';
+import fc from 'fast-check';
 import {ETag} from './etag.js';
 import {EtagParseError} from './errors.js';
 
@@ -2447,6 +2703,22 @@ describe('ETag.parse', () => {
   test('returns absent, not an error, for blank input', () => {
     expect(ETag.parse('')).toBeUndefined();
     expect(ETag.parse('   ')).toBeUndefined();
+  });
+});
+
+describe('raw-form round-trip property (HTTP-48, styleguide 11.5)', () => {
+  test('parse reproduces the raw form, weakness, and opaque for generated valid ETags', () => {
+    const opaqueArb = fc.stringMatching(/^[\x23-\x7e]{0,12}$/); // etagc subset; 0x22 (") sits below the range
+    fc.assert(
+      fc.property(opaqueArb, fc.boolean(), (opaque, isWeak) => {
+        fc.pre(isWeak || opaque !== ''); // an empty strong opaque is invalid by HTTP-48
+        const raw = isWeak ? `W/"${opaque}"` : `"${opaque}"`;
+        const parsed = ETag.parse(raw);
+        expect(parsed?.raw).toBe(raw);
+        expect(parsed?.opaque).toBe(opaque);
+        expect(parsed?.isWeak).toBe(isWeak);
+      }),
+    );
   });
 });
 ```
@@ -2528,7 +2800,7 @@ export class ETag {
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/etag.test.ts`
-Expected: PASS — `10 pass, 0 fail`.
+Expected: PASS — `11 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -2558,6 +2830,7 @@ git commit -m "feat(core): add ETag helper (HTTP-48)"
 // packages/core/src/http/http-range.test.ts
 // Exercises: HTTP-49 (bounded/suffix/open factories, bytes-only, single-range, verbatim storage)
 import {describe, expect, test} from 'bun:test';
+import fc from 'fast-check';
 import {HttpRange} from './http-range.js';
 import {HttpRangeValidationError} from './errors.js';
 
@@ -2631,6 +2904,26 @@ describe('parse()', () => {
   test('rejects a multi-range comma', () => {
     expect(() => HttpRange.parse('bytes=0-499,600-999')).toThrow(HttpRangeValidationError);
   });
+
+  test('rejects fractional, hex, and overflowing values in factories and parse alike', () => {
+    expect(() => HttpRange.bounded(1.5, 2)).toThrow(HttpRangeValidationError);
+    expect(() => HttpRange.parse('bytes=0x10-0x20')).toThrow(HttpRangeValidationError);
+    expect(() => HttpRange.parse('bytes=0-9007199254740993')).toThrow(HttpRangeValidationError);
+  });
+});
+
+describe('factory/parse round-trip property (HTTP-49, styleguide 11.5)', () => {
+  test('a bounded factory raw form re-parses to the same range', () => {
+    fc.assert(
+      fc.property(fc.nat({max: 1_000_000}), fc.integer({min: 1, max: 1_000_000}), (start, length) => {
+        const range = HttpRange.bounded(start, length);
+        const reparsed = HttpRange.parse(range.raw);
+        expect(reparsed.kind).toBe('bounded');
+        expect(reparsed.start).toBe(start);
+        expect(reparsed.length).toBe(length);
+      }),
+    );
+  });
 });
 ```
 
@@ -2648,15 +2941,28 @@ import {HttpRangeValidationError} from './errors.js';
 type RangeKind = 'bounded' | 'suffix' | 'open';
 
 function validateNonNegative(value: number, label: string): void {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new HttpRangeValidationError(`${label} must not be negative, got ${value}`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new HttpRangeValidationError(`${label} must be a non-negative safe integer, got ${value}`);
   }
 }
 
 function validatePositive(value: number, label: string): void {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new HttpRangeValidationError(`${label} must be positive, got ${value}`);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new HttpRangeValidationError(`${label} must be a positive safe integer, got ${value}`);
   }
+}
+
+// parse() must be as strict as the factories: Number() alone accepts hex, exponent, and fractional
+// forms, and an unchecked end value can exceed the safe-integer range (HTTP-49's overflow clause).
+function parseByteCount(part: string, label: string): number {
+  if (!/^\d+$/.test(part)) {
+    throw new HttpRangeValidationError(`${label} must be a plain decimal integer`);
+  }
+  const value = Number(part);
+  if (!Number.isSafeInteger(value)) {
+    throw new HttpRangeValidationError(`${label} overflows the safe-integer range`);
+  }
+  return value;
 }
 
 export class HttpRange {
@@ -2716,16 +3022,15 @@ export class HttpRange {
     const endPart = spec.slice(dashIndex + 1);
 
     if (startPart === '') {
-      const suffixLength = Number(endPart);
+      const suffixLength = parseByteCount(endPart, 'suffix length');
       validatePositive(suffixLength, 'suffix length');
       return new HttpRange('suffix', undefined, undefined, suffixLength, trimmed);
     }
 
-    const start = Number(startPart);
-    validateNonNegative(start, 'range start');
+    const start = parseByteCount(startPart, 'range start');
     if (endPart === '') return new HttpRange('open', start, undefined, undefined, trimmed);
 
-    const end = Number(endPart);
+    const end = parseByteCount(endPart, 'range end');
     const length = end - start + 1;
     validatePositive(length, 'range length');
     return new HttpRange('bounded', start, length, undefined, trimmed);
@@ -2760,7 +3065,7 @@ a canonical one instead. That's a deliberate asymmetry, not an inconsistency.
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/http-range.test.ts`
-Expected: PASS — `12 pass, 0 fail`.
+Expected: PASS — `14 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -2779,10 +3084,12 @@ git commit -m "feat(core): add HttpRange helper (HTTP-49)"
 
 **Interfaces:**
 - Consumes: `Builder`/`RequestConditionsValidationError` (Task 1), `ETag` (Task 12), `Headers` (Task 6/7).
-- Produces: `class RequestConditions` with `static newBuilder(): RequestConditionsBuilder`, `applyTo(headers:
-  Headers): Headers`. `class RequestConditionsBuilder implements Builder<RequestConditions>` with `ifMatch(etag:
-  ETag): this`, `ifNoneMatch(etag: ETag): this`, `ifModifiedSince(date: Date): this`,
-  `ifUnmodifiedSince(date: Date): this`.
+- Produces: `class RequestConditions` with `static newBuilder(): RequestConditionsBuilder`, `newBuilder():
+  RequestConditionsBuilder` (HTTP-3's pre-filled derivation — RequestConditions is on the builder-based-model
+  list), `applyTo(headers: Headers): Headers`. `class RequestConditionsBuilder implements
+  Builder<RequestConditions>` with `ifMatch(etag: ETag): this`, `ifNoneMatch(etag: ETag): this`,
+  `ifModifiedSince(date: Date): this` (the Date is copied, never aliased — HTTP-1), `ifUnmodifiedSince(date:
+  Date): this`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2849,6 +3156,30 @@ describe('any-tag mutual exclusivity', () => {
     expect(() => builder.ifMatch(ETag.ANY)).toThrow(RequestConditionsValidationError);
   });
 });
+
+describe('newBuilder derivation (HTTP-3) and Date isolation (HTTP-1)', () => {
+  test('deriving and rebuilding preserves conditions without affecting the original', () => {
+    const original = RequestConditions.newBuilder().ifMatch(etag('"a"')).build();
+    const derived = original.newBuilder().ifNoneMatch(etag('"b"')).build();
+
+    const originalHeaders = original.applyTo(Headers.newBuilder().build());
+    const derivedHeaders = derived.applyTo(Headers.newBuilder().build());
+
+    expect(originalHeaders.get('If-None-Match')).toBeUndefined();
+    expect(derivedHeaders.get('If-Match')).toBe('"a"');
+    expect(derivedHeaders.get('If-None-Match')).toBe('"b"');
+  });
+
+  test('mutating the caller-supplied Date after build does not change what applyTo emits', () => {
+    const date = new Date('2015-10-21T07:28:00Z');
+    const conditions = RequestConditions.newBuilder().ifModifiedSince(date).build();
+
+    date.setFullYear(1999);
+
+    const headers = conditions.applyTo(Headers.newBuilder().build());
+    expect(headers.get('If-Modified-Since')).toBe('Wed, 21 Oct 2015 07:28:00 GMT');
+  });
+});
 ```
 
 - [ ] **Step 2: Run and confirm it fails**
@@ -2882,6 +3213,15 @@ function toRfc1123(date: Date): string {
   return date.toUTCString();
 }
 
+// Same friend-class workaround as headers.ts: assigned exactly once in the static block, the builder's
+// only path to the private constructor (HTTP-2).
+let createRequestConditions: (
+  ifMatch: ReadonlyArray<ETag>,
+  ifNoneMatch: ReadonlyArray<ETag>,
+  ifModifiedSince: Date | undefined,
+  ifUnmodifiedSince: Date | undefined,
+) => RequestConditions;
+
 export class RequestConditions {
   readonly #ifMatch: ReadonlyArray<ETag>;
   readonly #ifNoneMatch: ReadonlyArray<ETag>;
@@ -2889,7 +3229,7 @@ export class RequestConditions {
   readonly #ifUnmodifiedSince: Date | undefined;
 
   // eslint-disable-next-line max-params -- private, builder-internal; the four conditional facets are fixed (HTTP-50)
-  constructor(
+  private constructor(
     ifMatch: ReadonlyArray<ETag>,
     ifNoneMatch: ReadonlyArray<ETag>,
     ifModifiedSince: Date | undefined,
@@ -2902,8 +3242,25 @@ export class RequestConditions {
     Object.freeze(this);
   }
 
+  static {
+    createRequestConditions = (ifMatch, ifNoneMatch, modified, unmodified) =>
+      new RequestConditions(ifMatch, ifNoneMatch, modified, unmodified);
+  }
+
   static newBuilder(): RequestConditionsBuilder {
     return new RequestConditionsBuilder();
+  }
+
+  // HTTP-3: RequestConditions is on the builder-based-model list, so it exposes the same pre-filled
+  // derivation as the others. ETag instances are frozen values safe to share; the builder's own setters
+  // re-copy the Dates, so neither instance aliases the other.
+  newBuilder(): RequestConditionsBuilder {
+    const builder = new RequestConditionsBuilder();
+    for (const matchTag of this.#ifMatch) builder.ifMatch(matchTag);
+    for (const noneMatchTag of this.#ifNoneMatch) builder.ifNoneMatch(noneMatchTag);
+    if (this.#ifModifiedSince !== undefined) builder.ifModifiedSince(this.#ifModifiedSince);
+    if (this.#ifUnmodifiedSince !== undefined) builder.ifUnmodifiedSince(this.#ifUnmodifiedSince);
+    return builder;
   }
 
   applyTo(headers: Headers): Headers {
@@ -2941,17 +3298,19 @@ export class RequestConditionsBuilder implements Builder<RequestConditions> {
   }
 
   ifModifiedSince(date: Date): this {
-    this.#ifModifiedSince = date;
+    // Copied, not aliased: Date is mutable, and a caller mutating its own Date after build() must not
+    // change what applyTo() emits (HTTP-1 — no alias to externally-mutable state).
+    this.#ifModifiedSince = new Date(date.getTime());
     return this;
   }
 
   ifUnmodifiedSince(date: Date): this {
-    this.#ifUnmodifiedSince = date;
+    this.#ifUnmodifiedSince = new Date(date.getTime());
     return this;
   }
 
   build(): RequestConditions {
-    return new RequestConditions(this.#ifMatch, this.#ifNoneMatch, this.#ifModifiedSince, this.#ifUnmodifiedSince);
+    return createRequestConditions(this.#ifMatch, this.#ifNoneMatch, this.#ifModifiedSince, this.#ifUnmodifiedSince);
   }
 }
 ```
@@ -2969,7 +3328,7 @@ the full spec — either a relaxed emit path for replayed ETags, or an explicit 
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/http/request-conditions.test.ts`
-Expected: PASS — `7 pass, 0 fail`.
+Expected: PASS — `8 pass, 0 fail`.
 
 - [ ] **Step 5: Commit**
 
@@ -2996,8 +3355,11 @@ git commit -m "feat(core): add RequestConditions aggregator (HTTP-50)"
 
 ```typescript
 // packages/core/src/http/index.ts
+// requireField, toError, the method predicates (isIdempotent/isBodyForbidden/methodWireToken), and the
+// ascii-validation predicates are deliberately NOT re-exported: HTTP-9 keeps the idempotency classification
+// an internal constant rather than a public accessor, and the rest are in-package plumbing with no external
+// caller yet (api-design ch10: helpers stay unexported until an outside caller genuinely needs them).
 export type {Builder} from './builder.js';
-export {requireField} from './builder.js';
 export {
   DomainModelError,
   RequiredFieldError,
@@ -3012,7 +3374,6 @@ export {
   RequestBodyNotAllowedError,
 } from './errors.js';
 export type {Method} from './method.js';
-export {isIdempotent, isBodyForbidden, methodWireToken} from './method.js';
 export {Status} from './status.js';
 export {Protocol} from './protocol.js';
 export {MediaType} from './media-type.js';
@@ -3026,8 +3387,10 @@ export {HttpRange} from './http-range.js';
 export {RequestConditions, RequestConditionsBuilder} from './request-conditions.js';
 ```
 
-`ascii-validation.ts`'s predicates are deliberately **not** re-exported here — they're internal implementation
-helpers `headers.ts` and `media-type.ts` share, not part of the package's public domain-model surface.
+`ascii-validation.ts`'s predicates, `requireField`, `toError`, and the `method.ts` functions are deliberately
+**not** re-exported here — internal implementation helpers the http modules share, not part of the package's
+public domain-model surface (and HTTP-9 explicitly keeps the idempotent set internal). In-package consumers
+(the future retry gate included) import the specific module directly.
 
 - [ ] **Step 2: Update the package's top-level entry point and retire the Phase 0 placeholder**
 
@@ -3161,8 +3524,20 @@ is consumed with that exact name by `Request`/`Response`/`RequestConditions` (Ta
 (Task 1) keeps the same `<T>(value: T | null | undefined, fieldName: string): T` signature everywhere it's
 called (Tasks 9, 10); `ETag.isAny`/`ETag.raw` (Task 12) match their usage in `RequestConditions` (Task 14).
 
-**Known gap, deliberately deferred:** `RequestBuilder`/`ResponseBuilder`/`HeadersBuilder`/etc. do not yet
-implement the `MultipartBody` model HTTP-3 lists among "each builder-based model" — multipart bodies depend on
-the body-lifecycle contracts (`product-spec/06-request-and-response-body-lifecycle.md`), which are Phase 3's
-scope per the roadmap, not this phase's. `Request`/`Response`'s `body: unknown` is an intentional placeholder
-until then (see Task 9's Interfaces note).
+**Known gaps, deliberately deferred (each to a named phase):** the spec's scope line reads "HTTP-3 through
+HTTP-53", but the body-lifecycle cluster inside that range is explicitly **not** built here — every entry is
+owned by **Phase 3b (Body Lifecycle)** per the roadmap:
+
+- `HTTP-36`–`HTTP-43` — request-body write/replayability and response-body single-use/close/charset
+  (`product-spec/06-request-and-response-body-lifecycle.md`) → Phase 3b.
+- `HTTP-44`/`HTTP-45` — the lazy `TypedResponse<T>` wrapper with parse-once memoization → Phase 3b (its
+  design already claims both IDs).
+- `HTTP-51` — `MultipartBody`, the one entry in HTTP-3's "each builder-based model" list not built here →
+  Phase 3b.
+- `HTTP-52` — the 1 MiB error-body buffering cap → Phase 3b.
+- `HTTP-46`'s body-by-value equality clause — `Request.equals` compares the `unknown` body placeholder by
+  reference until Phase 3b's `Body` model supplies value equality (see the comment in Task 9's `equals`).
+
+`Request`/`Response`'s `body: unknown` is an intentional placeholder until then (see Task 9's Interfaces
+note). The Phase 1 spec's scope statement ("HTTP-3 through HTTP-53 ... in one phase") should be read — and
+amended — as HTTP-3..35, 46..50, 53, with the list above deferred to Phase 3b.

@@ -8,7 +8,7 @@ satisfying `product-spec/07-execution-context-model.md` (`CTX-1`–`CTX-20`), pe
 `docs/superpowers/specs/2026-07-25-phase4a-execution-context-design.md`.
 
 **Architecture:** A new `packages/core/src/context/` folder, layered `instrumentation` → `errors` → `context` →
-`store` → `index`. The three context flavors are plain frozen interfaces plus free functions — no class, since
+`store` (there is deliberately **no `index.ts`** — see Global Constraints). The three context flavors are plain frozen interfaces plus free functions — no class, since
 nothing here owns a lifecycle or needs runtime-forgery protection (unlike `Request`/`Response`). `ContextStore` is
 the one class: a bounded `Map`, exported both as the class (for isolated test instances) and as a process-wide
 singleton (`contextStore`). **Nothing in this phase enters the public package barrel** — `context/` is
@@ -56,10 +56,21 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
   requirement by construction. Do not add a mutex/semaphore.
 - **The drain loop runs after every successful insert, in both `install` and `installIfAbsent`.** A single
   check-then-evict is insufficient (`CTX-12`); do not "optimize" it into one.
-- **`ContextStore`'s constructor rejects `maxEntries < 1`.** This is what lets `#drain` be a bare
-  `while (size > max) delete(firstKey)` with no defensive `undefined` guard inside: for any `maxEntries >= 1` the
-  loop condition already proves the map is non-empty, so a guard would be unreachable code the coverage gate
-  cannot exercise. Validate at the boundary instead of guarding in the loop.
+- **`ContextStore`'s constructor rejects `maxEntries < 1`, via `invariant`.** This is what lets `#drain` skip a
+  defensive `undefined` guard inside its loop: for any `maxEntries >= 1` the loop condition already proves the map
+  is non-empty, so a guard would be unreachable code the coverage gate cannot exercise. Validate at the boundary
+  instead of guarding in the loop.
+- **Preconditions use `invariant` from `../invariant.js`, never an ad-hoc `if (!x) throw`.** A non-positive or
+  non-integer cap is a violated precondition — a programmer error — which `docs/knowledge/assertions.md:4` and
+  `docs/knowledge/error-handling.md:36` route through `invariant`, exactly as Phase 3a does throughout `io/`. Do
+  not throw a bare `RangeError`. `docs/knowledge/assertions.md:6` also asks for an average of 2+ assertions per
+  function across a module, so `install`/`installIfAbsent` assert their post-drain postcondition as well.
+- **Every new source file (production and test) opens with `// SPDX-License-Identifier: MIT` on line 1**, per
+  `NFR-13` and the convention Phase 1's plan started for all phases onward. The code blocks below show it.
+- **`create*` freeze the `instrumentation` bundle they are handed.** `Object.freeze` is shallow
+  (`docs/knowledge/data-modeling.md:42`), so freezing the context alone leaves a caller-supplied bundle writable
+  behind the `instrumentation` slot and `CTX-7`'s "contexts MUST be immutable" would not hold. Freeze in place —
+  not a copy — so the reference identity `CTX-2`'s carry-forward and the tests both depend on survives.
 - **`promoteToRequest`/`promoteToExchange` do NOT call `ContextStore.install`.** 4a satisfies only `CTX-17`'s
   negative half (constructing a dispatch context must not auto-register it); the positive half ("the first store
   entry is installed by the first promotion") needs the pipeline that owns the store handle, which is 4c. Do not
@@ -71,6 +82,13 @@ sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint:publish`/`ver
   new.target.name` (inherited from `DexpaceError`'s constructor).
 - `exactOptionalPropertyTypes: true` — optional properties are spelled `?: T | undefined`, never bare `?: T`.
 - Every test file's top-of-file comment cites the `CTX-N` IDs it exercises.
+- **Store tests build their own `new ContextStore()`; they never assert against the `contextStore` singleton's
+  `size` and never `clear()` it.** The singleton is module-level mutable state shared by every test file in a
+  `bun test` run — 4c's `runtime.test.ts` installs into the same object — so an absolute `size` assertion reads a
+  counter a sibling file can move and a blanket `afterEach(clear)` wipes entries a sibling installed.
+  `docs/knowledge/testing.md:52` ("never share a mutable fixture across tests") and `:50` ("every test must run
+  alone, in any order, and survive parallel execution") both forbid it. The one permitted assertion on the
+  singleton is that it is a `ContextStore` instance.
 - Existing lint/coverage gates apply unchanged: `max-lines-per-function` 70, `max-depth` 3, `max-params` 3,
   explicit return types on exports, 80% aggregate coverage floor (`NFR-5`).
 
@@ -111,6 +129,7 @@ regardless of whether the barrel is further re-exported. Phase 4c imports `../co
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/instrumentation.test.ts
 // Exercises: CTX-14 (bundle shape), CTX-15 (no-op default: invalid sentinels, isValid/isRemote false,
 // no-op span/tracer factory), CTX-20 (tracer factory safe to invoke concurrently, emits nothing)
@@ -156,6 +175,7 @@ Expected: FAIL — `Cannot find module './instrumentation.js'`.
 - [ ] **Step 3: Write `instrumentation.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/instrumentation.ts
 
 /**
@@ -225,6 +245,7 @@ git commit -m "feat(core): add InstrumentationBundle shape and no-op default (CT
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/errors.test.ts
 // Exercises: CTX-8 (reject-on-duplicate insert failure, naming the key)
 import {describe, expect, test} from 'bun:test';
@@ -259,6 +280,7 @@ Expected: FAIL — `Cannot find module './errors.js'`.
 - [ ] **Step 3: Write `errors.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/errors.ts
 import {DexpaceError} from '../http/errors.js';
 
@@ -312,6 +334,7 @@ git commit -m "feat(core): add DuplicateContextKeyError (CTX-8)"
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/context.test.ts
 // Exercises: CTX-1 (one-way promotion, incl. the compile-time no-promote-back check), CTX-2 (additive,
 // non-mutating, carries forward instrumentation + key), CTX-3 (one shared call key across the whole
@@ -444,6 +467,16 @@ describe('off-chain construction (CTX-5, CTX-6)', () => {
     expect(createDispatchContext({instrumentation}).instrumentation).toBe(instrumentation);
   });
 
+  test('a caller-supplied instrumentation bundle is frozen by the factory (CTX-7)', () => {
+    // Object.freeze on the context is shallow, so without this the bundle behind `instrumentation` stays
+    // writable and the caller can mutate a "immutable" context out from under the whole chain.
+    const instrumentation = {...noopInstrumentationBundle, traceId: 'a'.repeat(32)};
+    const dispatch = createDispatchContext({instrumentation});
+
+    expect(Object.isFrozen(dispatch.instrumentation)).toBe(true);
+    expect(Object.isFrozen(instrumentation)).toBe(true); // frozen in place, so the reference stays shared
+  });
+
   test('createRequestContext and createExchangeContext also default to a fresh key per call', () => {
     const request = aRequest();
     const a = createRequestContext(request);
@@ -503,19 +536,28 @@ Expected: FAIL — `Cannot find module './context.js'`.
 - [ ] **Step 3: Write `context.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/context.ts
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {noopInstrumentationBundle, type InstrumentationBundle} from './instrumentation.js';
 
-/** Before any request (CTX-1). No `operationName` -- CTX-16 introduces it at the request stage. */
+/**
+ * Before any request (CTX-1). No `operationName` -- CTX-16 introduces it at the request stage.
+ *
+ * @internal
+ */
 export interface DispatchContext {
   readonly kind: 'dispatch';
   readonly key: symbol;
   readonly instrumentation: InstrumentationBundle;
 }
 
-/** An outgoing request assembled (CTX-1). */
+/**
+ * An outgoing request assembled (CTX-1).
+ *
+ * @internal
+ */
 export interface RequestContext {
   readonly kind: 'request';
   readonly key: symbol;
@@ -524,7 +566,11 @@ export interface RequestContext {
   readonly request: Request;
 }
 
-/** A response arrived; terminal -- no further promotion exists (CTX-1). */
+/**
+ * A response arrived; terminal -- no further promotion exists (CTX-1).
+ *
+ * @internal
+ */
 export interface ExchangeContext {
   readonly kind: 'exchange';
   readonly key: symbol;
@@ -534,6 +580,11 @@ export interface ExchangeContext {
   readonly response: Response;
 }
 
+/**
+ * The three promotion-chain stages as one discriminated union, branched on `kind`.
+ *
+ * @internal
+ */
 export type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
 
 /**
@@ -541,34 +592,56 @@ export type ExecutionContext = DispatchContext | RequestContext | ExchangeContex
  * positional parameters: `createExchangeContext` would otherwise take five, and ESLint's `max-params` is 3
  * and counts optional parameters. Every field is spelled `?: T | undefined` for
  * `exactOptionalPropertyTypes`.
+ *
+ * @internal
  */
 export interface ContextInit {
+  /** Advisory operation label (CTX-16); never influences the request, dispatch, or store key. */
   readonly operationName?: string | undefined;
+  /** @default noopInstrumentationBundle */
   readonly instrumentation?: InstrumentationBundle | undefined;
+  /** Pin to make two contexts share one store slot (CTX-5). @default a fresh `Symbol()` per call */
   readonly key?: symbol | undefined;
 }
 
 /**
- * Off-chain construction (CTX-5): `key` defaults to a fresh Symbol() per call unless pinned (CTX-6).
- * Takes `Omit<ContextInit, 'operationName'>` -- CTX-16 introduces the operation name at the request stage,
- * so the dispatch factory does not offer it.
+ * Off-chain construction (CTX-5): `key` defaults to a fresh Symbol() per call unless pinned, which is also
+ * what makes default keys globally distinct across the process and all three flavors (CTX-6). Takes
+ * `Omit<ContextInit, 'operationName'>` -- CTX-16 introduces the operation name at the request stage, so the
+ * dispatch factory does not offer it.
+ *
+ * @internal
  */
 export function createDispatchContext(init: Omit<ContextInit, 'operationName'> = {}): DispatchContext {
   const {instrumentation = noopInstrumentationBundle, key = Symbol('dispatch-context')} = init;
-  return Object.freeze({kind: 'dispatch', key, instrumentation});
+  return Object.freeze({kind: 'dispatch', key, instrumentation: freezeBundle(instrumentation)});
 }
 
-/** Off-chain construction (CTX-5/6) -- see `promoteToRequest` for the normal promotion path. */
+/**
+ * Off-chain construction (CTX-5/6) -- see `promoteToRequest` for the normal promotion path.
+ *
+ * @internal
+ */
 export function createRequestContext(request: Request, init: ContextInit = {}): RequestContext {
   const {
     operationName,
     instrumentation = noopInstrumentationBundle,
     key = Symbol('request-context'),
   } = init;
-  return Object.freeze({kind: 'request', key, instrumentation, operationName, request});
+  return Object.freeze({
+    kind: 'request',
+    key,
+    instrumentation: freezeBundle(instrumentation),
+    operationName,
+    request,
+  });
 }
 
-/** Off-chain construction (CTX-5/6) -- see `promoteToExchange` for the normal promotion path. */
+/**
+ * Off-chain construction (CTX-5/6) -- see `promoteToExchange` for the normal promotion path.
+ *
+ * @internal
+ */
 export function createExchangeContext(
   request: Request,
   response: Response,
@@ -579,10 +652,21 @@ export function createExchangeContext(
     instrumentation = noopInstrumentationBundle,
     key = Symbol('exchange-context'),
   } = init;
-  return Object.freeze({kind: 'exchange', key, instrumentation, operationName, request, response});
+  return Object.freeze({
+    kind: 'exchange',
+    key,
+    instrumentation: freezeBundle(instrumentation),
+    operationName,
+    request,
+    response,
+  });
 }
 
-/** dispatch -> request (CTX-1/2/3): adds the request, carries key + instrumentation forward verbatim. */
+/**
+ * dispatch -> request (CTX-1/2/3): adds the request, carries key + instrumentation forward verbatim.
+ *
+ * @internal
+ */
 export function promoteToRequest(
   context: DispatchContext,
   request: Request,
@@ -597,7 +681,11 @@ export function promoteToRequest(
   });
 }
 
-/** request -> exchange (CTX-1/2/3): adds the response, carries everything else forward verbatim. */
+/**
+ * request -> exchange (CTX-1/2/3): adds the response, carries everything else forward verbatim.
+ *
+ * @internal
+ */
 export function promoteToExchange(context: RequestContext, response: Response): ExchangeContext {
   return Object.freeze({
     kind: 'exchange',
@@ -608,12 +696,22 @@ export function promoteToExchange(context: RequestContext, response: Response): 
     response,
   });
 }
+
+/**
+ * CTX-7: a context must be immutable, but `Object.freeze` on the context object is shallow, so a
+ * caller-supplied bundle would stay writable behind the `instrumentation` slot. Frozen in place rather than
+ * copied, so the reference the promotions carry forward (CTX-2) is the one the caller handed in.
+ * `noopInstrumentationBundle` is already frozen, so the default path costs nothing.
+ */
+function freezeBundle(bundle: InstrumentationBundle): InstrumentationBundle {
+  return Object.isFrozen(bundle) ? bundle : Object.freeze(bundle);
+}
 ```
 
 - [ ] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/context/context.test.ts`
-Expected: PASS, 16 tests.
+Expected: PASS, 17 tests.
 
 The two `@ts-expect-error` lines are invisible to `bun test` — `bun run typecheck` (Task 5) is what verifies
 them. If either promotion signature ever widens to accept an `ExchangeContext`, typecheck fails with
@@ -643,21 +741,25 @@ git commit -m "feat(core): add the execution context promotion chain (CTX-1, CTX
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/store.test.ts
 // Exercises: CTX-4 (two contexts sharing identical trace AND span id get distinct keys and both
 // register), CTX-8 (install-or-replace never throws; reject-on-duplicate fails naming the key),
 // CTX-9/CTX-10 (identity-conditional close, intermediate-link close is a no-op), CTX-11/CTX-12 (bounded,
 // post-insert drain loop), CTX-17 (a never-promoted dispatch context leaves no entry; its close is a
-// harmless no-op), CTX-18 (unknown-key lookup/close are well-defined no-ops)
-import {afterEach, describe, expect, test} from 'bun:test';
+// harmless no-op), CTX-18 (unknown-key lookup/close are well-defined no-ops), CTX-19 (strong refs)
+//
+// Every test builds its own `new ContextStore()`. The exported `contextStore` singleton is module-level
+// mutable state shared by every test file in a `bun test` run -- 4c's runtime.test.ts installs into that
+// same object -- so an absolute `size` assertion against it reads a counter a sibling file can move, and a
+// blanket clear() wipes a sibling's entries. docs/knowledge/testing.md:50,52. The singleton gets exactly
+// one assertion here: that it is a ContextStore.
+import {describe, expect, test} from 'bun:test';
 import {Request} from '../http/request.js';
+import {InvariantViolation} from '../invariant.js';
 import {createDispatchContext, promoteToRequest} from './context.js';
 import {DuplicateContextKeyError} from './errors.js';
 import {ContextStore, contextStore} from './store.js';
-
-afterEach(() => {
-  contextStore.clear();
-});
 
 function aRequest(): Request {
   return Request.newBuilder().url('https://example.com').build();
@@ -665,30 +767,34 @@ function aRequest(): Request {
 
 describe('install / installIfAbsent (CTX-8)', () => {
   test('install never throws and is retrievable by key', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    contextStore.install(context);
-    expect(contextStore.get(context.key)).toBe(context);
+    store.install(context);
+    expect(store.get(context.key)).toBe(context);
   });
 
   test('install unconditionally overwrites an existing occupant', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    contextStore.install(context);
+    store.install(context);
     const promoted = promoteToRequest(context, aRequest());
-    contextStore.install(promoted);
-    expect(contextStore.get(context.key)).toBe(promoted);
+    store.install(promoted);
+    expect(store.get(context.key)).toBe(promoted);
   });
 
   test('installIfAbsent succeeds when the key is free', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    contextStore.installIfAbsent(context);
-    expect(contextStore.get(context.key)).toBe(context);
+    store.installIfAbsent(context);
+    expect(store.get(context.key)).toBe(context);
   });
 
   test('installIfAbsent on an occupied key throws DuplicateContextKeyError naming the key', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    contextStore.installIfAbsent(context);
+    store.installIfAbsent(context);
     const other = createDispatchContext({instrumentation: context.instrumentation, key: context.key});
-    expect(() => contextStore.installIfAbsent(other)).toThrow(DuplicateContextKeyError);
+    expect(() => store.installIfAbsent(other)).toThrow(DuplicateContextKeyError);
   });
 });
 
@@ -698,69 +804,75 @@ describe('call-key uniqueness under an identical bundle (CTX-4)', () => {
     // noopInstrumentationBundle -- identical traceId, spanId, flags, state -- which is exactly the
     // disabled-tracing case CTX-15 warns about. Symbol() keys make them distinct anyway, so neither
     // evicts the other.
+    const store = new ContextStore();
     const a = createDispatchContext();
     const b = createDispatchContext();
     expect(a.instrumentation).toBe(b.instrumentation);
     expect(a.key).not.toBe(b.key);
 
-    contextStore.install(a);
-    contextStore.install(b);
-    expect(contextStore.get(a.key)).toBe(a);
-    expect(contextStore.get(b.key)).toBe(b);
-    expect(contextStore.size).toBe(2);
+    store.install(a);
+    store.install(b);
+    expect(store.get(a.key)).toBe(a);
+    expect(store.get(b.key)).toBe(b);
+    expect(store.size).toBe(2);
   });
 });
 
 describe('no auto-registration at construction (CTX-17)', () => {
   test('a freshly constructed dispatch context is not in the store', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    expect(contextStore.get(context.key)).toBeUndefined();
-    expect(contextStore.size).toBe(0);
+    expect(store.get(context.key)).toBeUndefined();
+    expect(store.size).toBe(0);
   });
 
-  test('a dispatch context that is never promoted leaves no entry, and closing it is a harmless no-op', () => {
+  test('promoting registers nothing either, and closing the unregistered source is a harmless no-op', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
     promoteToRequest(context, aRequest()); // promotion alone registers nothing in 4a -- see below
-    expect(contextStore.size).toBe(0);
-    expect(() => contextStore.close(context)).not.toThrow();
+    expect(store.size).toBe(0);
+    expect(() => store.close(context)).not.toThrow();
   });
 
   // CTX-17's other half -- "the first store entry is installed by the first promotion" -- is NOT
   // satisfied here: promoteToRequest/promoteToExchange are pure and never touch the store, so an
-  // explicit contextStore.install(...) is what registers anything. That call belongs to 4c's pipeline,
+  // explicit store.install(...) is what registers anything. That call belongs to 4c's pipeline,
   // which owns the store handle. Tracked as a deferral in this plan's Self-Review, not an omission.
 });
 
 describe('close (CTX-9, CTX-10)', () => {
   test('evicts when the closing context is the current occupant', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    contextStore.install(context);
-    contextStore.close(context);
-    expect(contextStore.get(context.key)).toBeUndefined();
+    store.install(context);
+    store.close(context);
+    expect(store.get(context.key)).toBeUndefined();
   });
 
   test('closing an intermediate link already superseded by promotion is a no-op', () => {
+    const store = new ContextStore();
     const dispatch = createDispatchContext();
-    contextStore.install(dispatch);
+    store.install(dispatch);
     const promoted = promoteToRequest(dispatch, aRequest());
-    contextStore.install(promoted); // furthest-reached link now occupies the slot
+    store.install(promoted); // furthest-reached link now occupies the slot
 
-    contextStore.close(dispatch); // intermediate link -- must not evict the live promoted occupant
-    expect(contextStore.get(dispatch.key)).toBe(promoted);
+    store.close(dispatch); // intermediate link -- must not evict the live promoted occupant
+    expect(store.get(dispatch.key)).toBe(promoted);
   });
 
   test('closing an unknown or already-removed key is a well-defined no-op (CTX-18)', () => {
+    const store = new ContextStore();
     const context = createDispatchContext();
-    expect(() => contextStore.close(context)).not.toThrow();
-    contextStore.install(context);
-    contextStore.close(context);
-    expect(() => contextStore.close(context)).not.toThrow();
+    expect(() => store.close(context)).not.toThrow();
+    store.install(context);
+    store.close(context);
+    expect(() => store.close(context)).not.toThrow();
   });
 });
 
 describe('lookup (CTX-18)', () => {
   test('an unknown key returns undefined, never throws', () => {
-    expect(contextStore.get(Symbol('unknown'))).toBeUndefined();
+    expect(new ContextStore().get(Symbol('unknown'))).toBeUndefined();
   });
 });
 
@@ -783,17 +895,20 @@ describe('bounded drain (CTX-11, CTX-12, CTX-13)', () => {
   });
 
   test('a cap below 1 is rejected at construction', () => {
-    // The constructor is the only place this is checked, which is what lets #drain be a bare
-    // `while (size > max)` loop with no unreachable in-loop undefined guard.
-    expect(() => new ContextStore(0)).toThrow(RangeError);
-    expect(() => new ContextStore(-1)).toThrow(RangeError);
-    expect(() => new ContextStore(1.5)).toThrow(RangeError);
+    // The constructor is the only place this is checked, which is what lets #drain skip an unreachable
+    // in-loop undefined guard. A bad cap is a violated precondition -- a programmer error -- so it fails
+    // through invariant (assertions.md:4, error-handling.md:36), not an ad-hoc throw.
+    expect(() => new ContextStore(0)).toThrow(InvariantViolation);
+    expect(() => new ContextStore(-1)).toThrow(InvariantViolation);
+    expect(() => new ContextStore(1.5)).toThrow(InvariantViolation);
     expect(() => new ContextStore(1)).not.toThrow();
   });
 });
 
 describe('the process-wide singleton', () => {
   test('is a real ContextStore instance', () => {
+    // The only assertion this file makes against the singleton: it is shared with every other test file
+    // in the run, so nothing behavioural may be asserted through it.
     expect(contextStore).toBeInstanceOf(ContextStore);
   });
 });
@@ -807,7 +922,9 @@ Expected: FAIL — `Cannot find module './store.js'`.
 - [ ] **Step 3: Write `store.ts`**
 
 ```typescript
+// SPDX-License-Identifier: MIT
 // packages/core/src/context/store.ts
+import {invariant} from '../invariant.js';
 import type {ExecutionContext} from './context.js';
 import {DuplicateContextKeyError} from './errors.js';
 
@@ -818,7 +935,9 @@ const DEFAULT_MAX_ENTRIES = 10_000;
 /**
  * A bounded, keyed store of in-flight execution contexts (CTX-7..13, CTX-18, CTX-19). Thread-safety is
  * satisfied by construction: Node's single-threaded event loop means no two synchronous Map mutations
- * ever interleave, collapsing the reference's concurrent-map requirement into a plain Map.
+ * ever interleave, collapsing the reference's concurrent-map requirement into a plain Map. The Map holds
+ * strong references -- never WeakRef/WeakMap -- so a registered context keeps its whole Request+Response
+ * graph reachable and the cap, not the collector, is the leak backstop (CTX-19).
  *
  * @internal
  */
@@ -827,9 +946,13 @@ export class ContextStore {
   readonly #maxEntries: number;
 
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
-    if (!Number.isInteger(maxEntries) || maxEntries < 1) {
-      throw new RangeError(`maxEntries must be a positive integer, got ${maxEntries}`);
-    }
+    // A bad cap is a violated precondition -- a programmer error -- so it crashes at the fault via the
+    // project's one assertion primitive rather than an ad-hoc `if (!x) throw`
+    // (docs/knowledge/assertions.md:4, docs/knowledge/error-handling.md:36).
+    invariant(
+      Number.isInteger(maxEntries) && maxEntries >= 1,
+      `maxEntries must be a positive integer, got ${maxEntries}`,
+    );
     this.#maxEntries = maxEntries;
   }
 
@@ -837,6 +960,7 @@ export class ContextStore {
   install(context: ExecutionContext): void {
     this.#entries.set(context.key, context);
     this.#drain();
+    invariant(this.#entries.size <= this.#maxEntries, 'context store above its cap after a drain');
   }
 
   /** Install only if absent; every other concurrent caller fails (CTX-8). */
@@ -846,6 +970,7 @@ export class ContextStore {
     }
     this.#entries.set(context.key, context);
     this.#drain();
+    invariant(this.#entries.size <= this.#maxEntries, 'context store above its cap after a drain');
   }
 
   /** Absent key returns undefined, never throws (CTX-18). */
@@ -864,7 +989,10 @@ export class ContextStore {
     }
   }
 
-  /** Test isolation for the process-wide singleton below -- not part of the spec's own contract. */
+  /**
+   * Drops every entry. Not part of `§7`'s contract -- it exists so a test that must observe the shared
+   * singleton (4c's runtime tests) can reset it. Prefer constructing an isolated `ContextStore`.
+   */
   clear(): void {
     this.#entries.clear();
   }
@@ -888,7 +1016,15 @@ export class ContextStore {
   }
 }
 
-/** One process-wide store (CTX-4/CTX-5's "globally distinct... across the whole process"). */
+/**
+ * The one registry 4c's `Runtime.send()` installs into. Module-level mutable state, which
+ * `docs/knowledge/variables-and-declarations.md:22` bans -- accepted here because threading a store handle
+ * through builder → runtime → every step would be a wide API change for no observable gain, and logged in
+ * the design's Deviation Ledger for Phase 10. Tests must build their own `new ContextStore()` rather than
+ * asserting through this one: it is shared by every test file in a `bun test` run.
+ *
+ * @internal
+ */
 export const contextStore = new ContextStore();
 ```
 
@@ -955,6 +1091,15 @@ Expected: exit 0, no matches.
 Expected: exit 0 — `docs/knowledge/module-organization.md:18` bans internal barrels; 4c imports the specific
 files directly.
 
+- [ ] **Step 3b: Verify every new file carries the SPDX header (`NFR-13`)**
+
+```bash
+for f in packages/core/src/context/*.ts; do head -1 "$f" | grep -q 'SPDX-License-Identifier: MIT' || echo "missing SPDX: $f"; done
+```
+
+Expected: no output. Phase 1's plan started this convention for all phases onward; it is a review-level
+convention, not a mechanical gate, so this loop is the check rather than a CI step.
+
 - [ ] **Step 4: Verify the public API surface did not move**
 
 Step 1 already regenerated the report via `bun run api`; this only inspects the result. Run from the repo root
@@ -999,14 +1144,19 @@ git commit -m "chore(core): verify full gate sequence for Phase 4a"
 - `CTX-1`, `CTX-2`, `CTX-3` → Task 3 (promotion functions, additive/non-mutating, shared key). The "no method
   promoting back" clause is enforced mechanically by two `@ts-expect-error` lines that fail `typecheck` if
   either promotion ever widens to accept an `ExchangeContext`.
-- `CTX-4` → Task 3 (`Symbol()` keys, satisfies uniqueness without a trace-id-derived scheme) + Task 4's
-  singleton (process-wide). §7's own *Conformance* clause — "two contexts with identical trace AND span id have
-  differing keys and both register" — is transcribed in `store.test.ts`, since "both register" needs a store.
-- `CTX-5`, `CTX-6` → Task 3 (off-chain constructors, default-fresh-key, explicit-key pinning), including a
-  population-scale check that 3000 default-constructed contexts across all three flavors are pairwise
-  key-distinct, not just a single pair.
-- `CTX-7` → Task 3 (`Object.freeze` on every context) + Task 4 (single-thread collapse of the store's
-  thread-safety requirement).
+- `CTX-4` → Task 3 (`Symbol()` keys, satisfies uniqueness without a trace-id-derived scheme). §7's own
+  *Conformance* clause — "two contexts with identical trace AND span id have differing keys and both register"
+  — is transcribed in `store.test.ts`, since "both register" needs a store.
+- `CTX-5` → Task 3: off-chain constructors default `key` to a fresh `Symbol()`, and its operative second half
+  ("callers who require value-equality MUST be able to pin an explicit shared key") ships as `ContextInit.key`.
+  Its first half — two default-constructed contexts are not equal — is a consequence of distinct keys, not a
+  mandate to ship an equality API; see the design's `contextsEqual()` ledger row.
+- `CTX-6` → Task 3: default keys are "globally distinct across the whole process and across all three flavors"
+  because `Symbol()` is unique per evaluation, checked at population scale — 3000 default-constructed contexts
+  spread across all three flavors are pairwise key-distinct, not just a single pair.
+- `CTX-7` → Task 3 (`Object.freeze` on every context **and** on the `instrumentation` bundle it is handed —
+  `Object.freeze` is shallow, so freezing only the context would leave a caller-supplied bundle writable) +
+  Task 4 (single-thread collapse of the store's thread-safety requirement).
 - `CTX-8` → Task 4 (`install`, `installIfAbsent`).
 - `CTX-9`, `CTX-10` → Task 4 (`close`'s identity-conditional evict).
 - `CTX-11`, `CTX-12`, `CTX-13` → Task 4 (`#drain`'s post-insert loop, arbitrary victim).
@@ -1027,8 +1177,15 @@ git commit -m "chore(core): verify full gate sequence for Phase 4a"
   (`context` → `store`) and make every promotion a global side effect. **4c's plan must close it.**
 - `CTX-18` → Task 4 (`get` returns `undefined`, `close` no-ops on an unknown key).
 - `CTX-19` → satisfied by construction: `ContextStore` holds contexts by strong `Map` reference, never
-  `WeakRef`/`WeakMap`.
-- `CTX-20` → Task 1 (`tracerFactory` no-op, safe to invoke repeatedly — tested twice in a row).
+  `WeakRef`/`WeakMap`, so a registered context keeps its whole `Request`+`Response` graph reachable and the
+  cap (`CTX-11`), not the collector, is the leak backstop. Stated in `store.ts`'s class TSDoc.
+- `CTX-20` → Task 1 (`tracerFactory` no-op, safe to invoke repeatedly — tested twice in a row). Its
+  concurrency clause holds by construction: the function reads no state and Node runs one JS thread.
+
+**NFR coverage in scope:** `NFR-1` (`verify:seam-1`, no new runtime deps), `NFR-3`/`NFR-4` (`core.api.md`
+byte-identical, Task 5 Step 4), `NFR-5` (80% floor, Task 5 Step 1), `NFR-6`/`NFR-7`/`NFR-17`
+(`typecheck`/`lint`, blocking), `NFR-10` (`verify:node-floor`, `test:node`), `NFR-13` (SPDX header on all
+eight new files, Task 5 Step 3b). `NFR-11` is explicitly retargeted to 4c in the design's Deferred Items.
 
 **Placeholder scan:** no `TBD`/`TODO`, no "add appropriate error handling." Every step has real code.
 
@@ -1051,7 +1208,14 @@ unchanged. No drift between declaration and call sites, and no call site still p
   with Phase 1's rule that the disable is reserved for private builder-internal constructors.
 - `max-depth` 3 — deepest nesting is `#drain`'s single `for` containing one `if`.
 - `max-lines-per-function` 70 — longest function is `createExchangeContext` at well under 20 lines.
-- Explicit return types on every export, including `get size(): number`.
+- Explicit return types on every export, including `get size(): number` and the private `freezeBundle`.
 - No unused imports: `store.test.ts` no longer imports `type DispatchContext` (the dead `contexts` array that
-  was its only consumer is gone); `context.test.ts`'s `noopInstrumentationBundle` import is still used by the
-  dispatch-artifacts, explicit-instrumentation, and 3000-context tests.
+  was its only consumer is gone) and no longer imports `afterEach` (each test owns its store);
+  `context.test.ts`'s `noopInstrumentationBundle` import is still used by the dispatch-artifacts,
+  explicit-instrumentation, freeze, and 3000-context tests.
+- Assertion density (`docs/knowledge/assertions.md:6`) — `invariant` is used for the constructor precondition
+  and for `install`/`installIfAbsent`'s post-drain postcondition. The `create*`/`promote*` functions take
+  already-typed values with no representable precondition to assert, so their density is carried by the
+  module-level average rather than per-function padding.
+- `@internal` on every export in all four files, including `context.ts`'s five types and five functions and
+  `store.ts`'s `contextStore` — matching this plan's own Global Constraint.

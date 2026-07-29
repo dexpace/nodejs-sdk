@@ -51,7 +51,9 @@ all exist, `packages/core/src/index.ts` is `export * from './http/index.js';`, a
 - **Not built this phase** (see the spec's disposition table for why): `SEAM-5`–`SEAM-10`, `SEAM-18`'s bridge
   machinery, a `FakeTransport` test double, the `Logger`/`LogEvent` seam, `SEAM-30`'s cleanup implementation,
   `SEAM-14`'s close *behavior*, `SEAM-12`'s concurrency conformance test, the byte-stream provider, concrete
-  `Serde`/`Transport` implementations. Do not add speculative code for any of these.
+  `Serde`/`Transport` implementations, and `SEAM-28`'s optional operation-identifier field on
+  `OperationDescriptor` (a MAY; deliberately omitted — it would be an additive optional property, so adding it in
+  a later phase is non-breaking). Do not add speculative code for any of these.
 - Same lint/coverage gates as Phase 0/1 apply unchanged (`max-lines-per-function` 70, `max-depth` 3, `max-params`
   3, explicit return types, 80% coverage floor).
 
@@ -82,6 +84,7 @@ scripts/verify-node-floor.mjs # new CI-only smoke script (Task 7)
 .github/workflows/ci.yml     # MODIFY: add node-floor-conformance job (Task 7)
 package.json                  # MODIFY: add expect-type devDependency (Task 1), verify:node-floor script (Task 7)
 tsconfig.base.json            # MODIFY: lib gains "DOM" (Task 1)
+eslint.config.js              # MODIFY: no-restricted-globals guard for lib.dom name collisions (Task 1)
 ```
 
 ---
@@ -91,6 +94,7 @@ tsconfig.base.json            # MODIFY: lib gains "DOM" (Task 1)
 **Files:**
 - Modify: `tsconfig.base.json`
 - Modify: `package.json` (root)
+- Modify: `eslint.config.js` (root overlay)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -131,7 +135,29 @@ Add one line, keeping the existing entries:
   },
 ```
 
-- [ ] **Step 3: Install and re-run the existing gates to confirm nothing regresses**
+- [ ] **Step 3: Guard against `lib.dom` global name collisions in `eslint.config.js`**
+
+`lib.dom` declares global `Request`, `Response`, and `Headers` types — the same names as core's own exported
+classes. After Step 1, a core file that forgets an import no longer fails to compile; it silently type-checks
+against the DOM global instead. `lib.dom` also admits browser-only globals (`window`, `document`) that the spec
+bans by review. Make both bans mechanical (this traces to styleguide ch04's shadowing rule — never reuse a name
+already bound by a built-in): add to the `rules` block of the existing `eslint.config.js` overlay:
+
+```javascript
+      'no-restricted-globals': [
+        'error',
+        {name: 'Request', message: 'lib.dom global — import Request from src/http/request.js instead.'},
+        {name: 'Response', message: 'lib.dom global — import Response from src/http/response.js instead.'},
+        {name: 'Headers', message: 'lib.dom global — import Headers from src/http/headers.js instead.'},
+        {name: 'window', message: 'Browser-only global; @dexpace/core is runtime-agnostic.'},
+        {name: 'document', message: 'Browser-only global; @dexpace/core is runtime-agnostic.'},
+      ],
+```
+
+An imported `Request`/`Response`/`Headers` binding shadows the global, so correctly-importing files are
+unaffected; only a bare, unimported reference — exactly the bug this guards against — is flagged.
+
+- [ ] **Step 4: Install and re-run the existing gates to confirm nothing regresses**
 
 ```bash
 bun install
@@ -144,11 +170,11 @@ Expected: both exit 0. If `typecheck` reports a duplicate-identifier or incompat
 catch (see the spec's Toolchain prerequisites section) — resolve by trusting `lib.dom` as authoritative; do not
 suppress the error with a type-cast workaround.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add tsconfig.base.json package.json bun.lock
-git commit -m "chore(core): add DOM lib and expect-type devDependency for Phase 2 seam surface"
+git add tsconfig.base.json package.json eslint.config.js bun.lock
+git commit -m "chore(core): add DOM lib, expect-type devDependency, and DOM-global lint guard for Phase 2 seam surface"
 ```
 
 ---
@@ -318,6 +344,11 @@ export class DomainModelError extends Error {
 with:
 
 ```typescript
+/**
+ * Root of the SDK's error taxonomy — the "anything this SDK threw" catch-all. Every error the SDK raises
+ * extends this class. `this.name = new.target.name` makes each subclass report its own class name in stack
+ * traces without restating it.
+ */
 export class DexpaceError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -325,8 +356,12 @@ export class DexpaceError extends Error {
   }
 }
 
+/** Base of the domain-model construction failures — Phase 1's leaf classes hang here, unchanged. */
 export class DomainModelError extends DexpaceError {}
 ```
+
+If Phase 1's `DomainModelError` already carries a TSDoc block, keep that block in place of the one-liner above —
+the class body change (`extends DexpaceError`, empty body) is the only mandatory edit to it.
 
 Every other class in the file (`RequiredFieldError`, `HeaderValidationError`, `MediaTypeParseError`, etc.) is
 unchanged — they all still `extends DomainModelError`, which now sits one level below `DexpaceError` instead of
@@ -470,6 +505,16 @@ export interface Transport {
    * graph — never instance fields on the transport (SEAM-12; conformance test is Phase 8's, once a real
    * transport exists to fire concurrent requests through).
    *
+   * MUST NOT pre-buffer the response body — the caller owns reading and closing it (SEAM-11; the streaming
+   * body type arrives in Phase 3, but the obligation binds every implementation from day one).
+   *
+   * Aborting `signal` while the call is in flight SHOULD be treated as a best-effort request to abort the
+   * underlying exchange and release its transport resources — sockets, descriptors (SEAM-13).
+   *
+   * A `signal` abort that fires *after* the returned promise has resolved MUST NOT close the already-delivered
+   * response body — the caller still owns closing it, even when discarding the value (SEAM-16). Do not wire an
+   * unconditional `abort` listener that cancels the body.
+   *
    * After the underlying fetch resolves, check whether `signal` already fired before delivering the response;
    * if so, cancel the response body instead of resolving. That cleanup path MUST be awaited or given
    * `.catch(() => {})` — an unhandled rejection there crashes the process under Node's default
@@ -486,6 +531,9 @@ export interface Transport {
    * caller-supplied client/executor (SEAM-14). A lightweight transport with nothing to release MAY implement
    * this as a no-op: `async close(): Promise<void> {}`. The signature is locked from this phase on — adding a
    * required method to a published seam later is a breaking change; only the *behavior* waits for Phase 8.
+   *
+   * Behavior of `send()` after `close()` has resolved is unspecified at the seam level (SEAM-15); each Phase 8
+   * adapter picks a mode (throw vs. rejected promise) and documents it.
    */
   close(): Promise<void>;
 }
@@ -528,7 +576,7 @@ Expected: PASS — `7 pass, 0 fail`.
 
 ```bash
 git add packages/core/src/seams/transport.ts packages/core/src/seams/transport.test.ts
-git commit -m "feat(core): add Transport, composeSignal, isTimeoutSignal, CancellationError (SEAM-11/12/14/16/17/18/30)"
+git commit -m "feat(core): add Transport, composeSignal, isTimeoutSignal, CancellationError (SEAM-11/12/13/14/15/16/17/18/30)"
 ```
 
 ---
@@ -589,6 +637,15 @@ test("deserialize's return type is bound to the instance's T", () => {
 test("serialize's parameter type is bound to the instance's T", () => {
   expectTypeOf<Serde<boolean>['serialize']>().parameter(0).toEqualTypeOf<boolean>();
 });
+
+test('an implementation without mediaType is rejected (negative case, styleguide 11.6)', () => {
+  // @ts-expect-error -- SEAM-19: mediaType is required and never defaulted; omitting it must not compile
+  const missingMediaType: Serde<string> = {
+    serialize: (value: string): unknown => value,
+    deserialize: (data: unknown): string => String(data),
+  };
+  void missingMediaType;
+});
 ```
 
 - [ ] **Step 3: Run `bun test` (executes, does not typecheck) and then `bun run typecheck` (actually validates the assertions)**
@@ -598,8 +655,9 @@ cd packages/core && bun test src/seams/serde.test.ts
 cd /home/mohammad/Projects/dexpace/nodejs-sdk && bun run typecheck
 ```
 
-Expected: `bun test` reports `3 pass, 0 fail` (the callbacks execute with no runtime assertions to fail);
-`bun run typecheck` exits 0, which is the step that actually proves the `expectTypeOf` chains type-check. If you
+Expected: `bun test` reports `4 pass, 0 fail` (the callbacks execute with no runtime assertions to fail);
+`bun run typecheck` exits 0, which is the step that actually proves the `expectTypeOf` chains and the
+`@ts-expect-error` negative case type-check. If you
 want to see this tripwire fail on purpose once (to confirm it's load-bearing), temporarily change
 `toEqualTypeOf<string>()` to `toEqualTypeOf<number>()`, re-run `bun run typecheck`, confirm it now fails, then
 revert.
@@ -625,9 +683,9 @@ git commit -m "feat(core): add provisional internal-only Serde<T> (SEAM-19; SEAM
   `UrlConstructionError`/`DexpaceError` (`../http/errors.js`), `encodeRfc3986Component` (`../http/rfc3986.js`,
   Task 2).
 - Produces: `interface OperationDescriptor {...}`; `function buildRequest(baseUrl: string | URL, operation:
-  OperationDescriptor): Request`; `class OperationAssemblyError extends DexpaceError`. Task 7's barrel and the
-  public barrel both re-export `buildRequest`, `OperationDescriptor`, and `OperationAssemblyError` by these exact
-  names.
+  OperationDescriptor): Request`; `class OperationAssemblyError extends DexpaceError` (carries the offending
+  `parameterName` as a structured `readonly` field, styleguide ch08). Task 7's barrel and the public barrel both
+  re-export `buildRequest`, `OperationDescriptor`, and `OperationAssemblyError` by these exact names.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -686,6 +744,16 @@ describe('SEAM-27: base-URL composition rules', () => {
     expect(request.url.search).toBe('?existing=yes&a=1');
   });
 
+  test("a dangling separator on the base query is dropped before appending (SEAM-27's parenthetical)", () => {
+    const operation: OperationDescriptor = {
+      method: 'GET',
+      pathTemplate: '/pets',
+      query: QueryParams.newBuilder().add('a', '1').build(),
+    };
+    const request = buildRequest('https://host/c?existing=yes&', operation);
+    expect(request.url.search).toBe('?existing=yes&a=1');
+  });
+
   test('a fragment-bearing base is rejected', () => {
     expect(() => buildRequest('https://host/c#frag', {method: 'GET', pathTemplate: '/pets'})).toThrow(
       UrlConstructionError,
@@ -717,19 +785,41 @@ describe('operation headers and body projections are threaded through', () => {
   });
 });
 
+describe('SEAM-27: dot-segment path-param values are rejected, not silently normalized away', () => {
+  // "." and ".." survive RFC 3986 encoding (both are unreserved), and the WHATWG URL parser treats "%2E" the
+  // same as "." when it normalizes dot segments — so no encoding can keep them literal. A value of ".." would
+  // otherwise rewrite the path (/things/.. → /), the same injection class SEAM-27's %2F rule exists to stop.
+  test('a path-param value of "." throws OperationAssemblyError', () => {
+    expect(() =>
+      buildRequest('https://host', {method: 'GET', pathTemplate: '/things/{id}', pathParams: {id: '.'}}),
+    ).toThrow(OperationAssemblyError);
+  });
+
+  test('a path-param value of ".." throws OperationAssemblyError', () => {
+    expect(() =>
+      buildRequest('https://host', {method: 'GET', pathTemplate: '/things/{id}', pathParams: {id: '..'}}),
+    ).toThrow(OperationAssemblyError);
+  });
+});
+
 describe('a path-param value containing / is encoded, not split (property)', () => {
   test('holds for arbitrary generated path-param values', () => {
     fc.assert(
-      fc.property(fc.string({minLength: 1, maxLength: 20}), (value) => {
-        const request = buildRequest('https://host', {
-          method: 'GET',
-          pathTemplate: '/things/{id}',
-          pathParams: {id: value},
-        });
-        const segments = request.url.pathname.split('/').filter((segment) => segment !== '');
-        expect(segments.length).toBe(2);
-        expect(segments[0]).toBe('things');
-      }),
+      fc.property(
+        // "." and ".." are excluded here because buildRequest rejects them by design — the two example tests
+        // above pin that behavior; every other string must survive as exactly one path segment.
+        fc.string({minLength: 1, maxLength: 20}).filter((s) => s !== '.' && s !== '..'),
+        (value) => {
+          const request = buildRequest('https://host', {
+            method: 'GET',
+            pathTemplate: '/things/{id}',
+            pathParams: {id: value},
+          });
+          const segments = request.url.pathname.split('/').filter((segment) => segment !== '');
+          expect(segments.length).toBe(2);
+          expect(segments[0]).toBe('things');
+        },
+      ),
     );
   });
 });
@@ -751,8 +841,20 @@ import type {Method} from '../http/method.js';
 import {UrlConstructionError, DexpaceError} from '../http/errors.js';
 import {encodeRfc3986Component} from '../http/rfc3986.js';
 
-/** Thrown when `buildRequest()` cannot resolve a `{name}` placeholder in `pathTemplate` from `pathParams`. */
-export class OperationAssemblyError extends DexpaceError {}
+/**
+ * Thrown when `buildRequest()` cannot assemble a request from its descriptor: a `{name}` placeholder in
+ * `pathTemplate` has no value in `pathParams`, or a supplied value is a dot segment (`.`/`..`) that the WHATWG
+ * URL parser would normalize into a path rewrite instead of keeping as one literal segment.
+ */
+export class OperationAssemblyError extends DexpaceError {
+  /** The path parameter the failure is about — a structured field so log aggregators need not parse the message. */
+  readonly parameterName: string;
+
+  constructor(message: string, parameterName: string) {
+    super(message);
+    this.parameterName = parameterName;
+  }
+}
 
 /**
  * The operation-input projection SEAM-26 requires: a method and path template are always required, the four
@@ -792,7 +894,13 @@ function substitutePathParams(template: string, pathParams: Readonly<Record<stri
   return template.replace(PATH_PARAM_RE, (_match, name: string) => {
     const value = pathParams?.[name];
     if (value === undefined) {
-      throw new OperationAssemblyError(`missing value for path parameter "${name}"`);
+      throw new OperationAssemblyError(`missing value for path parameter "${name}"`, name);
+    }
+    // "." and ".." are RFC 3986 unreserved, so they survive encoding — and the WHATWG URL parser treats "%2E"
+    // the same as "." during dot-segment normalization, so percent-encoding cannot keep them literal either.
+    // Rejection is the only lossless option: silently forwarding ".." would let a path value rewrite the path.
+    if (value === '.' || value === '..') {
+      throw new OperationAssemblyError(`path parameter "${name}" must not be a dot segment ("." or "..")`, name);
     }
     return encodeRfc3986Component(value);
   });
@@ -806,7 +914,9 @@ function composePath(basePath: string, substitutedTemplate: string): string {
 }
 
 function composeQuery(baseSearch: string, operationQuery: QueryParams | undefined): string {
-  const baseQueryPart = baseSearch.startsWith('?') ? baseSearch.slice(1) : baseSearch;
+  const rawBaseQuery = baseSearch.startsWith('?') ? baseSearch.slice(1) : baseSearch;
+  // SEAM-27: the base query's dangling separator is dropped before the operation query is appended.
+  const baseQueryPart = rawBaseQuery.replace(/&+$/, '');
   const operationQueryPart = operationQuery?.encode() ?? '';
   return [baseQueryPart, operationQueryPart].filter((part) => part !== '').join('&');
 }
@@ -814,7 +924,13 @@ function composeQuery(baseSearch: string, operationQuery: QueryParams | undefine
 /**
  * Projects an {@link OperationDescriptor} onto a base URL, producing a well-formed {@link Request}. Path
  * placeholders are substituted through {@link encodeRfc3986Component}, so a placeholder value containing `/` is
- * encoded (`%2F`), never split into an extra path segment (SEAM-27).
+ * encoded (`%2F`), never split into an extra path segment (SEAM-27). Dot-segment values (`.`, `..`) are rejected
+ * outright — the WHATWG URL parser treats `%2E` the same as `.`, so no encoding can keep them literal.
+ *
+ * @throws OperationAssemblyError when a `{name}` placeholder has no value in `pathParams`, or a supplied value
+ *   is a dot segment (`.`/`..`) — fix the descriptor; no request was assembled.
+ * @throws UrlConstructionError when `baseUrl` is malformed, non-absolute, or carries a fragment — supply a
+ *   clean absolute base URL.
  */
 export function buildRequest(baseUrl: string | URL, operation: OperationDescriptor): Request {
   const base = normalizeBaseUrl(baseUrl);
@@ -834,7 +950,7 @@ export function buildRequest(baseUrl: string | URL, operation: OperationDescript
 - [ ] **Step 4: Run and confirm everything passes**
 
 Run: `cd packages/core && bun test src/seams/operation.test.ts`
-Expected: PASS — `9 pass, 0 fail` (the property test runs 100 generated cases by default under one `it`).
+Expected: PASS — `13 pass, 0 fail` (the property test runs 100 generated cases by default under one `it`).
 
 - [ ] **Step 5: Commit**
 
@@ -1032,10 +1148,15 @@ git commit -m "feat(core): wire Phase 2 public barrel, Node-floor CI conformance
 **Spec coverage** (every requirement ID in `docs/superpowers/specs/2026-07-23-phase2-seam-foundations-design.md`'s
 disposition table, mapped to the task implementing it):
 
-- SEAM-11/SEAM-16 (collapsed, structural) → Task 4, `Transport.send(): Promise<Response>`.
+- SEAM-11/SEAM-16 (collapsed) → Task 4, `Transport.send(): Promise<Response>` structurally covers the
+  non-null-completion halves; the *behavioral* halves — no pre-buffering (SEAM-11) and a late cancel never
+  closing an already-delivered body (SEAM-16) — are TSDoc obligations on `send()`, inherited by Phase 8.
 - SEAM-12 (concurrency contract obligation) → Task 4, TSDoc on `Transport.send()`; conformance test deferred to
   Phase 8 per the spec's own disposition.
+- SEAM-13 (best-effort abort of the in-flight exchange on cancellation) → Task 4, TSDoc obligation on `send()`.
 - SEAM-14 (`close()` shape locked, behavior deferred) → Task 4, `Transport.close(): Promise<void>`.
+- SEAM-15 (post-close behavior) → Task 4, `close()` TSDoc states it is unspecified at the seam level and each
+  Phase 8 adapter documents its chosen mode.
 - SEAM-17 (canonical `Promise` pivot) → Task 4, satisfied structurally, no code needed beyond the interface.
 - SEAM-18 (residual: options threading survives; the bridge itself is never built) → Task 4, TSDoc obligation on
   `send()`; `composeSignal`/`isTimeoutSignal` are the reusable cancellation primitives, not the bridge.
@@ -1044,7 +1165,8 @@ disposition table, mapped to the task implementing it):
   exactly the mechanism that keeps this deferral non-breaking.
 - SEAM-26 (`OperationDescriptor`, four projections default to empty) → Task 6, tested directly.
 - SEAM-27 (`buildRequest()` encoding + base-URL composition) → Task 6, every conformance note from the spec has
-  its own test case.
+  its own test case, including the requirement's parenthetical dangling-separator drop and the dot-segment
+  rejection ("." / ".." values throw rather than being silently normalized away by the WHATWG URL parser).
 - SEAM-30 (contract obligation only) → Task 4, TSDoc on `send()`; implementation deferred to Phase 8.
 - SEAM-5–10, SEAM-18's bridge machinery → never built, confirmed absent from every task's file list.
 - XCUT-2 (timeout vs. cancellation, told apart by `signal.reason.name`) → Task 4, `isTimeoutSignal` + its two
@@ -1057,9 +1179,11 @@ including every validation branch and error path each test exercises.
 
 **Type consistency:** cross-checked exported names/signatures across tasks — `encodeRfc3986Component` (Task 2) is
 imported by that exact name in both `query-params.ts` (Task 2) and `operation.ts` (Task 6); `DexpaceError` (Task
-3) is the base class `CancellationError` (Task 4) and `OperationAssemblyError` (Task 6) both extend, with the
-same constructor signature (`message: string, options?: ErrorOptions`) inherited unchanged from Phase 1's
-`DomainModelError` pattern; `Request.newBuilder().method(...).url(...).headers(...).body(...).build()` (Task 6)
+3) is the base class `CancellationError` (Task 4) and `OperationAssemblyError` (Task 6) both extend —
+`CancellationError` inherits the `(message: string, options?: ErrorOptions)` constructor unchanged, while
+`OperationAssemblyError` declares its own `(message: string, parameterName: string)` constructor to carry the
+offending parameter as a structured `readonly` field;
+`Request.newBuilder().method(...).url(...).headers(...).body(...).build()` (Task 6)
 matches Phase 1 Task 9's `RequestBuilder` exactly; `Headers`/`QueryParams`/`Method` types (Task 6) match their
 Phase 1 definitions with no renaming.
 
@@ -1067,4 +1191,5 @@ Phase 1 definitions with no renaming.
 `Logger`/`LogEvent` (Phase 7), `FakeTransport` (first phase that tests against `Transport`, likely Phase 4),
 `SEAM-30`'s cleanup implementation and `SEAM-14`'s close behavior (both Phase 8), `SEAM-12`'s concurrency
 conformance test (Phase 8), the byte-stream provider implementation (Phase 3), `SEAM-21`'s type-witness mechanism
-and concrete `Serde`/`Transport` implementations (Phases 6 and 8 respectively).
+and concrete `Serde`/`Transport` implementations (Phases 6 and 8 respectively), and `SEAM-28`'s optional
+operation identifier (a MAY — additive optional field, non-breaking to add whenever instrumentation needs it).
