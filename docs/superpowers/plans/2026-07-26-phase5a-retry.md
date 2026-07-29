@@ -47,6 +47,9 @@ Task 8 of this plan can be executed. Concretely:
 - `packages/core/src/config/clock.js` — `Clock` (`now()`, `monotonic()`, `sleep(ms, signal?)`), `defaultClock`
 - `packages/core/src/config/http-date.js` — `formatHttpDate(epochMs)`, `parseHttpDate(raw): number | null`
 - `packages/core/src/config/retryable.js` — `RETRYABLE_STATUSES: ReadonlySet<number>`, `isRetryableStatus(code)`
+- `packages/core/src/observability/logger.js` — `getGlobalLogger()` (Phase 7b; Task 8 only, per the 7b
+  retrofit banner above). Its `atLevel(level).event(name).field(key, value).emit()` builder shape is 7b's;
+  a `verbose` level that no backend consumes resolves to the no-op logger.
 - `packages/core/src/http/method.js` — `type Method`, `isIdempotent(method)`
 - `packages/core/src/http/request.js` — `Request` (`method`, `url`, `headers`, `body: Body | undefined`,
   `newBuilder()`), `RequestBuilder`
@@ -101,6 +104,14 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
 - **`RETRY-36`'s remap applies only to responses the engine discards.** Classification and both gates run first;
   a response that survives them is returned live and unread. Never remap a response the loop is about to return —
   `toHttpError()` drains the body and loses the headers irreversibly. Full reasoning in the design doc.
+- **The total-timeout budget aborts on overshoot; it does not merely clamp.** `RETRY-27`/`RECOV-20` list three
+  independent abort conditions, and "elapsed + next-delay would exceed the budget" is one of them. Clamping the
+  delay alone would sleep out the remaining budget and then dispatch one more attempt with nothing left. Both
+  the abort (`overshootsBudget`) and the clamp (`clampToBudget`) ship.
+- **A negative retry count is REJECTED, never clamped to the default.** `RETRY-41` says clamp; `HTTP-35` (also
+  MUST) says reject, precisely so a negative value cannot be "silently reinterpreted as 'use default'". The port
+  takes `HTTP-35`'s line on both surfaces — `RequestOptionsBuilder` for the per-call option, `invariant()` in
+  `retrySettings()` for `maxAttempts`. Do not "fix" `settings.test.ts` by making it expect a clamp.
 - **ESLint limits are hard:** `max-params: 3`, `max-depth: 3`, `max-lines-per-function: 70`. `runWithRetry` takes
   `(request, dispatch, config)` — exactly three. Every helper below is decomposed to stay inside the depth and
   length caps; do not inline them back together.
@@ -336,6 +347,7 @@ import {stringBody} from '../body/simple-bodies.js';
 import {streamBody} from '../body/stream-body.js';
 import {Request} from '../http/request.js';
 import {IoError} from '../io/errors.js';
+import {CancellationError} from '../seams/transport.js';
 import {RETRYABLE_STATUSES, isResendable, isRetryableFailure, isRetryableStatus} from './classify.js';
 
 function aRequest(method: 'GET' | 'POST' | 'PUT', body?: ReturnType<typeof stringBody>): Request {
@@ -409,6 +421,15 @@ describe('isRetryableFailure', () => {
     const controller = new AbortController();
     controller.abort();
     expect(isRetryableFailure(controller.signal.reason, RETRYABLE_STATUSES)).toBe(false);
+  });
+
+  test('a CancellationError is never retryable, even nested (RETRY-23, XCUT-1)', () => {
+    // Phase 2 declares `CancellationError extends DexpaceError`, NOT the IoError family, so the
+    // allow-list already excludes it. Asserted rather than assumed: were it ever re-parented under
+    // IoError, cancellation would silently become a retryable condition and XCUT-1 would break.
+    const cancelled = new CancellationError('caller aborted');
+    expect(isRetryableFailure(cancelled, RETRYABLE_STATUSES)).toBe(false);
+    expect(isRetryableFailure(new Error('send failed', {cause: cancelled}), RETRYABLE_STATUSES)).toBe(false);
   });
 
   test('a timeout abort is retryable (RETRY-24)', () => {
@@ -522,7 +543,7 @@ export function isResendable(request: Request): boolean {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/retry/classify.test.ts`
-Expected: PASS — 17 tests.
+Expected: PASS — 18 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1326,20 +1347,36 @@ export class FakeTransport implements Transport {
  *
  * `Response` instances are `Object.freeze`d, so assigning a spy over `response.close` throws
  * `TypeError: Cannot add property close, object is not extensible` under ESM strict mode. The only
- * sanctioned observation point is the body stream's own `cancel()` hook, which `Response.close()` drives.
- * Every retry, redirect, and auth test that asserts a body was released uses this helper.
+ * sanctioned observation point is the body stream itself. Every retry, redirect, and auth test that
+ * asserts a body was released uses this helper.
+ *
+ * `cancelCount()` counts RELEASE, by either of the two routes the engine can take, because the retire
+ * path and the abandon path release the same body differently:
+ *
+ * - abandoned unread -- `Response.close()` cancels the stream, firing `cancel()`;
+ * - retired -- `toHttpError()` DRAINS the body into its bounded buffer (HTTP-52), so the stream reaches
+ *   EOF and the later `close()` finds nothing to cancel; `pull()` is the only hook that observes it.
+ *
+ * The stream MUST close (here, on the first `pull` after its single chunk is read). A `ReadableStream`
+ * that enqueues and never closes leaves `toHttpError()`'s drain awaiting a chunk that never arrives, and
+ * every engine test that discards a 503 hangs until the runner's timeout.
  */
 export function countingResponse(
   status: number,
   request: Request = Request.newBuilder().url('https://example.com').build(),
 ): {response: Response; cancelCount: () => number} {
-  let cancels = 0;
+  let releases = 0;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(Uint8Array.from([1]));
     },
+    pull(controller) {
+      // Reached only once the single chunk has been read (default highWaterMark 1), i.e. a full drain.
+      releases += 1;
+      controller.close();
+    },
     cancel() {
-      cancels += 1;
+      releases += 1;
     },
   });
   const response = Response.newBuilder()
@@ -1348,7 +1385,7 @@ export function countingResponse(
     .status(Status.of(status))
     .body(body)
     .build();
-  return {response, cancelCount: () => cancels};
+  return {response, cancelCount: () => releases};
 }
 ```
 
@@ -1681,6 +1718,18 @@ describe('total-timeout budget (RETRY-27)', () => {
     expect(calls).toEqual([1, 2]);
   });
 
+  test('a delay that would overshoot the budget is suppressed, not merely clamped', async () => {
+    const clock = {ms: 0};
+    const config = configOf({totalTimeoutMs: 100, fixedDelayMs: 500, maxAttempts: 5}, clock);
+    const dispatch = scriptedDispatch([failure(new IoError('reset'))]);
+
+    await runWithRetry(GET, dispatch, config);
+
+    // elapsed(0) + 500 > 100, so the loop surfaces after the first send rather than sleeping out the
+    // remaining 100ms and dispatching a second attempt with no budget left (RETRY-27, RECOV-20).
+    expect(dispatch.calls).toHaveLength(1);
+  });
+
   test('a zero budget means unbounded, not immediately exhausted', async () => {
     const dispatch = scriptedDispatch([failure(new IoError('reset'))]);
     await runWithRetry(GET, dispatch, configOf({totalTimeoutMs: 0, maxAttempts: 3, fixedDelayMs: 0}));
@@ -1850,13 +1899,32 @@ function clampToBudget(delayMs: number, state: LoopState): number {
   return Math.max(0, Math.min(delayMs, budget - elapsed(state)));
 }
 
-/** RETRY-40: a throwing user override is logged-and-ignored, never fatal. (No logger until Phase 7.) */
+/**
+ * RETRY-27/RECOV-20's third abort condition: a delay that would push cumulative elapsed time PAST the
+ * budget is SUPPRESSED and the last failure surfaced, not merely shortened. The clamp above is the
+ * requirement's separate belt-and-braces clause, not a substitute for this check -- without it the loop
+ * would sleep out the remainder of the budget and then dispatch one more attempt with nothing left.
+ */
+function overshootsBudget(delayMs: number, state: LoopState): boolean {
+  const budget = state.config.settings.totalTimeoutMs;
+  if (budget === undefined || budget === 0) return false;
+  return elapsed(state) + delayMs > budget;
+}
+
+/** RETRY-40: a throwing user override is logged and ignored, never fatal. */
 function callerOverride(state: LoopState): number | undefined {
   const {delayOverride} = state.config;
   if (delayOverride === undefined) return undefined;
   try {
     return delayOverride(state.attempt);
-  } catch {
+  } catch (error) {
+    // Phase 7b retrofit: RETRY-40 says "log and fall back". Swallowing silently would satisfy the
+    // non-fatal half and drop the diagnostic half. XCUT-20 keeps the emission itself off the throw path.
+    getGlobalLogger().atLevel('verbose')
+      .event('retry.delayOverrideFailed')
+      .field('attempt', state.attempt)
+      .field('error', String(error))
+      .emit();
     return undefined;
   }
 }
@@ -1886,6 +1954,11 @@ async function retire(response: Response): Promise<unknown> {
  * Ordering is load-bearing: `toHttpError` drains the body and drops the headers, so the hint must be read
  * first. The `finally` guarantees release even when the retry decision or the delay computation throws,
  * which is RETRY-35's second clause.
+ *
+ * The budget-overshoot abort lands HERE rather than in `decideRetry`'s gate block because the delay it
+ * tests is not known until the pacing hint has been read off the live response. By that point the
+ * response is already retired, so RETRY-27's "surface the last failure unchanged" surfaces the retired
+ * `HttpStatusError` as a Failure -- never a live response, which is what the gates above return.
  */
 async function retireAndSchedule(outcome: Outcome<Response>, state: LoopState): Promise<Decision> {
   const response = outcome.kind === 'success' ? outcome.value : undefined;
@@ -1894,7 +1967,9 @@ async function retireAndSchedule(outcome: Outcome<Response>, state: LoopState): 
       ? null
       : parsePacingHint(response.headers, state.config.clock.now(), state.config.random);
     const error = response === undefined ? outcome.error : await retire(response);
-    return {kind: 'retry', error, delayMs: clampToBudget(resolveDelay(hint, state), state)};
+    const delayMs = resolveDelay(hint, state);
+    if (overshootsBudget(delayMs, state)) return {kind: 'stop', outcome: failure(error)};
+    return {kind: 'retry', error, delayMs: clampToBudget(delayMs, state)};
   } finally {
     await response?.close();
   }
@@ -1939,9 +2014,15 @@ function withTrail(outcome: Outcome<Response>, trail: readonly unknown[]): Outco
  * and after the budget clamp, where a `setTimeout(0)` would cost a macrotask turn for nothing.
  *
  * Resolves (never rejects) on abort; the loop's next iteration observes the signal and stops.
+ *
+ * The ALREADY-aborted check is load-bearing, not defensive: `AbortSignal` fires `abort` exactly once, at
+ * abort time, so a listener added to a signal that aborted earlier (during `dispatch`, or during the
+ * previous iteration's response retirement) is never invoked -- without this guard the timer would run to
+ * completion and the loop would sleep the full backoff after cancellation, breaking RETRY-26/XCUT-3's
+ * prompt-cancellation requirement.
  */
 async function waitFor(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
-  if (delayMs <= 0) return;
+  if (delayMs <= 0 || signal?.aborted === true) return;
   await new Promise<void>((resolve) => {
     const settle = (): void => {
       clearTimeout(timer);
@@ -2008,7 +2089,7 @@ export async function runWithRetry(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/retry/engine.test.ts`
-Expected: PASS — 21 tests.
+Expected: PASS — 22 tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
@@ -2055,15 +2136,22 @@ call". `RequestOptionsBuilder` already rejects negatives at construction, so no 
 // (the step honors the call's signal, which only exists thanks to Task 1), RETRY-41/HTTP-35 (the per-call
 // RequestOptions.maxRetries override, read via ctx.options from Task 1's amendment).
 import {describe, expect, test} from 'bun:test';
+import {createRequestContext, type ExecutionContext} from '../context/context.js';
 import {Request} from '../http/request.js';
 import {IoError} from '../io/errors.js';
 import {Cursor} from '../pipeline/cursor.js';
 import type {StepDescriptor} from '../pipeline/step.js';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
-import {aRequestContext} from '../pipeline/cursor.test-helpers.js';
 import {RETRY_STEP_TYPE, retryStep} from './retry-step.js';
 
 const GET = Request.newBuilder().url('https://example.com').build();
+
+// Constructed inline rather than imported: 4c keeps `aRequestContext()` file-local to `cursor.test.ts`,
+// and importing across `*.test.ts` files is not acceptable (see the note under this listing). This is
+// exactly what 4c's own cursor tests do -- `createRequestContext(request)` from `../context/context.js`.
+function aRequestContext(): ExecutionContext {
+  return createRequestContext(GET);
+}
 
 function runThrough(descriptor: StepDescriptor, transport: FakeTransport, signal?: AbortSignal): Promise<unknown> {
   const cursor = new Cursor({
@@ -2157,9 +2245,10 @@ describe('retryStep', () => {
 
 The two override tests additionally import `RequestOptions` from `../http/request-options.js`.
 
-`aRequestContext()` is 4c's existing cursor-test helper. If 4c defined it inline in `cursor.test.ts` rather
-than a shared file, construct a `RequestContext` inline here instead — do **not** create a
-`cursor.test-helpers.ts` file for it, and do **not** import from another `*.test.ts`.
+`aRequestContext()` is defined inline in the listing above, deliberately: 4c keeps its own copy file-local
+to `cursor.test.ts`. Do **not** import it from another `*.test.ts`, and do **not** create a shared
+`cursor.test-helpers.ts` for it. If 4c's `createRequestContext` signature differs from the one used above,
+match 4c's actual call site rather than reshaping the factory.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2202,9 +2291,13 @@ function attemptVia(fork: () => Next): RetryDispatch {
  * RETRY-41/HTTP-35: the per-call `RequestOptions.maxRetries` override wins over the configured budget when
  * present. The option counts retries; `maxAttempts` counts total sends, hence the `+ 1`. Non-negativity is
  * enforced by RequestOptionsBuilder at construction.
+ *
+ * The derived object is frozen: a spread of a frozen source is NOT itself frozen, and RETRY-42 requires
+ * every policy component to be immutable after construction, not merely typed `readonly`.
  */
 function effectiveSettings(base: RetrySettings, perCallMaxRetries: number | undefined): RetrySettings {
-  return perCallMaxRetries === undefined ? base : {...base, maxAttempts: perCallMaxRetries + 1};
+  if (perCallMaxRetries === undefined) return base;
+  return Object.freeze({...base, maxAttempts: perCallMaxRetries + 1});
 }
 
 function configFrom(options: RetryStepOptions, ctx: Pick<StepContext, 'signal' | 'options'>): RetryConfig {
@@ -2660,10 +2753,19 @@ Sections and their sources:
 
 State explicitly at the top whether the plan has been executed, matching the Phase 4 checklist's convention.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Record the deferrals in the roadmap's Deferred Items Log**
+
+The design doc's Deferred Items table is headed "add to the roadmap's Deferred Items Log" — writing the
+checklist does not discharge that. Append both rows to the log in
+`docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`, in the log's existing column shape:
+`RETRY-29` (opt-in server-driven retry-classification override, not scheduled) and `RECOV-33` (client-identity
+header step, Phase 7a). Do not restate the justifications — link to this phase's design doc.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add docs/superpowers/plans/2026-07-26-phase5a-retry-checklist.md
+git add docs/superpowers/plans/2026-07-26-phase5a-retry-checklist.md \
+  docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md
 git commit -m "docs: Phase 5a requirement checklist"
 ```
 
@@ -2691,9 +2793,10 @@ git commit -m "docs: Phase 5a requirement checklist"
 No gaps.
 
 **Type consistency.** `RetrySettings extends BackoffSettings`, so `computeDelay(attempt, settings, random)`
-accepts a `RetrySettings` directly — Task 8 passes `config.settings` with no adapter. `RetryConfig.now` and
-`.random` are the injected seams both `computeDelay` and `parsePacingHint` draw from, spelled identically in
-Tasks 3, 4, and 8. `countingResponse` returns `{response, cancelCount}` in Task 6 and is destructured that way in
+accepts a `RetrySettings` directly — Task 8 passes `config.settings` with no adapter. `RetryConfig.clock` (7a's
+seam, post-retrofit — `clock.monotonic()` for the budget, `clock.now()` for `parsePacingHint`'s wall-clock
+instant) and `RetryConfig.random` are the injected seams both `computeDelay` and `parsePacingHint` draw from,
+spelled identically in Tasks 3, 4, and 8. `countingResponse` returns `{response, cancelCount}` in Task 6 and is destructured that way in
 Tasks 8 and 9. `RetryDispatch` is declared once in Task 8 and imported by Tasks 9 and 10.
 
 **Known rough edge, deliberately left.** Task 9's test imports `aRequestContext()` from 4c's cursor tests; the

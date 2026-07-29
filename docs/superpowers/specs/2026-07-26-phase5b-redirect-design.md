@@ -126,15 +126,24 @@ credential attached at the seed from leaking to any later origin, so it must alw
 downgrade exists to catch a single HTTPS→HTTP transition wherever it happens in the chain, so an
 HTTPS→HTTP→HTTPS round trip only flags the one hop that actually downgraded, not the whole chain relative to the
 seed. An HTTPS-to-HTTP transition is rejected by default (`SchemeDowngradeError`, current response closed before
-the throw) and permitted only via an opt-in that surfaces the downgrade observably (a settings flag,
-`allowSchemeDowngrade`); credential stripping still applies regardless of this flag.
+the throw) and permitted only via an opt-in settings flag, `allowSchemeDowngrade`; credential stripping still
+applies regardless of this flag.
+
+`REDIR-15` asks for two distinct things here and it is easy to read them as one: the flag is the **opt-in**, and
+"MUST surface it observably (e.g. a warning log)" is a **separate obligation on the permitted path**. Setting a
+boolean is not surfacing anything — a downgrade that the caller opted into a year ago in a config file still
+needs to show up in the logs of the request that actually took it. So a *permitted* downgrade emits its own
+warning-level event, distinct from the rejection event on the default path. This is also the third of the three
+5b events Phase 7b's "Amendments to 5a and 5b" section names ("a downgrade event ... if the settings permit it
+at all"). It is derived in `redirect-step.ts` by comparing the two hops' schemes rather than carried on
+`decide()`'s `follow` variant, so the `Decision` shape stays as designed.
 
 ## Settings (`settings.ts`)
 
 ```typescript
 interface RedirectSettings {
   readonly maxHops: number;                        // default 3; 0 disables following (see below)
-  readonly allowedMethods: ReadonlySet<Method>;      // default {GET, HEAD}; frozen defensive copy
+  readonly allowedMethods: ReadonlySet<Method>;      // default {GET, HEAD}; defensive copy
   readonly allow303: boolean;                        // default false
   readonly allowSchemeDowngrade: boolean;             // default false
   readonly locationHeader: string;                    // default 'Location'
@@ -142,9 +151,12 @@ interface RedirectSettings {
 }
 ```
 
-`allowedMethods` is stored as a frozen defensive copy so post-construction mutation of the caller's collection
-cannot change policy (the same discipline 5a's `settings.ts` applied to its retryable-status/idempotent-method
-sets). `maxHops: 0` needs no special branch — step 5 of `decide()` below applies the same hop-cap gate every other
+`allowedMethods` is stored as a defensive copy so post-construction mutation of the caller's collection cannot
+change policy (the same discipline 5a's `settings.ts` applied to its retryable-status/idempotent-method sets) —
+the copy, not a freeze, is what `REDIR-26` actually asks for: `Object.freeze` is shallow and does not disarm
+`Set.prototype.add`, so a "frozen `Set`" would be a promise the runtime cannot keep. The settings object itself
+is frozen; `ReadonlySet` is what keeps SDK-internal code from writing to the set. `maxHops: 0` needs no special
+branch — step 5 of `decide()` below applies the same hop-cap gate every other
 `maxHops` value uses, and a 0-hop budget simply fails it on the first follow attempt.
 
 ## The per-hop decision (`decide.ts`)
@@ -256,6 +268,15 @@ the *current* response is closed before the error propagates. On every `'return-
 returned **open** — the caller's to close. This is the same close-responsibility-passes-outward discipline
 `pipeline.md` states generally for any wrapping step that re-drives the chain.
 
+`REDIR-22`(b) says "if building the follow-up throws" — not "if `decide()` returns `'fail'`", which is the
+narrower thing. `decide()` is pure *except* that it invokes `settings.predicate`, which is caller code and may
+throw for reasons this step cannot enumerate; `Request`/`Headers` builder validation is a second, thinner
+vector. A raw `decide()` call in the loop would let either escape with the hop's response still open, leaking
+the body. The call is therefore wrapped so any throw closes the current response and rethrows unchanged — the
+error is the caller's own, so it is not remapped to a redirect error type. Note the asymmetry with retry, where
+`RETRY-40` says a throwing predicate SHOULD be converted to a typed illegal-state error: redirect's spec states
+no such conversion, so the throw passes through.
+
 ```
 visited = { request.url }             -- seeded with the original (seed) request's absolute URI
 loop:
@@ -305,13 +326,38 @@ replayability rather than corrupting or truncating the re-send").
 
 ## Logging
 
-`redirect-handling.md` says each followed hop, loop detection, and scheme-downgrade event *SHOULD* be emitted as
-structured records, redacted, with the malformed-Location event logging the raw string as an explicit exception
-(it failed to parse and cannot be redacted). This phase does **not** implement it: the roadmap's own Deferred Items
-Log places the `Logger`/`LogEvent` seam at Phase 7, and 5a — despite `retry-and-resilience.md`'s equivalent
-`SHOULD`-level logging language — shipped with none either. Wiring redirect's log call sites is a one-file addition
-once Phase 7's `Logger` interface exists; doing it now against a facade that doesn't exist yet would mean guessing
-its shape twice. Not re-litigated; consistent with 5a's precedent.
+> **Amended 2026-07-28 (Phase 7b retrofit).** The paragraph below was written when the `Logger` seam did not
+> exist. Phase 7b built it, and amended this phase to emit three of these events — see the plan's amendment
+> banner and the revised disposition after the original text.
+
+*Original disposition (superseded):* `redirect-handling.md` says each followed hop, loop detection, and
+scheme-downgrade event *SHOULD* be emitted as structured records, redacted, with the malformed-Location event
+logging the raw string as an explicit exception (it failed to parse and cannot be redacted). This phase does
+**not** implement it: the roadmap's own Deferred Items Log places the `Logger`/`LogEvent` seam at Phase 7, and
+5a — despite `retry-and-resilience.md`'s equivalent `SHOULD`-level logging language — shipped with none either.
+Wiring redirect's log call sites is a one-file addition once Phase 7's `Logger` interface exists; doing it now
+against a facade that doesn't exist yet would mean guessing its shape twice. Not re-litigated; consistent with
+5a's precedent.
+
+*Current disposition:* `redirect-step.ts` emits three events via `getGlobalLogger()` — a per-hop event, a
+rejection event on the `'fail'` path, and the permitted-downgrade event described under "Scheme-downgrade
+guard". Two constraints bind every one of them, and neither is optional:
+
+- **Every URL field goes through `redactUrl()`** (`observability/redaction.ts`, 7b), the same function 7b's
+  `loggingStep` uses for `url.full`. A raw `url.href` in a log line defeats `REDIR-28`'s "URLs passed through a
+  redactor" and the cross-cutting default-deny redaction invariant (`XCUT-19`) in one stroke: the seed URL can
+  carry userinfo and the query string can carry a token, and the redirect step is precisely the code path a
+  credential-bearing URL travels down. One function, three call sites, no second policy to drift.
+- **Every emission site is contained** (`emitQuietly`), per `OBS-20`/`XCUT-20` — observability must never throw
+  into the request path. This matters most on the `'fail'` path, where an unguarded emit placed before
+  `response.close()` would both leak the body and replace `SchemeDowngradeError` with a logger's own error. The
+  close therefore happens first, and the emit cannot escape.
+
+Still deferred, and *not* closed by the retrofit: the loop-detected event and the malformed-Location event.
+Both need a reason discriminant on `decide()`'s `'return-current'` variant, which `decide.test.ts` asserts the
+shape of throughout; reshaping it is out of this retrofit's scope. `REDIR-28`'s carve-out — that the
+malformed-Location event logs the raw string, since it failed to parse and cannot be redacted — travels with
+that deferral.
 
 ## Testing
 
@@ -354,7 +400,7 @@ hints — that parser is 5a's `pacing.ts`, untouched here).
 | The predicate's `RedirectCondition.visited` is a defensive copy, not the live set typed `ReadonlySet` | Spec: "a read-only, defensively-copied condition snapshot… so it cannot mutate the live cycle-detection state" | A `ReadonlySet` type annotation is erased at runtime; a predicate that casts it away could pre-seed or clear loop detection for the rest of the call. The spec's wording is about the object, not the type |
 | `maxHops: 0` is an ordinary cap value, not a special-cased early return | Spec states it as "disables redirect following entirely" | Falls out of the same cap gate every other `maxHops` value uses — a 0-hop budget always fails the "would this exceed the cap" check on the first follow attempt, producing identical observable behavior with no branch to get wrong |
 | No stage-pipeline recovery-chain adapter | 5a shipped two adapters (pillar + recovery) over one retry engine | `pipeline.md`/`PIPE-*` states plainly there is no async redirect pillar — the async standard pipeline does not follow redirects at the pipeline layer at all, so there is no second consumer to adapt for |
-| Redirect logging not implemented | Spec: `SHOULD` emit structured records per hop/loop/downgrade event | `Logger`/`LogEvent` seam is Phase 7 per the roadmap's Deferred Items Log; 5a shipped the same gap for retry's equivalent `SHOULD`. One-file addition once the seam exists |
+| ~~Redirect logging not implemented~~ — **superseded 2026-07-28 by the Phase 7b retrofit**; hop, rejection, and permitted-downgrade events now ship, redacted and contained | Spec: `SHOULD` emit structured records per hop/loop/downgrade event | Was: `Logger`/`LogEvent` seam is Phase 7 per the roadmap's Deferred Items Log. Now: only the loop-detected and malformed-Location events remain deferred, both blocked on a reason discriminant `decide()`'s `Decision` does not carry |
 
 ## Deferred Items (add to the roadmap's Deferred Items Log)
 
@@ -362,5 +408,5 @@ hints — that parser is 5a's `pacing.ts`, untouched here).
 |---|---|---|---|
 | `PIPE-40` — 2-hop-redirect conformance clause | Phase 4c, targeted here by the roadmap | **Resolved in Phase 5b** | Satisfied by the two-hop `FakeTransport` test above (wire-send count, per-hop close, final-response-open) |
 | `AUTH-29` / marker *consumption* (skip-stamping on a cross-origin re-issue, first-stripper role) | This brainstorm | **Phase 5c** | 5b only produces the marker and defends it with an independent guard step; nothing yet reads it for its intended purpose (suppressing credential stamping) — that is 5c's auth step |
-| Redirect structured logging (`SHOULD`-level hop/loop/downgrade events) | This brainstorm | Phase 7 | Same disposition as 5a's equivalent gap — `Logger`/`LogEvent` seam not built until Phase 7 |
+| Redirect structured logging (`SHOULD`-level hop/loop/downgrade events) | This brainstorm | **Partially resolved 2026-07-28 (Phase 7b)** | Hop, rejection, and permitted-downgrade events ship in `redirect-step.ts`, URLs through `redactUrl()`, emissions through `emitQuietly()`. The loop-detected and malformed-Location events remain open — both need a reason discriminant on `decide()`'s `'return-current'` variant |
 | Redirect predicate's scope over safety mechanics (see Deviation Ledger) | This brainstorm | Re-confirm at Phase 9 conformance sweep, or sooner if the user disagrees | A judgment call made without the user present; narrow and mechanical to reverse if wrong |

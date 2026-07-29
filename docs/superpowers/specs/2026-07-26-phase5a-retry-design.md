@@ -33,7 +33,7 @@ are 5b, 5c, and 5c respectively. This continues the "primitives before presets" 
 `RECOV-32` (idempotency-key injection) ships here despite not being retry mechanics, because it is retry-semantic:
 its entire purpose is making a retried write safe, and `RETRY-38` explicitly requires the per-attempt stamp to
 preserve it. `RECOV-33` (client-identity header) does **not** ship here — it is a configuration-driven header step
-with no retry coupling, retargeted to Phase 7 alongside `CFG-*`.
+with no retry coupling, retargeted to Phase 7a alongside `CFG-*` (7a Task 9 ships it).
 
 `FakeTransport` is built here (`packages/core/src/testing/fake-transport.ts`, `@internal`), closing the roadmap
 deferral that named "Phase 5 or 6, whichever first needs a transport reusable across many multi-scenario tests."
@@ -66,7 +66,7 @@ do not.
 | `RECOV-30` | `RETRY-13`, `RETRY-14` | Structural here — one engine, no second stack to drift from |
 | `RECOV-31` | `RETRY-38` | Same rule — `attempt-stamp.ts` |
 | `RECOV-32` | **none** | Net-new — `recovery/idempotency-key.ts`, shipped in 5a |
-| `RECOV-33` | **none** | Net-new — **deferred to Phase 7** with `CFG-*` |
+| `RECOV-33` | **none** | Net-new — **deferred to Phase 7a** with `CFG-*` |
 | `RECOV-34` | partial (`RETRY-11`, `RETRY-41` cover only the attempt index and count clamping) | Settings-object validation is new — `settings.ts` |
 
 Phase 9's conformance sweep should read this table rather than re-deriving it. Effective unique scope for 5a is
@@ -244,9 +244,14 @@ make the total-timeout explicitly opt-in rather than always-on, and `sdk-design/
 explicit `0` also disables the deadline, matching `RETRY-27`/`RECOV-20`.
 
 `RECOV-34` validation at construction, rejecting: negative durations, `multiplier < 1.0`, `maxAttempts < 1`,
-`jitter` outside `[0,1]`. Collection-valued settings (retryable statuses, idempotent methods) are frozen defensive
-copies so later caller mutation cannot alter policy. `RETRY-42`: settings and every policy component are immutable
-and stateless after construction, safe for concurrent invocation.
+`jitter` outside `[0,1]`. The one collection-valued setting — the retryable-status set — is a frozen defensive
+copy so later caller mutation cannot alter policy. `RECOV-34` also names a *retryable-methods* collection: 5a
+ships **no such setting**. `RETRY-6` fixes the idempotent set to `{GET, HEAD, OPTIONS, PUT, DELETE}` and
+`HTTP-9` makes Phase 1's `http/method.ts` its single source, which `isResendable()` imports; there is nothing
+per-instance to copy defensively, and no requirement obliges the set to be *configurable*. Recorded in the
+deviation ledger below. `RETRY-42`: settings and every policy component are immutable and stateless after
+construction, safe for concurrent invocation — including the per-call `maxAttempts` derivation in
+`retry-step.ts`, which re-freezes rather than handing back a bare spread of a frozen source.
 
 ## The Attempt Loop (`engine.ts`)
 
@@ -256,7 +261,7 @@ type RetryDispatch = (request: Request, attempt: number) => Promise<Outcome<Resp
 async function runWithRetry(
   request: Request,
   dispatch: RetryDispatch,
-  config: RetryConfig,   // settings + signal + clock + random
+  config: RetryConfig,   // settings + signal + clock + random + the optional delayOverride (RETRY-39)
 ): Promise<Outcome<Response>>;
 ```
 
@@ -311,14 +316,25 @@ total and the original throwable is what the trail carries regardless.
 
 `RETRY-39`'s precedence is caller delay-override → server pacing headers (response path only) → fixed delay →
 exponential backoff; the exception path skips the header step, having no headers. `RETRY-40`: a throwing user
-delay-override is non-fatal (logged, falls back to the schedule); a throwing should-retry predicate aborts the call
-as a well-typed error. `RETRY-41`: an effective retry count is present-override-wins (validated non-negative), else
-the configured value, with a negative configured value clamped to the default and zero meaning "no retries". The
-present override is per-call: `RequestOptions.maxRetries` (Phase 1, `HTTP-35`), read by the retry step from
-`ctx.options` (the `StepContext` amendment above). When present, the engine's effective budget is
+delay-override is non-fatal — the engine logs it at `verbose` through 7b's `getGlobalLogger()` and falls back to
+the schedule. `RETRY-40`'s second clause (a throwing should-retry predicate aborts the call as a well-typed
+error) is **vacuous here**: 5a exposes no user-supplied should-retry predicate. Retry classification is
+`classify.ts`'s, parameterized only by the configured status set, so there is no caller code on that path to
+throw. Recorded in the deviation ledger.
+
+`RETRY-41`: an effective retry count is present-override-wins, else the configured value, and zero means "no
+retries". The present override is per-call: `RequestOptions.maxRetries` (Phase 1, `HTTP-35`), read by the retry
+step from `ctx.options` (the `StepContext` amendment above). When present, the engine's effective budget is
 `maxRetries + 1` total sends (`RetrySettings.maxAttempts` counts sends, the option counts retries), so
-`maxRetries: 0` yields exactly one attempt — `HTTP-35`'s "disable retries for this call". Non-negativity is
-already enforced by `RequestOptionsBuilder` at construction, so the step revalidates nothing.
+`maxRetries: 0` yields exactly one attempt — `HTTP-35`'s "disable retries for this call".
+
+**`RETRY-41`'s "a negative configured value is clamped to the default" is deliberately not implemented as a
+clamp.** It collides head-on with `HTTP-35` (MUST): `RequestOptionsBuilder` *rejects* a negative max-retries at
+construction, precisely because "a negative retry count would be silently reinterpreted as 'use default'". Both
+are MUSTs and only one can hold. The port takes `HTTP-35`'s line on both surfaces — the per-call option is
+rejected by the Phase 1 builder, and a negative `maxAttempts` trips `retrySettings()`'s `invariant()` — so an
+out-of-range value is always a loud programmer error rather than a silently reinterpreted one. The retry step
+therefore revalidates nothing. Recorded in the deviation ledger.
 
 `RETRY-20`/`RECOV-22`: a present pacing hint **replaces**, never augments, the exponential value for that single
 decision, receives no additional symmetric jitter, and is still clamped against the total-timeout deadline when one
@@ -368,7 +384,8 @@ chain accumulates. Structurally satisfied, needing no re-arm flag or pump, exact
 
 ## Per-Attempt Stamping (`attempt-stamp.ts`, `recovery/idempotency-key.ts`)
 
-`RETRY-38`/`RECOV-31` (`MAY`, shipped): stamp the 1-based attempt ordinal on a **fresh per-attempt copy** of the
+`RETRY-38` (`SHOULD`) / `RECOV-31` (`MAY`), both shipped: stamp the 1-based attempt ordinal on a
+**fresh per-attempt copy** of the
 request, never mutating the captured template, preserving the idempotency key and every other header. Disabled by
 default, in which case the function returns the original request unchanged and allocates nothing.
 
@@ -389,9 +406,22 @@ together despite living in different directories.
 ### Pillar adapter (`retry-step.ts`)
 
 ```typescript
-const RETRY_STEP_TYPE = Symbol('dexpace.retry');
-function retryStep(settings: RetrySettings): StepDescriptor;   // stage: 'RETRY'
+const RETRY_STEP_TYPE: unique symbol = Symbol('dexpace.retry');
+
+interface RetryStepOptions {
+  readonly settings?: Partial<RetrySettings> | undefined;
+  readonly clock?: Clock | undefined;            // defaults to 7a's defaultClock
+  readonly random?: (() => number) | undefined;  // defaults to Math.random
+  readonly delayOverride?: ((attempt: number) => number | undefined) | undefined;
+}
+
+function retryStep(options?: RetryStepOptions): StepDescriptor;   // stage: 'RETRY'
 ```
+
+The factory takes an options object, not a bare `RetrySettings`: the engine's two other injected seams
+(`clock`, `random`) and `RETRY-39`'s caller delay-override have to reach `RetryConfig` somehow, and an options
+object is what the styleguide's three-parameter ceiling and zero-config-call rule ask for. A no-argument
+`retryStep()` is the default-tuned pillar step (`RETRY-12`).
 
 The step asserts `ctx.fork` is present via `invariant()` — `RETRY` is in `PILLAR_STAGES`, so its absence is a
 programmer error, not an operational one — then calls `fork()` **once per attempt**. Each `fork()` yields a fresh
@@ -433,19 +463,34 @@ a breaking change.
 class FakeTransport implements Transport {
   constructor(script: readonly (Response | Error)[]);   // consumed in order; the last entry repeats
   readonly calls: readonly {request: Request; options?: RequestOptions; signal?: AbortSignal}[];
-  closedCount(): number;
+  get sendCount(): number;                              // wire-send counting
   async close(): Promise<void>;
 }
+
+// Response construction is a sibling free function, not a method: close observation belongs to the response,
+// not to the transport that served it, and 5b/5c build responses the transport never sees.
+function countingResponse(
+  status: number,
+  request?: Request,
+): {response: Response; cancelCount: () => number};
 ```
 
-Records every send for wire-send counting, replays a scripted sequence so `503,503,200` is one line of setup, and
-counts body cancellations through the response body's `ReadableStream` `cancel()` hook.
+`FakeTransport` records every send for wire-send counting and replays a scripted sequence, so `503,503,200` is
+one line of setup. `countingResponse` builds the responses and reports how many times each was released.
 
-**That hook is the only sanctioned way to observe close.** `Response` instances are `Object.freeze`d at
+**The body stream is the only sanctioned way to observe release.** `Response` instances are `Object.freeze`d at
 construction (Phase 1, held through 3b), so assigning a spy over `response.close` throws
 `TypeError: Cannot add property close, object is not extensible` under ESM strict mode. 4b's review established
 this; it is a cross-phase invariant, restated here because 5b and 5c will write close-observing tests against the
 same double.
+
+Release reaches the stream by **two** routes, and the counter must see both: a response abandoned unread is
+released by `Response.close()` cancelling the stream (`cancel()` fires), while a response the engine *retires*
+has already been drained to EOF by `toHttpError()`'s bounded buffering (`HTTP-52`), after which there is nothing
+left to cancel and only the source's `pull()` observed it. A helper that counted `cancel()` alone would read
+zero on exactly the `RETRY-35` path it exists to prove. For the same reason the scripted body MUST close: a
+`ReadableStream` that enqueues and never closes leaves the retire path's drain awaiting a chunk that never
+arrives.
 
 ## Testing
 
@@ -483,12 +528,15 @@ time. No test depends on `Math.random` unseeded.
 | `RETRY-23`'s "restore the interruption flag" is not implemented | Reference re-asserts the thread interrupt flag | No thread flag exists; `AbortSignal` is latched and observable by every later reader without re-assertion |
 | `RETRY-45`'s scheduler-shutdown prohibition is not coded | Reference must not shut down a caller-supplied scheduler | No scheduler object exists to own or shut down; the intent survives as `clearTimeout` hygiene on both wait exits |
 | `RETRY-29` not shipped | Reference offers an opt-in server-driven retry override header | `MAY`, no caller identified, and it raises a server-trust question that deserves its own decision. Deferred Items Log |
-| `RECOV-33` not shipped in Phase 5 | Appendix C files it as a recovery-chain primitive | Client-identity header stamping has no retry coupling; it is configuration-driven, so it travels with `CFG-*` in Phase 7 |
+| `RECOV-33` not shipped in Phase 5 | Appendix C files it as a recovery-chain primitive | Client-identity header stamping has no retry coupling; it is configuration-driven, so it travels with `CFG-*` in Phase 7a (which now ships it — see 7a's Task 9) |
+| `RETRY-41`'s negative-value clamp is a rejection instead | Reference clamps a negative configured retry count to the default and logs the clamp | Direct MUST-vs-MUST collision with `HTTP-35`, which rejects a negative max-retries at construction so it cannot be "silently reinterpreted as 'use default'". The port takes `HTTP-35`'s line on both surfaces; zero still means "no retries" and remains accepted. Full reasoning above |
+| No configurable retryable-method set | `RECOV-34` lists retryable methods as a defensively-copied collection setting | `RETRY-6`/`HTTP-9` fix the idempotent set at `{GET, HEAD, OPTIONS, PUT, DELETE}` and make Phase 1's `http/method.ts` its single source. Nothing per-instance exists to copy, and no requirement obliges configurability |
+| `RETRY-40`'s throwing-predicate clause is unreachable | Reference aborts the call when a user-supplied should-retry predicate throws | 5a exposes no user should-retry predicate; classification is `classify.ts`'s, parameterized only by the configured status set. The delay-override half of `RETRY-40` *is* implemented (log and fall back) |
 
 ## Deferred Items (add to the roadmap's Deferred Items Log)
 
 | Item | Deferred from | Target | Reason |
 |---|---|---|---|
 | `RETRY-29` — opt-in server-driven retry classification override | Phase 5a brainstorm | Not scheduled | `MAY`. Widens the classifier's input surface to server-controlled values; wants an explicit trust decision, not a default |
-| `RECOV-33` — client-identity header step | Phase 5a brainstorm | Phase 7 | Configuration-driven header composition (Append/Replace modes, blank-line suppression) with no retry coupling; belongs with `CFG-*` |
+| `RECOV-33` — client-identity header step | Phase 5a brainstorm | Phase 7a | Configuration-driven header composition (Append/Replace modes, blank-line suppression) with no retry coupling; belongs with `CFG-*` |
 | Standard-resilience preset (`PIPE-24`, `PIPE-39`) and `PIPE-35`'s `seedFrom` | Phase 4c, re-confirmed here | Phase 5c | A preset needs all three pillar steps installed; only after auth ships do all three exist |

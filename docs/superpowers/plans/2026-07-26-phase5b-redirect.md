@@ -8,14 +8,18 @@ loop/hop-cap guarding, and the pillar adapter plus its bundled marker-stripping 
 `docs/product-spec/10-redirect-handling.md` (`REDIR-1`–`REDIR-*`), per
 `docs/superpowers/specs/2026-07-26-phase5b-redirect-design.md`, and closing the roadmap's `PIPE-40` deferred item.
 
-> **Amended 2026-07-28 (Phase 7b retrofit):** Task 6's `redirect-step.ts` gains two `SHOULD`-level structured
-> log events via `getGlobalLogger()` (a hop event, and a rejection event distinguishing `SchemeDowngradeError`
-> from other `'fail'` causes) — narrow blast radius, only this file's own emission points. **Partial closure
-> only:** `decide()`'s `Decision` type has no reason discriminant on `'return-current'`, so a genuine
-> "loop-detected" vs. "hop-cap-exceeded" vs. "normal termination" distinction is NOT covered here — reshaping
-> `Decision` for that is out of scope for this retrofit (a `SHOULD`, not a `MUST`, and 5b's `decide.test.ts`
-> asserts the current shape throughout). This plan's execution now depends on Phase 7b's
-> `observability/logger.ts` existing first for Task 6 specifically; every other task is unaffected. See
+> **Amended 2026-07-28 (Phase 7b retrofit):** Task 6's `redirect-step.ts` gains three `SHOULD`-level structured
+> log events via `getGlobalLogger()` — a hop event, a rejection event distinguishing `SchemeDowngradeError`
+> from other `'fail'` causes, and a downgrade event on an *opted-in* HTTPS→HTTP hop (7b's amendment names all
+> three) — narrow blast radius, only this file's own emission points. Every URL field goes through
+> `redactUrl()`, and every emission site is wrapped in `emitQuietly()`, per `REDIR-28`/`XCUT-19` and
+> `OBS-20`/`XCUT-20` respectively. **Partial closure only:** `decide()`'s `Decision` type has no reason
+> discriminant on `'return-current'`, so a genuine "loop-detected" vs. "hop-cap-exceeded" vs. "normal
+> termination" distinction is NOT covered here — reshaping `Decision` for that is out of scope for this
+> retrofit (a `SHOULD`, not a `MUST`, and 5b's `decide.test.ts` asserts the current shape throughout); the
+> malformed-Location event of `REDIR-28` is deferred with it, for the same reason. This plan's execution now
+> depends on Phase 7b's `observability/logger.ts` and `observability/redaction.ts` existing first for Task 6
+> specifically; every other task is unaffected. See
 > `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s "Amendments to 5a and 5b" section.
 
 **Architecture:** A new `packages/core/src/redirect/` folder of seven files. `decide.ts` is a pure function — no
@@ -35,26 +39,48 @@ all, so this phase ships one adapter, not two.
 **Prerequisite:** This plan assumes Phases 0–4c and 5a are implemented exactly as their plans specify. Concretely:
 
 - `packages/core/src/http/method.js` — `type Method`, `isIdempotent(method)`
-- `packages/core/src/http/headers.js` — `Headers` (`get(name)`, `has(name)`, `names(): readonly string[]`,
-  `newBuilder()`), `HeadersBuilder.set(name, value: string | null)` (a `null` value removes the header; a
-  non-null value REPLACES any existing entry — the same call already implements "clear inbound copy, then set"),
-  and `HeadersBuilder.setInbound(name, value)` — the **lenient** sibling (`HTTP-19`) that permits obs-text bytes
-  `>= 0x80` while still rejecting control characters. **Response fixtures in tests MUST be built with
-  `setInbound`**, not `set`: `set` is the outbound-strict path and rejects any non-ASCII byte, so a fuzzed
-  `Location`/`WWW-Authenticate` value would throw inside the fixture rather than reaching the code under test
+- `packages/core/src/http/headers.js` — `Headers` (static `newBuilder()`; instance `get(name): string | undefined`,
+  `getAll(name): readonly string[]`, `has(name)`, `names(): readonly string[]`, `newBuilder()`),
+  `HeadersBuilder.add(name, value)` (`HTTP-14`, appends), `HeadersBuilder.set(name, value: string | null)` (a
+  `null` value removes the header; a non-null value REPLACES any existing entry — the same call already
+  implements "clear inbound copy, then set"), and `HeadersBuilder.setInbound(name, value)` — the **lenient**
+  sibling (`HTTP-19`) that permits obs-text bytes `>= 0x80` while still rejecting control characters.
+  **Response fixtures in tests MUST be built with `setInbound`**, not `set`: `set` is the outbound-strict path
+  and rejects any non-ASCII byte, so a fuzzed `Location`/`WWW-Authenticate` value would throw inside the
+  fixture rather than reaching the code under test
 - `packages/core/src/http/request.js` — `Request` (`method`, `url: URL` — **a fresh `URL` instance every call**,
   never the same object twice, so callers should read it once into a local — `headers`, `body: Body | undefined`,
-  `newBuilder()`), `RequestBuilder` (`.method()`, `.url()`, `.headers()`, `.body(body: Body | undefined)`, `.build()`)
-- `packages/core/src/http/response.js` — `Response` (`status: Status`, `headers`, `close(): Promise<void>`,
-  idempotent; **frozen** — never assign a spy onto it)
+  `newBuilder()`), `RequestBuilder` (`.method()`, `.url(url: string | URL)` — **confirm the `URL` overload
+  exists**; `buildFollowRequest` (Task 5) passes a `URL` object where the tests pass strings, so if the builder
+  is string-only, pass `target.href` there — `.headers()`, `.body(body: Body | undefined)`, `.build()`)
+- `packages/core/src/http/response.js` — `Response` (static `newBuilder()`; instance `status: Status`, `headers`,
+  `newBuilder()` (`HTTP-3`), `close(): Promise<void>`, idempotent; **frozen** — never assign a spy onto it),
+  `ResponseBuilder` (`.request()`, `.protocol()`, `.status()`, `.headers()`, `.body(body: Body | null)`, `.build()`)
 - `packages/core/src/http/status.js` — `Status.of(code)`, `status.code`
+- `packages/core/src/http/protocol.js` — `Protocol.HTTP_1_1` (test fixtures only)
 - `packages/core/src/http/errors.js` — `DexpaceError`
 - `packages/core/src/body/body.js` — `Body` (`replayable: boolean`)
+- `packages/core/src/body/simple-bodies.js` — `stringBody(text)` (replayable) and
+  `packages/core/src/body/stream-body.js` — `streamBody(stream, mediaType, length)` (single-use). Test fixtures
+  only; **confirm both module paths and factory names against 3b's plan before writing Task 5's test** — they
+  are the only 3b symbols this phase touches and neither is exercised elsewhere in 5a
 - `packages/core/src/invariant.js` — `invariant()`
 - `packages/core/src/pipeline/step.js` — `Step`, `StepContext` (`next`, `fork?: () => Next`, `context`,
   `signal?: AbortSignal | undefined`, `options?: RequestOptions | undefined` — the last two are 5a's Task 1
-  amendment; this phase reads only `signal`), `StepDescriptor`
-- `packages/core/src/pipeline/builder.js` — `class PipelineBuilder` with `append(descriptor): this`, `build(): Runtime`
+  amendment; this phase reads only `signal`), `StepDescriptor`, and the `Stage` union. **Task 7 hard-depends on
+  `'POST_AUTH'` being a member of that union** (4c's inert post-pillar extension slot, per `PIPE-3`). Confirm
+  the exact spelling in `packages/core/src/pipeline/stage.ts` before Task 7; if 4c named it differently, use
+  4c's name — the requirement is only that the slot sits *inside* `AUTH` and *outside* `SEND`
+- `packages/core/src/pipeline/cursor.js` — `class Cursor` with the `{steps, transport, request, context, signal?}`
+  constructor bag and `advance(): Promise<Response>` (Tasks 6/7 tests drive steps through it directly, as 5a's
+  `retry-step.test.ts` does). Match 5a's call shape rather than the one sketched here if the two disagree
+- `packages/core/src/pipeline/builder.js` — `class PipelineBuilder` with `append(descriptor): this`,
+  `build(): Runtime`, and `Runtime.steps` — the read-only ordered step view `PIPE-25` requires, which Task 7's
+  `withRedirect` test reads
+- `packages/core/src/observability/logger.js` (Phase 7b) — `getGlobalLogger()`, `type Logger`, `type LogLevel`
+  (`'error' | 'warning' | 'info' | 'verbose'`) — Task 6 only
+- `packages/core/src/observability/redaction.js` (Phase 7b) — `redactUrl(url: URL | string): string`, total
+  (never throws, `[malformed url]` sentinel on failure) — Task 6 only
 - `packages/core/src/testing/fake-transport.js` — `class FakeTransport implements Transport`, `countingResponse(status, request?): {response, cancelCount}`, `.sendCount`, `.calls` (5a's `@internal` test double, reused unchanged)
 
 **One assumption to confirm before Task 6.** Every close assertion below observes `countingResponse()`'s
@@ -105,6 +131,13 @@ change; each is called out again at its task below:
 3. An internal helper in `decide.ts`, `buildFollowRequest(current, target, status, crossOrigin)` in the design
    doc's implied shape, is written here as `buildFollowRequest(current, plan)` with `plan: FollowPlan =
    {target, status, crossOrigin}`.
+4. `redirectStep(settings: RedirectSettings)` and `withRedirect(builder, settings: RedirectSettings)` in the
+   design doc become `redirectStep(overrides?: Partial<RedirectSettings>)` and `withRedirect(builder,
+   overrides?: Partial<RedirectSettings>)`, each calling `redirectSettings(overrides)` internally. This is not
+   cosmetic: `docs/knowledge/api-design.md`'s rule that "the whole options object and every field within it
+   must be optional and `readonly`, so a zero-config call works and a caller can override one field without
+   restating the rest" makes the design doc's all-required form non-conformant. `redirectStep()` with no
+   argument must yield the spec defaults.
 
 Also, `RedirectCondition` and `RedirectPredicate` are defined in `settings.ts` (Task 4) rather than `decide.ts`
 (Task 5) as the design doc's prose groups them — purely so `settings.ts`'s `RedirectSettings.predicate` field can
@@ -663,6 +696,11 @@ export const DEFAULT_REDIRECT_SETTINGS: RedirectSettings = Object.freeze({
  *
  * `maxHops: 0` needs no special branch here or anywhere downstream: decide.ts's hop-cap gate applies
  * uniformly to every value, and a 0-hop budget simply fails it on the first follow attempt.
+ *
+ * `Object.freeze` is SHALLOW (`docs/knowledge/data-modeling.md`), and it does not disarm `Set.prototype.add`
+ * at all -- so the `allowedMethods` guarantee `REDIR-26` actually asks for is the defensive COPY below
+ * (mutating the caller's collection afterwards cannot change policy), not a frozen set. The `ReadonlySet`
+ * type is what keeps SDK-internal code from writing to it. Do not try to "fix" this with a frozen `Set`.
  */
 export function redirectSettings(overrides?: Partial<RedirectSettings>): RedirectSettings {
   const merged = {...DEFAULT_REDIRECT_SETTINGS, ...overrides};
@@ -1291,9 +1329,10 @@ git commit -m "feat(core): the pure per-hop redirect decision (REDIR-1..24)"
 // (the 2-hop conformance clause: wire-send count, per-hop close, final response left open), the cancellation
 // placement -- a signal aborted mid-chain returns the CURRENT (undispatched-onward) response open rather
 // than closing it and re-driving.
-import {describe, expect, test} from 'bun:test';
+import {afterEach, describe, expect, test} from 'bun:test';
 import {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
+import {getGlobalLogger, setGlobalLogger, type Logger} from '../observability/logger.js';
 import {Cursor} from '../pipeline/cursor.js';
 import type {StepDescriptor} from '../pipeline/step.js';
 import {aRequestContext} from '../pipeline/cursor.test-helpers.js';
@@ -1373,8 +1412,77 @@ describe('redirectStep', () => {
     expect(response).toBe(located); // returned open -- the caller owns it
     expect(hop.cancelCount()).toBe(0);
   });
+
+  test('a throwing predicate closes the current response before the error propagates (REDIR-22b)', async () => {
+    const hop = countingResponse(301);
+    const located = withLocation(hop.response, 'https://example.com/next');
+    const transport = new FakeTransport([located]);
+    const boom = new Error('predicate exploded');
+    const step = redirectStep({
+      predicate: () => {
+        throw boom;
+      },
+    });
+
+    await expect(runThrough(step, transport)).rejects.toBe(boom);
+
+    expect(hop.cancelCount()).toBe(1); // decideOrClose closed it -- the hop's body is not leaked
+  });
 });
 ```
+
+The observability retrofit's own two properties get their own block. Field *names* are deliberately not
+asserted here — 7b's design fixes no vocabulary for the `SHOULD`-level retry/redirect events, so pinning
+strings would just couple two plans together. What is asserted is what can silently break the request path:
+containment (`OBS-20`/`XCUT-20`) and the fact that an opted-in downgrade emits at all (`REDIR-15`).
+
+```typescript
+describe("redirectStep's observability retrofit", () => {
+  const original = getGlobalLogger();
+  afterEach(() => setGlobalLogger(original)); // never leave the process-global logger swapped
+
+  test('a throwing logger cannot break the redirect (OBS-20/XCUT-20)', async () => {
+    setGlobalLogger({
+      atLevel: () => {
+        throw new Error('logger exploded');
+      },
+      withContext: () => getGlobalLogger(),
+    } as unknown as Logger);
+    const hop = countingResponse(301);
+    const final = countingResponse(200);
+    const transport = new FakeTransport([withLocation(hop.response, 'https://example.com/next'), final.response]);
+
+    const response = await runThrough(redirectStep(), transport);
+
+    expect(response).toBe(final.response); // the redirect completed normally despite every emission failing
+    expect(hop.cancelCount()).toBe(1);
+  });
+
+  test('an opted-in HTTPS->HTTP downgrade is surfaced at warning level (REDIR-15)', async () => {
+    const levels: string[] = [];
+    setGlobalLogger({
+      atLevel: (level: string) => {
+        levels.push(level);
+        return {field: () => event, event: () => event, cause: () => event, emit: () => undefined};
+      },
+      withContext: () => getGlobalLogger(),
+    } as unknown as Logger);
+    const event: unknown = undefined; // self-referential stub; see note below
+    const hop = countingResponse(301);
+    const final = countingResponse(200);
+    const transport = new FakeTransport([withLocation(hop.response, 'http://example.com/next'), final.response]);
+
+    await runThrough(redirectStep({allowSchemeDowngrade: true}), transport);
+
+    expect(levels).toContain('warning'); // the downgrade event; the hop event is 'verbose'
+  });
+});
+```
+
+The `event` stub above is written as a self-returning chainable in the real file (declare it as a `const`
+object literal whose `field`/`event`/`cause` return `event` and whose `emit` returns `undefined`, then close
+over it) — the sketch's ordering is illustrative, not literal. If 7b ships a reusable fake logger in
+`observability/`, prefer that over hand-rolling this stub.
 
 `aRequestContext()` is 4c's existing cursor-test helper (already reused by 5a's `retry-step.test.ts`). If it is
 not a shared file, construct a `RequestContext` inline instead — do not create a cross-`*.test.ts` import.
@@ -1388,19 +1496,58 @@ Expected: FAIL — `Cannot find module './redirect-step.js'`.
 
 ```typescript
 // packages/core/src/redirect/redirect-step.ts
-// Amended 2026-07-28 (Phase 7b retrofit): getGlobalLogger() call sites below, narrow blast radius (only this
-// file's own emission points; no other phase depends on them). See
+// Amended 2026-07-28 (Phase 7b retrofit): three getGlobalLogger() call sites below, every URL field through
+// redactUrl() and every emission through emitQuietly(). Narrow blast radius -- only this file's own emission
+// points; no other phase depends on them. See
 // docs/superpowers/specs/2026-07-28-phase7b-observability-design.md's "Amendments to 5a and 5b" section.
-import {getGlobalLogger} from '../observability/logger.js';
+import {getGlobalLogger, type Logger} from '../observability/logger.js';
+import {redactUrl} from '../observability/redaction.js';
 import {invariant} from '../invariant.js';
 import type {Request} from '../http/request.js';
+import type {Response} from '../http/response.js';
 import type {StepDescriptor} from '../pipeline/step.js';
 import {originOf} from './cross-origin.js';
-import {decide, type RedirectContext} from './decide.js';
+import {decide, type Decision, type RedirectContext} from './decide.js';
 import {redirectSettings, type RedirectSettings} from './settings.js';
 
 /** Stable identity for pillar-slot occupancy and anchor matching (PIPE-6/PIPE-18). */
 export const REDIRECT_STEP_TYPE: unique symbol = Symbol('dexpace.redirect');
+
+/**
+ * OBS-20/XCUT-20: observability MUST NOT throw into the request path. Every emission site in this file routes
+ * through here, matching the containment discipline 7b's design states for `logging-step.ts` "and the two
+ * amended retry/redirect logging call sites" -- a failed emission re-surfaces as a best-effort
+ * `http.instrumentation.*` event, with a second-level swallow if that also throws.
+ */
+function emitQuietly(emit: (logger: Logger) => void): void {
+  try {
+    emit(getGlobalLogger());
+  } catch {
+    try {
+      getGlobalLogger().atLevel('verbose').event('http.instrumentation.error').field('source', 'redirect').emit();
+    } catch {
+      // Second-level swallow: an instrumentation failure must never replace the redirect's own outcome.
+    }
+  }
+}
+
+/**
+ * REDIR-22(b): if deciding or building the follow-up throws, the current response MUST be closed before the
+ * error propagates. `decide()` is pure except that it invokes `settings.predicate`, which is caller code and
+ * may throw; without this guard that hop's body leaks.
+ */
+async function decideOrClose(
+  response: Response,
+  context: RedirectContext,
+  settings: RedirectSettings,
+): Promise<Decision> {
+  try {
+    return decide(response, context, settings);
+  } catch (error) {
+    await response.close();
+    throw error;
+  }
+}
 
 /**
  * The REDIRECT pillar step (PIPE-36: stage baked into the returned descriptor, not subclassable).
@@ -1410,7 +1557,8 @@ export const REDIRECT_STEP_TYPE: unique symbol = Symbol('dexpace.redirect');
  * guard would trip on the second hop (PIPE-15).
  *
  * Response lifecycle: a discarded intermediate response is closed before the next hop's dispatch; the final
- * response -- whichever hop `decide()` settles on -- is returned OPEN, the caller's to close. The cancellation
+ * response -- whichever hop `decide()` settles on -- is returned OPEN, the caller's to close. A throw out of
+ * the decision itself closes the current response first (`decideOrClose`, REDIR-22(b)). The cancellation
  * check sits in the `follow` branch, evaluated BEFORE closing that hop's response and re-driving: this is the
  * only placement under which "return the current response, open" is meaningful, since `return-current` and
  * `fail` already have their own disposition by the time this check would run.
@@ -1431,7 +1579,7 @@ export function redirectStep(overrides?: Partial<RedirectSettings>): StepDescrip
       for (;;) {
         const response = await fork()(request);
         const context: RedirectContext = {currentRequest: request, seedOrigin, visited, redirectsFollowed};
-        const decision = decide(response, context, settings);
+        const decision = await decideOrClose(response, context, settings);
 
         if (decision.kind === 'return-current') return response;
         if (decision.kind === 'fail') {
@@ -1440,25 +1588,42 @@ export function redirectStep(overrides?: Partial<RedirectSettings>): StepDescrip
           // termination" distinction for 'return-current' above -- decide()'s Decision type carries no reason
           // discriminant for that case, and reshaping it (Task 5) to add one is out of scope for this narrow
           // retrofit. Left as an explicit, documented gap -- see this plan's amendment banner.
-          getGlobalLogger().atLevel('verbose')
-            .event('redirect.rejected')
-            .field('reason', decision.error.constructor.name)
-            .emit();
           await response.close();
+          emitQuietly((logger) =>
+            logger.atLevel('verbose').event('redirect.rejected').field('reason', decision.error.name).emit(),
+          );
           throw decision.error;
         }
         if (signal?.aborted === true) return response;
 
-        // Phase 7b retrofit: a SHOULD-level hop event, fired once per redirect followed.
-        getGlobalLogger().atLevel('verbose')
-          .event('redirect.hop')
-          .field('from', request.url.href)
-          .field('to', decision.nextRequest.url.href)
-          .field('crossOrigin', decision.crossOrigin)
-          .emit();
+        // `Request.url` hands back a FRESH `URL` every access (see Prerequisites) -- read each once.
+        const fromUrl = request.url;
+        const toUrl = decision.nextRequest.url;
+
+        // REDIR-15: an opted-in HTTPS->HTTP downgrade MUST be surfaced observably -- the `allowSchemeDowngrade`
+        // flag is the opt-in, not the surfacing. Derived here by comparing the two hops' schemes rather than
+        // returned by `decide()`, so the `follow` variant keeps the shape decide.test.ts asserts throughout.
+        // This is 7b's third amended 5b event ("a downgrade event ... if the settings permit it at all").
+        if (fromUrl.protocol === 'https:' && toUrl.protocol === 'http:') {
+          emitQuietly((logger) =>
+            logger.atLevel('warning').event('redirect.downgrade')
+              .field('from', redactUrl(fromUrl)).field('to', redactUrl(toUrl)).emit(),
+          );
+        }
+
+        // Phase 7b retrofit: a SHOULD-level hop event, fired once per redirect followed. URLs go through
+        // `redactUrl` (REDIR-28, XCUT-19): a raw `href` would put userinfo and query-string secrets straight
+        // into the log line. Same function 7b's `loggingStep` uses for `url.full` -- one policy, no drift.
+        emitQuietly((logger) =>
+          logger.atLevel('verbose').event('redirect.hop')
+            .field('from', redactUrl(fromUrl))
+            .field('to', redactUrl(toUrl))
+            .field('crossOrigin', decision.crossOrigin)
+            .emit(),
+        );
 
         await response.close();
-        visited.add(decision.nextRequest.url.href);
+        visited.add(toUrl.href);
         redirectsFollowed += 1;
         request = decision.nextRequest;
       }
@@ -1470,12 +1635,13 @@ export function redirectStep(overrides?: Partial<RedirectSettings>): StepDescrip
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/redirect/redirect-step.test.ts`
-Expected: PASS — 5 tests.
+Expected: PASS — 8 tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
 Run: `bun run lint`
-Expected: PASS. The `fn` closure is one `for` loop, well under 70 lines and depth 3.
+Expected: PASS. The `fn` closure is one `for` loop at ~45 lines (comments excluded) and depth 2 —
+`emitQuietly` and `decideOrClose` are hoisted out of it precisely so it stays under the caps.
 
 - [ ] **Step 6: Commit**
 
@@ -1678,13 +1844,15 @@ Sections and their sources:
    body-replayability gate ✅ Task 5; predicate override, scoped per the Deviation Ledger, with a defensively
    copied condition snapshot ✅ Task 5.
 4. **The pillar adapter** — `PIPE-15`/`PIPE-36` ✅ Task 6; response lifecycle (close-intermediate,
-   return-final-open) ✅ Task 6; cancellation ✅ Task 6.
+   return-final-open, **close-on-throw-out-of-`decide()`** per `REDIR-22`(b)) ✅ Task 6; cancellation ✅ Task 6.
 5. **`PIPE-40`** — ✅ **Resolved in Task 6** (2-hop `FakeTransport` conformance test).
-6. **Deferred out of Phase 5b** — `AUTH-29`'s marker-*consumption* side → 5c; redirect structured logging
-   (`SHOULD`) → **partially resolved 2026-07-28, Phase 7b retrofit** (hop + rejection events, Task 6; the
-   loop-vs-hop-cap-vs-normal-termination distinction remains open, needing a `decide()` reshape out of this
-   retrofit's scope); the predicate-scope judgment call (see Deviation Ledger) → re-confirm at Phase 9's
-   conformance sweep.
+6. **Observability (`REDIR-15`/`REDIR-28`, `XCUT-19`/`XCUT-20`)** — permitted-downgrade event surfaced
+   observably ✅ Task 6; hop and rejection events ✅ Task 6; all URL fields through `redactUrl()` ✅ Task 6; all
+   emissions contained so observability cannot throw into the request path ✅ Task 6.
+7. **Deferred out of Phase 5b** — `AUTH-29`'s marker-*consumption* side → 5c; the loop-detected and
+   malformed-Location log events (`REDIR-18`/`REDIR-28`) → open, both blocked on a reason discriminant
+   `decide()`'s `'return-current'` variant does not carry, a reshape out of the 7b retrofit's scope; the
+   predicate-scope judgment call (see Deviation Ledger) → re-confirm at Phase 9's conformance sweep.
 
 State explicitly at the top whether the plan has been executed, matching the Phase 5a checklist's convention.
 

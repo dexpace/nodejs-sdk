@@ -41,7 +41,11 @@ Concretely, in addition to 5a's prerequisite list (`Method`, `Request`, `Headers
 `invariant`/`assertNever`, `FakeTransport`/`countingResponse`):
 
 - `packages/core/src/pipeline/builder.ts` — `class PipelineBuilder` (`constructor(transport)`, `append(descriptor):
-  this`, `build(): Runtime`)
+  this`, **`appendAll(descriptors: readonly StepDescriptor[]): this`** — 4c Task 5, `PIPE-38`; Task 15's
+  `seedFrom('flatten')` consumes it — and `build(): Runtime`)
+- `packages/core/src/pipeline/errors.ts` — `PillarCollisionError` (4c Task 2; Task 15's test asserts on it)
+- `packages/core/src/invariant.ts` — `invariant` **and `assertNever`** (the latter added in 4b Task 1 for
+  `Outcome<T>`'s `fold()`; Task 14 uses it to close its `AuthScheme` switches)
 - `packages/core/src/pipeline/runtime.ts` — `class Runtime implements Transport` (`get steps(): readonly
   StepDescriptor[]`, `send()`, `close()`)
 - `packages/core/src/retry/retry-step.ts` — `retryStep(options?: RetryStepOptions): StepDescriptor` (5a)
@@ -69,11 +73,25 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
 ## Global Constraints
 
 - **`packages/core/src/index.ts` gains new exports THIS phase — the one exception to every prior phase's "not
-  yet."** `Stage`, `STAGE_ORDER`, `PILLAR_STAGES`, `StepDescriptor`, `StepContext`, `Next`, `PipelineBuilder`,
-  `Runtime`, `retryStep`, `redirectStep`, `authStep`, `standardResilience` are promoted (Task 16). Everything
-  else in `src/auth/` — credential types, the challenge parser, the handlers, the bearer cache — stays
-  `@internal`. The mechanical check is `packages/core/etc/core.api.md`'s diff, reviewed by hand at Task 16
-  (not required to be empty this phase, unlike every prior one).
+  yet."** Two groups are promoted (Task 16):
+  1. **The pillar-authoring surface:** `Stage`, `STAGE_ORDER`, `PILLAR_STAGES`, `StepDescriptor`, `StepContext`,
+     `Next`, `PipelineBuilder`, `Runtime`, `retryStep`, `redirectStep`, `authStep`, `standardResilience`.
+  2. **Everything those functions' signatures name**, because a promoted function whose parameter type is
+     `@internal` is an API a caller cannot call. `authStep(settings: AuthStepSettings)` and
+     `standardResilience(transport, options: StandardResilienceOptions)` transitively require
+     `AuthStepSettings`, `StandardResilienceOptions`, `AuthCredentialSet` (+ `BasicCredential`,
+     `DigestCredential`, `BearerCredential`, `ApiKeyCredentialConfig`), `ChallengeHook`, `AuthTiers`,
+     `AuthDescriptor`, `AuthRequirement`, `AuthScheme`, `DigestAlgorithm`, `BearerToken`, `TokenProvider`,
+     `ApiKeyCredential`, `NameKeyCredential`, `RetryStepOptions`, `RedirectSettings`, `LoggingStepSettings`,
+     plus the factories `createAuthDescriptor`, `createAuthRequirement`, `createBearerToken` and the three
+     error leaves. **`ApiKeyCredential`/`NameKeyCredential` carry `#key` private fields, which makes them
+     NOMINAL** — no object literal is assignable, so without the exported constructors the `API_KEY` scheme is
+     unreachable from outside the package entirely. `AuthDescriptor` likewise must come from
+     `createAuthDescriptor` (`AUTH-3` validates and freezes there); hand-forging the interface bypasses it.
+  Everything else in `src/auth/` — the challenge parser, `md5.ts`, the Basic/Digest/composing handlers, the
+  bearer cache — stays `@internal`. The mechanical check is `packages/core/etc/core.api.md`'s diff, reviewed by
+  hand at Task 16 (not required to be empty this phase, unlike every prior one); `api-extractor` reporting an
+  `ae-forgotten-export` for any symbol reachable from the entry point means group 2 is still incomplete.
 - **No `node:` imports anywhere in `packages/core`.** SHA-256 and the client nonce use `globalThis.crypto`;
   Basic stamping uses `globalThis.btoa`. `verify:seam-1` enforces this.
 - **No new error leaf for construction-time caller misconfiguration.** `AUTH-3`'s empty-`AuthDescriptor`
@@ -190,6 +208,12 @@ describe('AuthResolutionError', () => {
     expect(error.message).toContain('DIGEST');
     expect(error.message).toContain('API_KEY');
   });
+
+  test('unsatisfiable() also carries them as indexable fields, not only as prose (AUTH-6)', () => {
+    const error = AuthResolutionError.unsatisfiable(['BASIC', 'DIGEST'], ['API_KEY']);
+    expect(error.requiredSchemes).toEqual(['BASIC', 'DIGEST']); // preference order preserved
+    expect(error.availableSchemes).toEqual(['API_KEY']);
+  });
 });
 
 describe('PlaintextCredentialError', () => {
@@ -197,6 +221,12 @@ describe('PlaintextCredentialError', () => {
     const error = new PlaintextCredentialError('authStep', 'BASIC');
     expect(error.message).toContain('authStep');
     expect(error.message).toContain('BASIC');
+  });
+
+  test('carries them as fields too (error-handling.md:44)', () => {
+    const error = new PlaintextCredentialError('authStep', 'BASIC');
+    expect(error.stepName).toBe('authStep');
+    expect(error.scheme).toBe('BASIC');
   });
 });
 
@@ -225,23 +255,45 @@ Expected: FAIL — `Cannot find module './errors.js'`.
 // packages/core/src/auth/errors.ts
 import {DexpaceError} from '../http/errors.js';
 
-/** AUTH-4 (unsatisfiable resolved tier) and AUTH-35 (null/pre-expired TokenProvider result). */
+/**
+ * AUTH-4 (unsatisfiable resolved tier) and AUTH-35 (null/pre-expired TokenProvider result).
+ *
+ * The scheme lists are `readonly` FIELDS, not only interpolated prose. AUTH-6 requires the error to "carry
+ * both the required schemes in preference order and the available schemes", and
+ * `docs/knowledge/error-handling.md:44` is explicit that "structured identifying fields belong on the error
+ * object itself, not only embedded in the message string, so a log aggregator can index them without parsing
+ * prose" (`:6`: they must "survive serialization and appear in structured logs"). They are absent on the
+ * AUTH-35 construction path, which carries no scheme lists.
+ */
 export class AuthResolutionError extends DexpaceError {
-  constructor(message: string) {
+  readonly requiredSchemes: readonly string[] | undefined;
+  readonly availableSchemes: readonly string[] | undefined;
+
+  constructor(message: string, requiredSchemes?: readonly string[], availableSchemes?: readonly string[]) {
     super(message);
+    this.requiredSchemes = requiredSchemes;
+    this.availableSchemes = availableSchemes;
   }
 
   static unsatisfiable(requiredSchemes: readonly string[], availableSchemes: readonly string[]): AuthResolutionError {
     return new AuthResolutionError(
       `no requirement is satisfiable; required one of [${requiredSchemes.join(', ')}], available: [${availableSchemes.join(', ')}]`,
+      [...requiredSchemes],
+      [...availableSchemes],
     );
   }
 }
 
-/** AUTH-28: a credential would be sent over a non-HTTPS URL. */
+/** AUTH-28: a credential would be sent over a non-HTTPS URL. Step name and scheme are fields as well as
+ *  message text, for the same error-handling.md:6/:44 reason as AuthResolutionError above. */
 export class PlaintextCredentialError extends DexpaceError {
+  readonly stepName: string;
+  readonly scheme: string;
+
   constructor(stepName: string, scheme: string) {
     super(`${stepName} refuses to send a ${scheme} credential over a non-HTTPS URL`);
+    this.stepName = stepName;
+    this.scheme = scheme;
   }
 }
 
@@ -261,7 +313,7 @@ export class DigestChallengeUnsupportedError extends DexpaceError {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/errors.test.ts`
-Expected: PASS — 5 tests.
+Expected: PASS — 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -321,7 +373,11 @@ Expected: FAIL — `Cannot find module './scheme.js'`.
  */
 export type AuthScheme = 'OAUTH2' | 'API_KEY' | 'BASIC' | 'DIGEST' | 'NO_AUTH';
 
-export const AUTH_SCHEMES: readonly AuthScheme[] = ['OAUTH2', 'API_KEY', 'BASIC', 'DIGEST', 'NO_AUTH'];
+// `as const` is what earns the CONSTANT_CASE: docs/knowledge/naming-conventions.md:14 reserves that casing for
+// values that are "deeply immutable", testing each by asking whether a field could change after construction.
+// A bare `readonly AuthScheme[]` annotation is a compile-time claim only -- the array is still mutable at
+// runtime through a cast -- so it would have to stay lowerCamelCase.
+export const AUTH_SCHEMES = ['OAUTH2', 'API_KEY', 'BASIC', 'DIGEST', 'NO_AUTH'] as const satisfies readonly AuthScheme[];
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -434,6 +490,15 @@ export function createAuthRequirement(
   scopes: readonly string[] = [],
   params: ReadonlyMap<string, string> = new Map(),
 ): AuthRequirement {
+  // `Object.freeze` is SHALLOW (docs/knowledge/data-modeling.md:42: a frozen value object "must hold only
+  // primitives or already-frozen/ReadonlyArray values, never a mutable object that would remain writable
+  // after freezing"). A `new Map(params)` satisfies AUTH-2's literal clause -- caller-side mutation after
+  // construction cannot reach the stored value -- but leaves the map itself writable behind the
+  // `ReadonlyMap` type, so the freeze would advertise an immutability the params half does not have.
+  // Freezing the entry tuples and rebuilding the Map from them on read is not worth it for a value this
+  // small and this rarely read; instead the copy is made once here and NO code in this package ever
+  // re-casts `AuthRequirement['params']` back to `Map` (AUTH-2 also forbids resolution inspecting params at
+  // all), which is what makes the ReadonlyMap type honest in practice.
   return Object.freeze({scheme, scopes: Object.freeze([...scopes]), params: new Map(params)});
 }
 
@@ -707,7 +772,7 @@ export function resolveAuthRequirement(tiers: AuthTiers, availableSchemes: Reado
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/resolve.test.ts`
-Expected: PASS — 9 tests.
+Expected: PASS — 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -861,6 +926,14 @@ const INSPECT: unique symbol = Symbol.for('nodejs.util.inspect.custom');
 /**
  * AUTH-8: needs REFERENCE equality ("two instances with identical fields are NOT equal") -- a class with a
  * private field and no `equals` override, so `===` already gives the required semantics for free.
+ *
+ * `#key`, not `private key`, is the one deliberate exception to `docs/knowledge/data-modeling.md:20`'s
+ * `private`-by-default rule, and `:22` requires this justification be written down: AUTH-8's redaction is a
+ * RUNTIME-privacy requirement, not a compile-time one. `private` is erased, leaving the secret reachable via
+ * `credential['key']`, `Object.keys`, `JSON.stringify`, and a default `util.inspect` -- exactly the accidental
+ * leak paths the redacted `toString`/inspect exist to close. `#key` is genuinely unreachable, and the
+ * nominality it induces is load-bearing besides: it is what stops a caller substituting an object literal for
+ * a validated credential.
  */
 export class ApiKeyCredential {
   readonly #key: string;
@@ -883,6 +956,8 @@ export class ApiKeyCredential {
   }
 }
 
+/** `#key` for the same runtime-privacy reason as `ApiKeyCredential` above; `name` is non-secret (AUTH-8
+ *  permits it visible) so it stays an ordinary public field. */
 export class NameKeyCredential {
   readonly name: string;
   readonly #key: string;
@@ -907,15 +982,29 @@ export class NameKeyCredential {
   }
 }
 
-/** AUTH-11: a plain async function type, no class. A throwing/rejecting provider propagates and is never
- *  cached -- bearer-cache.ts simply doesn't catch around the call. */
-export type TokenProvider = () => Promise<BearerToken>;
+/**
+ * AUTH-11: a plain async function type, no class. A throwing/rejecting provider propagates and is never
+ * cached -- bearer-cache.ts simply doesn't catch around the call.
+ *
+ * The options bag is the cancellation contract. A token fetch is external I/O on the request path, and
+ * `docs/knowledge/concurrency-and-async.md:44` is explicit that "a signal accepted at the top of a call chain
+ * must be passed through every layer down to the actual I/O primitive; a signal that stops at the first
+ * function is decoration." 5a Task 1 already exposes the call's signal as `StepContext.signal`, so the step
+ * has one to pass; without this parameter a hung provider pins the auth step, every retry attempt nested
+ * under it, and the whole request, with no way for the caller to abort. The parameter is optional so a
+ * provider that does not care can still be written `async () => token`.
+ *
+ * A provider SHOULD combine the supplied signal with its own deadline
+ * (`AbortSignal.any([signal, AbortSignal.timeout(ms)])`, per `concurrency-and-async.md:26`) rather than
+ * waiting unbounded on its identity provider.
+ */
+export type TokenProvider = (options?: {readonly signal?: AbortSignal | undefined}) => Promise<BearerToken>;
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/credential.test.ts`
-Expected: PASS — 13 tests.
+Expected: PASS — 12 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -972,7 +1061,8 @@ describe('a single challenge', () => {
   test('a token68 value is recorded under the synthetic key', () => {
     const [challenge] = parseChallenges('Negotiate a87421000492aa874209af8bc028');
     expect(challenge?.scheme).toBe('negotiate');
-    expect(challenge?.params.get('__token68__')).toBe('a87421000492aa874209af8bc028');
+    // AUTH-12 names this key literally as 'token68'.
+    expect(challenge?.params.get('token68')).toBe('a87421000492aa874209af8bc028');
   });
 });
 
@@ -1103,7 +1193,14 @@ export interface ChallengeHandler {
   rank?(challenge: Challenge): number;
 }
 
-const TOKEN68_KEY = '__token68__';
+/**
+ * AUTH-12 names this key literally: "a token68 value recorded under the synthetic parameter key 'token68'".
+ * An earlier draft used `'__token68__'` to avoid colliding with a real auth-param of the same name; that is a
+ * deviation from a MUST with a spelled-out value, and Phase 9's conformance sweep reads AUTH-12 verbatim, so
+ * the requirement's own spelling wins. A genuine `token68=...` auth-param does not exist in RFC 7235's grammar
+ * (token68 is positional, never `name=value`), so the collision the `__` guarded against cannot occur.
+ */
+const TOKEN68_KEY = 'token68';
 const TOKEN_CHAR = /[!#$%&'*+\-.^_`|~0-9A-Za-z]/u;
 const TOKEN68_CHAR = /[A-Za-z0-9\-._~+/]/u;
 
@@ -1272,7 +1369,7 @@ export function parseChallenges(headerValue: string): readonly Challenge[] {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/challenge.test.ts`
-Expected: PASS — 15 tests.
+Expected: PASS — 12 tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
@@ -1360,9 +1457,15 @@ const SHIFTS = [
   6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ] as const;
 
-const CONSTANTS: readonly number[] = Array.from(
-  {length: 64},
-  (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32) >>> 0,
+// `/*#__PURE__*/`, because this is a top-level CALL, and `docs/knowledge/performance.md:48` is explicit that
+// "modules must do no work at import time, since a top-level call is a side effect the bundler must preserve
+// and this pins the module in the bundle." `@dexpace/core` declares `"sideEffects": false` and
+// `@dexpace/shrink-test` asserts a post-tree-shake bundle budget; without the annotation a bundler cannot
+// prove these 64 Math.sin calls are pure, so md5.ts (and its table) is retained by every consumer that
+// imports anything transitively reaching it -- including one that never touches Digest.
+// Deeply immutable via the freeze, which is what earns the CONSTANT_CASE (naming-conventions.md:14).
+const CONSTANTS: readonly number[] = /*#__PURE__*/ Object.freeze(
+  Array.from({length: 64}, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32) >>> 0),
 );
 
 function leftRotate(value: number, bits: number): number {
@@ -1692,6 +1795,18 @@ describe('NonceCountStore (AUTH-18/19)', () => {
     store.next('nonce-1024'); // 1025th distinct nonce -- evicts 'nonce-0'
     expect(store.next('nonce-0')).toBe(1); // evicted -- starts over, not 2
   });
+
+  test('drains back UNDER the cap after every admit, not one victim per insert (AUTH-19/XCUT-14)', () => {
+    // The distinguishing case for drain-to-cap vs pre-insert check-then-evict: a long run of fresh
+    // server-chosen nonces. A single-victim-per-insert store stays pinned at (or above) the bound forever
+    // without converging; the loop must leave the map at exactly the cap after each admit.
+    const store = new NonceCountStore();
+    for (let i = 0; i < 4096; i += 1) {
+      store.next(`burst-${i}`);
+      expect(store.size).toBeLessThanOrEqual(1024);
+    }
+    expect(store.size).toBe(1024);
+  });
 });
 
 describe('digestHandler', () => {
@@ -1749,6 +1864,22 @@ describe('digestHandler', () => {
     expect(value).toMatch(/response="[0-9a-f]+"/u);
   });
 
+  test('stamp() echoes the challenge opaque back, quoted (AUTH-22)', async () => {
+    const handler = digestHandler('u', 'p');
+    const challenge = digestChallenge({realm: REALM, nonce: NONCE, qop: 'auth', opaque: '5ccc069c403ebaf9f0171e9517f40e41'});
+    const value = await handler.stamp(challenge, false, {method: 'GET', requestTarget: '/x'});
+    expect(value).toContain('opaque="5ccc069c403ebaf9f0171e9517f40e41"');
+  });
+
+  test('stamp() omits opaque entirely when the challenge carried none (AUTH-22)', async () => {
+    const handler = digestHandler('u', 'p');
+    const value = await handler.stamp(digestChallenge({realm: REALM, nonce: NONCE}), false, {
+      method: 'GET',
+      requestTarget: '/x',
+    });
+    expect(value).not.toContain('opaque');
+  });
+
   test('stamp() omits cnonce/nc/qop when the challenge negotiated no qop (AUTH-22)', async () => {
     const handler = digestHandler('u', 'p');
     const challenge = digestChallenge({realm: REALM, nonce: NONCE});
@@ -1786,8 +1917,10 @@ import {md5, toHex} from './md5.js';
 /** AUTH-15: exactly these four are supported. */
 export type DigestAlgorithm = 'MD5' | 'MD5-sess' | 'SHA-256' | 'SHA-256-sess';
 
-const SUPPORTED_ALGORITHMS: readonly DigestAlgorithm[] = ['MD5', 'MD5-sess', 'SHA-256', 'SHA-256-sess'];
-const DEFAULT_ALGORITHM_PREFERENCE: readonly DigestAlgorithm[] = ['SHA-256-sess', 'SHA-256', 'MD5-sess', 'MD5'];
+// `as const`, not a bare `readonly` annotation, so the CONSTANT_CASE is honest -- see the note on
+// `AUTH_SCHEMES` in scheme.ts (naming-conventions.md:14).
+const SUPPORTED_ALGORITHMS = ['MD5', 'MD5-sess', 'SHA-256', 'SHA-256-sess'] as const satisfies readonly DigestAlgorithm[];
+const DEFAULT_ALGORITHM_PREFERENCE = ['SHA-256-sess', 'SHA-256', 'MD5-sess', 'MD5'] as const satisfies readonly DigestAlgorithm[];
 const NONCE_COUNT_LIMIT = 1024;
 
 export interface DigestOptions {
@@ -1812,19 +1945,41 @@ async function hashHex(base: 'MD5' | 'SHA-256', input: string, useUtf8: boolean)
   return toHex(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes)));
 }
 
-/** AUTH-18/19: nc starts at 1 per nonce, increments only on reuse, low-32-bits-on-overflow, bounded at 1024
- *  entries with simple insertion-order eviction -- `Map` iteration order is insertion order. */
+/**
+ * AUTH-18/19: nc starts at 1 per nonce, increments only on reuse, low-32-bits-on-overflow, bounded at 1024
+ * entries with insertion-order eviction -- `Map` iteration order is insertion order, so the oldest key is
+ * `keys().next().value` and no separate LRU structure is needed.
+ *
+ * The eviction is an insert-then-DRAIN-IN-A-LOOP, not a pre-insert check-then-evict:
+ * `docs/knowledge/concurrency-and-async.md:84` (XCUT-14) requires a caller/server-keyed map to "drain back
+ * under the cap after each insert using a loop rather than a single pre-insert check-then-evict, so a
+ * concurrent insert burst converges to the bound." The key space here is the SERVER's -- it picks the nonces
+ * -- and a single pre-insert evict removes at most one entry per insert, so a burst that admits N new nonces
+ * leaves the map above the cap and never climbs back down. AUTH-19 words the same thing as "drained back
+ * under the cap AFTER admitting a nonce."
+ */
 export class NonceCountStore {
-  readonly #counts = new Map<string, number>();
+  private readonly counts = new Map<string, number>();
+
+  /** Exposed so the bound itself is assertable -- otherwise "drained back under the cap" is untestable
+   *  except by the indirect "an evicted nonce restarts at 1" probe. @internal */
+  get size(): number {
+    return this.counts.size;
+  }
 
   next(nonce: string): number {
-    const current = this.#counts.get(nonce);
-    if (current === undefined && this.#counts.size >= NONCE_COUNT_LIMIT) {
-      const oldest = this.#counts.keys().next().value;
-      if (oldest !== undefined) this.#counts.delete(oldest);
-    }
+    const current = this.counts.get(nonce);
     const count = current === undefined ? 1 : (current + 1) >>> 0;
-    this.#counts.set(nonce, count);
+    this.counts.set(nonce, count);
+
+    while (this.counts.size > NONCE_COUNT_LIMIT) {
+      const oldest = this.counts.keys().next().value;
+      if (oldest === undefined) break;
+      // Never evict the entry just admitted -- it is the live nonce this call is answering with.
+      if (oldest === nonce) break;
+      this.counts.delete(oldest);
+    }
+
     return count;
   }
 }
@@ -1846,6 +2001,10 @@ interface ParsedDigestChallenge {
   readonly nonce: string;
   readonly qop: boolean;
   readonly useUtf8: boolean;
+  /** AUTH-22 names `opaque` in the must-quote list, which only makes sense if it is emitted: RFC 7616 requires
+   *  the client return the server's opaque value unchanged, and servers that bind state to it reject a request
+   *  without it. Absent when the challenge carried none. */
+  readonly opaque: string | undefined;
 }
 
 /** AUTH-16: satisfiable iff scheme is digest, realm+nonce present, qop absent or containing "auth", and the
@@ -1871,7 +2030,7 @@ function parseDigestChallenge(
   if (algorithm === undefined || !preference.includes(algorithm)) return undefined;
 
   const useUtf8 = (challenge.params.get('charset') ?? '').toLowerCase() === 'utf-8';
-  return {algorithm, realm, nonce, qop, useUtf8};
+  return {algorithm, realm, nonce, qop, useUtf8, opaque: challenge.params.get('opaque')};
 }
 
 export interface DigestComputationInput {
@@ -1931,6 +2090,9 @@ function buildHeaderValue(params: HeaderValueParams): string {
     `algorithm=${info.algorithm}`,
     `response=${quote(response)}`,
   ];
+  // AUTH-22: `opaque` is quoted and echoed back verbatim when the challenge carried one. RFC 7616 requires the
+  // client return it unchanged; a server that binds session state to it rejects a request that omits it.
+  if (info.opaque !== undefined) parts.push(`opaque=${quote(info.opaque)}`);
   if (info.qop) parts.push('qop=auth', `nc=${nc}`, `cnonce=${quote(cnonce)}`);
   return `Digest ${parts.join(', ')}`;
 }
@@ -1981,7 +2143,7 @@ export function digestHandler(username: string, password: string, options?: Dige
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/digest.test.ts`
-Expected: PASS — 20 tests.
+Expected: PASS — 22 tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
@@ -2263,10 +2425,13 @@ git commit -m "feat(core): composing handler -- ordered delegation over Basic/Di
 - Test: `packages/core/src/auth/bearer-cache.test.ts`
 
 **Interfaces:**
-- Consumes: `BearerToken`, `isBearerTokenExpired`, `TokenProvider` from `./credential.js`; `AuthResolutionError`
-  from `./errors.js`.
-- Produces: `class BearerTokenCache` (`stamp(provider, marginMs, nowMs): Promise<BearerToken>`,
-  `evict(rejectedHeaderValue): void`). Task 14 (`auth-step.ts`) consumes it.
+- Consumes: `InvariantViolation` from `../invariant.js`; `BearerToken`, `isBearerTokenExpired`, `TokenProvider`
+  from `./credential.js`; `AuthResolutionError` from `./errors.js`.
+- Produces: `interface BearerFetch {provider, marginMs, nowMs, signal}`; `class BearerTokenCache`
+  (`stamp(fetchOptions): Promise<BearerToken>`, `refreshNow(fetchOptions): Promise<BearerToken>`,
+  `evict(rejectedHeaderValue): void`). Task 14 (`auth-step.ts`) consumes all three.
+  The four fetch parameters are bundled into `BearerFetch` rather than passed positionally: `max-params: 3`
+  is hard, and `function-design.md:22` requires an options object at three or more parameters anyway.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2282,7 +2447,7 @@ git commit -m "feat(core): composing handler -- ordered delegation over Basic/Di
 // so `expiresAt` values are small synthetic epochs, not wall-clock instants. A cache that reached for
 // `Date.now()` internally would reject every one of these tokens.
 import {describe, expect, test} from 'bun:test';
-import {BearerTokenCache} from './bearer-cache.js';
+import {BearerTokenCache, type BearerFetch} from './bearer-cache.js';
 import {AuthResolutionError} from './errors.js';
 import {createBearerToken, type TokenProvider} from './credential.js';
 
@@ -2295,18 +2460,22 @@ function providerReturning(token: ReturnType<typeof createBearerToken>): {provid
   return {provider, calls};
 }
 
+/** The four fetch parameters are bundled (`BearerFetch`); this keeps the call sites readable. */
+function fetchWith(provider: TokenProvider, marginMs: number, nowMs: number): BearerFetch {
+  return {provider, marginMs, nowMs, signal: undefined};
+}
+
 describe('BearerTokenCache', () => {
   test('a fresh cached token is returned without invoking the provider (AUTH-34)', async () => {
     const cache = new BearerTokenCache();
     const fresh = providerReturning(createBearerToken('t1', 10_000));
-    await cache.stamp(fresh.provider, 1000, 0); // primes the cache
-    const {provider: neverCalled} = providerReturning(createBearerToken('unused', 10_000));
+    await cache.stamp(fetchWith(fresh.provider, 1000, 0)); // primes the cache
     let invoked = false;
     const spy: TokenProvider = async () => {
       invoked = true;
-      return neverCalled();
+      return createBearerToken('unused', 10_000);
     };
-    const result = await cache.stamp(spy, 1000, 0); // nowMs=0, expiresAt=10000, margin=1000 -- not expiring
+    const result = await cache.stamp(fetchWith(spy, 1000, 0)); // nowMs=0, expiresAt=10000, margin=1000 -- not expiring
     expect(result.token).toBe('t1');
     expect(invoked).toBe(false);
   });
@@ -2314,17 +2483,20 @@ describe('BearerTokenCache', () => {
   test('expiring-but-valid: returns the stale token AND fires a background refresh', async () => {
     const cache = new BearerTokenCache();
     const initial = providerReturning(createBearerToken('t1', 1000));
-    await cache.stamp(initial.provider, 500, 0); // primes: expiresAt=1000, nowMs=0, margin=500 -- not yet expiring
+    await cache.stamp(fetchWith(initial.provider, 500, 0)); // primes: expiresAt=1000, nowMs=0, margin=500 -- not yet expiring
 
     const refreshed = providerReturning(createBearerToken('t2', 5000));
-    const result = await cache.stamp(refreshed.provider, 500, 900); // nowMs=900: expiring (900+500>1000) but not expired (900>1000 false)
+    // nowMs=900: expiring (900+500>1000) but not expired (900>1000 false)
+    const result = await cache.stamp(fetchWith(refreshed.provider, 500, 900));
     expect(result.token).toBe('t1'); // stale value returned immediately
     // A macrotask boundary (not a fixed number of microtask hops) guarantees the fire-and-forget refresh's
     // whole then/finally chain has drained, regardless of exactly how many microtask ticks it takes.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const after = await cache.stamp(async () => {
-      throw new Error('should not be called -- refresh already cached t2');
-    }, 500, 900);
+    const after = await cache.stamp(
+      fetchWith(async () => {
+        throw new Error('should not be called -- refresh already cached t2');
+      }, 500, 900),
+    );
     expect(after.token).toBe('t2');
   });
 
@@ -2333,26 +2505,29 @@ describe('BearerTokenCache', () => {
     // The FETCHED token must itself be valid at the injected `nowMs` -- a provider handing back an
     // already-expired token is AUTH-35's rejection case, covered separately below.
     const {provider, calls} = providerReturning(createBearerToken('t1', 10_000));
-    const result = await cache.stamp(provider, 0, 5000); // nothing cached yet -- goes straight to the provider
+    const result = await cache.stamp(fetchWith(provider, 0, 5000)); // nothing cached -- straight to the provider
     expect(result.token).toBe('t1');
     expect(calls).toHaveLength(1);
   });
 
   test('a FAILING background refresh is non-fatal and never becomes an unhandled rejection (AUTH-37)', async () => {
     const cache = new BearerTokenCache();
-    await cache.stamp(providerReturning(createBearerToken('t1', 1000)).provider, 500, 0); // primes
+    await cache.stamp(fetchWith(providerReturning(createBearerToken('t1', 1000)).provider, 500, 0)); // primes
 
     const failing: TokenProvider = () => Promise.reject(new Error('refresh backend down'));
-    const result = await cache.stamp(failing, 500, 900); // expiring-but-valid: stamps t1, refresh fails in the background
+    // expiring-but-valid: stamps t1, refresh fails in the background
+    const result = await cache.stamp(fetchWith(failing, 500, 900));
     expect(result.token).toBe('t1'); // the still-valid token was already stamped -- the failure changes nothing
 
     // Drain the microtask queue past the fire-and-forget chain; an unhandled rejection would surface here.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // t1 is still cached and still served -- a failed refresh must not evict what it failed to replace.
-    const after = await cache.stamp(async () => {
-      throw new Error('should not be called -- t1 is still cached and still valid at this nowMs');
-    }, 0, 900);
+    const after = await cache.stamp(
+      fetchWith(async () => {
+        throw new Error('should not be called -- t1 is still cached and still valid at this nowMs');
+      }, 0, 900),
+    );
     expect(after.token).toBe('t1');
   });
 
@@ -2367,8 +2542,8 @@ describe('BearerTokenCache', () => {
     };
     const cache = new BearerTokenCache();
 
-    const first = cache.stamp(provider, 0, 0);
-    const second = cache.stamp(provider, 0, 0);
+    const first = cache.stamp(fetchWith(provider, 0, 0));
+    const second = cache.stamp(fetchWith(provider, 0, 0));
     expect(invocations).toBe(1); // the second caller coalesced onto the first's in-flight fetch
 
     resolveProvider?.(createBearerToken('t1', 10_000));
@@ -2377,13 +2552,35 @@ describe('BearerTokenCache', () => {
     expect(secondResult.token).toBe('t1');
   });
 
-  test('a null-like or already-expired provider result throws and is never cached (AUTH-35)', async () => {
+  test('the call signal is threaded to the provider (concurrency-and-async.md:44)', async () => {
+    let observed: AbortSignal | undefined;
+    const controller = new AbortController();
+    const provider: TokenProvider = async (options) => {
+      observed = options?.signal;
+      return createBearerToken('t1', 10_000);
+    };
+    const cache = new BearerTokenCache();
+
+    await cache.stamp({provider, marginMs: 0, nowMs: 0, signal: controller.signal});
+
+    expect(observed).toBe(controller.signal);
+  });
+
+  test('a null provider result throws AuthResolutionError (AUTH-35)', async () => {
+    const cache = new BearerTokenCache();
+    // A plain-JS caller can hand back null regardless of TokenProvider's non-nullable return type; AUTH-35
+    // requires a RUNTIME guard, so the cast is the point of the test, not a workaround.
+    const nullish = (async () => null) as unknown as TokenProvider;
+    await expect(cache.stamp(fetchWith(nullish, 0, 0))).rejects.toBeInstanceOf(AuthResolutionError);
+  });
+
+  test('an already-expired provider result throws and is never cached (AUTH-35)', async () => {
     const cache = new BearerTokenCache();
     const alreadyExpired: TokenProvider = async () => createBearerToken('t1', -1); // expiresAt in the past
-    await expect(cache.stamp(alreadyExpired, 0, 1000)).rejects.toBeInstanceOf(AuthResolutionError);
+    await expect(cache.stamp(fetchWith(alreadyExpired, 0, 1000))).rejects.toBeInstanceOf(AuthResolutionError);
 
     const {provider: recovers, calls} = providerReturning(createBearerToken('t2', 10_000));
-    const result = await cache.stamp(recovers, 0, 1000);
+    const result = await cache.stamp(fetchWith(recovers, 0, 1000));
     expect(result.token).toBe('t2');
     expect(calls).toHaveLength(1); // the earlier rejection left nothing cached to short-circuit this call
   });
@@ -2392,30 +2589,73 @@ describe('BearerTokenCache', () => {
     const cache = new BearerTokenCache();
     const boom = new Error('network down');
     const failing: TokenProvider = () => Promise.reject(boom);
-    await expect(cache.stamp(failing, 0, 0)).rejects.toBe(boom);
+    await expect(cache.stamp(fetchWith(failing, 0, 0))).rejects.toBe(boom);
 
     const {provider: recovers} = providerReturning(createBearerToken('t1', 10_000));
-    const result = await cache.stamp(recovers, 0, 0);
+    const result = await cache.stamp(fetchWith(recovers, 0, 0));
     expect(result.token).toBe('t1'); // no stale rejection cached -- this call fetches cleanly
+  });
+
+  describe('refreshNow (AUTH-37: the post-eviction path awaits a GENUINELY fresh fetch)', () => {
+    test('does NOT coalesce onto a fetch that was already in flight', async () => {
+      // The exact hazard: a background refresh started BEFORE the 401 came back. AUTH-11 permits a provider
+      // that caches internally, so that older fetch can resolve to the very token the server rejected. A
+      // `stamp()` here would coalesce onto it and re-send the rejected token; `refreshNow()` must not.
+      const cache = new BearerTokenCache();
+      const resolvers: ((token: ReturnType<typeof createBearerToken>) => void)[] = [];
+      let invocations = 0;
+      const provider: TokenProvider = () => {
+        invocations += 1;
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+        });
+      };
+
+      const stale = cache.stamp(fetchWith(provider, 0, 0)); // starts fetch #1 and parks it in flight
+      expect(invocations).toBe(1);
+
+      const fresh = cache.refreshNow(fetchWith(provider, 0, 0));
+      expect(invocations).toBe(2); // a SECOND provider call, not a handle on the first
+
+      resolvers[0]?.(createBearerToken('rejected-token', 10_000));
+      resolvers[1]?.(createBearerToken('genuinely-fresh', 10_000));
+      await stale;
+      expect((await fresh).token).toBe('genuinely-fresh');
+    });
+
+    test('caches its result like any other fetch', async () => {
+      const cache = new BearerTokenCache();
+      const {provider, calls} = providerReturning(createBearerToken('t1', 10_000));
+      await cache.refreshNow(fetchWith(provider, 0, 0));
+      const again = await cache.stamp(
+        fetchWith(async () => {
+          throw new Error('should not refetch -- refreshNow() populated the cache');
+        }, 0, 0),
+      );
+      expect(again.token).toBe('t1');
+      expect(calls).toHaveLength(1);
+    });
   });
 
   describe('evict', () => {
     test('evicts only when the header value matches the exact cached token', async () => {
       const cache = new BearerTokenCache();
-      await cache.stamp(providerReturning(createBearerToken('t1', 10_000)).provider, 0, 0);
+      await cache.stamp(fetchWith(providerReturning(createBearerToken('t1', 10_000)).provider, 0, 0));
       cache.evict('Bearer some-other-token');
-      const result = await cache.stamp(async () => {
-        throw new Error('should not refetch -- non-matching evict() must not have cleared the cache');
-      }, 0, 0);
+      const result = await cache.stamp(
+        fetchWith(async () => {
+          throw new Error('should not refetch -- non-matching evict() must not have cleared the cache');
+        }, 0, 0),
+      );
       expect(result.token).toBe('t1');
     });
 
     test('a matching evict() forces the next call to refetch', async () => {
       const cache = new BearerTokenCache();
-      await cache.stamp(providerReturning(createBearerToken('t1', 10_000)).provider, 0, 0);
+      await cache.stamp(fetchWith(providerReturning(createBearerToken('t1', 10_000)).provider, 0, 0));
       cache.evict('Bearer t1');
       const {provider, calls} = providerReturning(createBearerToken('t2', 10_000));
-      const result = await cache.stamp(provider, 0, 0);
+      const result = await cache.stamp(fetchWith(provider, 0, 0));
       expect(result.token).toBe('t2');
       expect(calls).toHaveLength(1);
     });
@@ -2436,6 +2676,7 @@ Expected: FAIL — `Cannot find module './bearer-cache.js'`.
 
 ```typescript
 // packages/core/src/auth/bearer-cache.ts
+import {InvariantViolation} from '../invariant.js';
 import {type BearerToken, type TokenProvider, isBearerTokenExpired} from './credential.js';
 import {AuthResolutionError} from './errors.js';
 
@@ -2449,26 +2690,57 @@ import {AuthResolutionError} from './errors.js';
  * because nothing awaits between the check and the assignment in `#refresh` (same synchronous-guard collapse
  * as Digest's nonce counter).
  */
-export class BearerTokenCache {
-  #cached: BearerToken | undefined;
-  #inFlight: Promise<BearerToken> | undefined;
+export interface BearerFetch {
+  readonly provider: TokenProvider;
+  readonly marginMs: number;
+  /** Injected clock reading -- see the note on `refresh` below for why this is never `Date.now()` in here. */
+  readonly nowMs: number;
+  /** The call's cancellation, threaded to the provider's I/O (concurrency-and-async.md:20,44). */
+  readonly signal: AbortSignal | undefined;
+}
 
-  async stamp(provider: TokenProvider, marginMs: number, nowMs: number): Promise<BearerToken> {
-    if (this.#cached !== undefined) {
-      const expiring = isBearerTokenExpired(this.#cached, nowMs, marginMs);
-      if (!expiring) return this.#cached; // fresh zone: stamp, no refresh
-      const expired = isBearerTokenExpired(this.#cached, nowMs, 0); // AUTH-35: no margin at fetch time
+export class BearerTokenCache {
+  private cached: BearerToken | undefined;
+  private inFlight: Promise<BearerToken> | undefined;
+
+  async stamp(fetchOptions: BearerFetch): Promise<BearerToken> {
+    const {marginMs, nowMs} = fetchOptions;
+    if (this.cached !== undefined) {
+      const expiring = isBearerTokenExpired(this.cached, nowMs, marginMs);
+      if (!expiring) return this.cached; // fresh zone: stamp, no refresh
+      const expired = isBearerTokenExpired(this.cached, nowMs, 0); // AUTH-35: no margin at fetch time
       if (!expired) {
-        const stillValid = this.#cached;
+        const stillValid = this.cached;
         // Expiring-but-valid zone: fire-and-forget. AUTH-37 makes a failed background refresh non-fatal
-        // BECAUSE a valid token was already stamped -- which means the rejection must be swallowed here.
-        // A bare `void this.#refresh(...)` would leave it unhandled, and Node's default unhandledRejection
-        // policy terminates the process (the same hazard 5b's design flags for its own cleanup path).
-        void this.#refresh(provider, nowMs).catch(() => undefined);
+        // BECAUSE a valid token was already stamped -- which means an OPERATIONAL rejection must be swallowed
+        // here. A bare `void this.refresh(...)` would leave it unhandled, and Node's default
+        // unhandledRejection policy terminates the process (the same hazard 5b's design flags for its own
+        // cleanup path). The catch is NARROWED rather than blanket, per error-handling.md:24: an
+        // InvariantViolation is a programmer error and error-handling.md:36 requires it crash loudly, so it is
+        // rethrown out-of-band instead of being absorbed into "the backend was down."
+        void this.refresh(fetchOptions).catch((error: unknown) => {
+          if (error instanceof InvariantViolation) throw error;
+          return undefined;
+        });
         return stillValid;
       }
     }
-    return this.#refresh(provider, nowMs); // expired/missing zone: await a fresh single-flight fetch
+    return this.refresh(fetchOptions); // expired/missing zone: await a fresh single-flight fetch
+  }
+
+  /**
+   * AUTH-37's post-eviction path: a GENUINELY fresh fetch, bypassing the single-flight coalescing.
+   *
+   * `stamp()` is not a substitute. It routes through `refresh`, which returns an already-in-flight promise --
+   * and that fetch may have started BEFORE the 401 arrived. AUTH-11 explicitly permits a provider that
+   * "caches/refreshes internally", so such a fetch can resolve to the very token the server just rejected and
+   * re-cache it, which is precisely the outcome AUTH-37's "so the retry never re-sends the rejected token"
+   * forbids. Only the eviction-driven challenge path uses this; everywhere else coalescing is what AUTH-34/37
+   * want.
+   */
+  refreshNow(fetchOptions: BearerFetch): Promise<BearerToken> {
+    this.inFlight = undefined; // drop any pre-401 fetch's claim on this slot before starting a new one
+    return this.refresh(fetchOptions);
   }
 
   /**
@@ -2477,26 +2749,32 @@ export class BearerTokenCache {
    * would reject every token in any test that drives time synthetically -- and, worse, would be a second,
    * invisible clock in production code the caller cannot control.
    */
-  #refresh(provider: TokenProvider, nowMs: number): Promise<BearerToken> {
-    if (this.#inFlight !== undefined) return this.#inFlight; // coalesce concurrent expiring/missing callers
-    const fetch = provider()
-      .then((token) => {
-        if (token === null || isBearerTokenExpired(token, nowMs, 0)) {
+  private refresh(fetchOptions: BearerFetch): Promise<BearerToken> {
+    if (this.inFlight !== undefined) return this.inFlight; // coalesce concurrent expiring/missing callers
+    const pending = fetchOptions
+      .provider({signal: fetchOptions.signal})
+      .then((token: BearerToken | null | undefined) => {
+        // `token` is widened at this ONE boundary on purpose. `TokenProvider`'s declared return type is
+        // non-nullable, so comparing the un-widened value against null trips
+        // `@typescript-eslint/no-unnecessary-condition` from the strict-type-checked tier -- but AUTH-35
+        // requires a runtime guard, because a plain-JS caller (or a mis-typed `any` boundary) can hand back
+        // null regardless of what the type says. Widening states that intent instead of suppressing the rule.
+        if (token === null || token === undefined || isBearerTokenExpired(token, fetchOptions.nowMs, 0)) {
           throw new AuthResolutionError('token provider returned a null or already-expired token'); // AUTH-35
         }
-        this.#cached = token;
+        this.cached = token;
         return token;
       })
       .finally(() => {
-        this.#inFlight = undefined; // never cache a rejection (AUTH-11/35) -- it already propagates untouched
+        this.inFlight = undefined; // never cache a rejection (AUTH-11/35) -- it already propagates untouched
       });
-    this.#inFlight = fetch;
-    return fetch;
+    this.inFlight = pending;
+    return pending;
   }
 
   evict(rejectedHeaderValue: string): void {
-    if (this.#cached !== undefined && `Bearer ${this.#cached.token}` === rejectedHeaderValue) {
-      this.#cached = undefined;
+    if (this.cached !== undefined && `Bearer ${this.cached.token}` === rejectedHeaderValue) {
+      this.cached = undefined;
     }
   }
 }
@@ -2505,7 +2783,7 @@ export class BearerTokenCache {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/bearer-cache.test.ts`
-Expected: PASS — 12 tests.
+Expected: PASS — 14 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2528,7 +2806,8 @@ The integration point for every piece built in Tasks 1–13. Read Plan-time deci
   (see the scoping note below)
 
 **Interfaces:**
-- Consumes: `invariant` from `../invariant.js`; `Request` from `../http/request.js`; `Response` from
+- Consumes: `invariant` **and `assertNever`** from `../invariant.js` (the latter closes the two exhaustive
+  `AuthScheme` switches — see the note at `preemptiveStamp`); `Request` from `../http/request.js`; `Response` from
   `../http/response.js`; `StepDescriptor` from `../pipeline/step.js`; `clearCrossOriginMarker`,
   `hasCrossOriginMarker` from `../redirect/cross-origin.js` (5b, imported unchanged); `basicHandler` from
   `./basic.js`; `BearerTokenCache` from `./bearer-cache.js`; `Challenge`, `ChallengeHandler`, `parseChallenges`
@@ -2830,6 +3109,29 @@ describe('authStep', () => {
     expect(calls).toBe(2);
   });
 
+  test('AUTH-28 is re-applied to a challenge replacement that carries a credential', async () => {
+    // The outbound guard is SKIPPED for NO_AUTH, and nothing constrains a caller hook to preserve the URL --
+    // so without a second guard a hook answering a challenge stamps a credential straight over plaintext.
+    const the401 = countingResponse(401);
+    const challenged = the401.response
+      .newBuilder()
+      .headers(the401.response.headers.newBuilder().setInbound('WWW-Authenticate', 'Basic realm="x"').build())
+      .build();
+    const transport = new FakeTransport([challenged, countingResponse(200).response]);
+    const descriptor = authStep({
+      credentials: {},
+      tiers: tiersFor('NO_AUTH'), // outbound guard skipped entirely
+      challengeHook: async (_response, request) =>
+        request.newBuilder().headers(request.headers.newBuilder().set('Authorization', 'Basic c3B5').build()).build(),
+    });
+
+    await expect(runThrough(descriptor, transport, aRequest('http://example.com/a'))).rejects.toBeInstanceOf(
+      PlaintextCredentialError,
+    );
+    expect(transport.sendCount).toBe(1); // the replacement never reached the wire
+    expect(the401.cancelCount()).toBe(1); // and the 401 was closed before the throw, not leaked
+  });
+
   test('a per-call RequestOptions.auth descriptor overrides the configured perCall tier (AUTH-4)', async () => {
     const transport = new FakeTransport([countingResponse(200).response]);
     const credentials: AuthCredentialSet = {
@@ -2863,7 +3165,7 @@ Expected: FAIL — `Cannot find module './auth-step.js'`.
 
 ```typescript
 // packages/core/src/auth/auth-step.ts
-import {invariant} from '../invariant.js';
+import {assertNever, invariant} from '../invariant.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import type {StepDescriptor} from '../pipeline/step.js';
@@ -2951,7 +3253,22 @@ export interface AuthStepSettings {
   readonly tiers: AuthTiers;
   readonly handlers?: readonly ChallengeHandler[] | undefined;
   readonly challengeHook?: ChallengeHook | undefined;
+  /**
+   * Refresh margin ahead of a bearer token's expiry.
+   * @default 30_000 (AUTH-34's "default 30 seconds")
+   */
   readonly bearerMarginMs?: number | undefined;
+  /**
+   * Wall-clock source for bearer expiry evaluation, injected so the three-zone policy is testable through the
+   * step and not only through `BearerTokenCache` directly. Reading `Date.now()` here would be the SECOND,
+   * uncontrollable clock the Deviation Ledger already rejects inside `#refresh` -- `bearer-cache.ts` takes an
+   * injected `nowMs` precisely so its one caller can supply a controllable one, and this is that caller.
+   * (`docs/knowledge/testing.md:36,42`: a unit test uses no real clock; prefer injecting clocks as parameters.)
+   * Phase 7a's `Clock` seam may replace this field once it exists; until then the local hook keeps 5c free of a
+   * forward dependency.
+   * @default Date.now
+   */
+  readonly now?: (() => number) | undefined;
 }
 
 /** AUTH-4: a per-call descriptor (RequestOptions.auth, via StepContext.options) overrides the perCall slot. */
@@ -2970,25 +3287,46 @@ interface StampContext {
   readonly credentials: AuthCredentialSet;
   readonly bearerCache: BearerTokenCache;
   readonly marginMs: number;
+  readonly nowMs: number;
+  readonly signal: AbortSignal | undefined;
 }
 
-/** OAUTH2/API_KEY stamp preemptively (no server round-trip needed); BASIC/DIGEST/NO_AUTH never do. */
+function withHeader(request: Request, name: string, value: string): Request {
+  return request.newBuilder().headers(request.headers.newBuilder().set(name, value).build()).build();
+}
+
+/**
+ * OAUTH2/API_KEY stamp preemptively (no server round-trip needed); BASIC/DIGEST/NO_AUTH never do.
+ *
+ * An exhaustive `switch` closing on `assertNever`, not an if-chain: `AuthScheme` is a closed discriminant, and
+ * `docs/knowledge/data-modeling.md:38` bans an if-chain over one because "an if-chain gives no exhaustiveness
+ * guarantee and silently falls through when a variant is added" -- and the value that would fall through here
+ * is a credential-stamping decision.
+ */
 async function preemptiveStamp(request: Request, context: StampContext): Promise<Request> {
-  if (context.scheme === 'OAUTH2') {
-    invariant(context.credentials.bearer !== undefined, 'resolved OAUTH2 but no bearer credential configured');
-    const token = await context.bearerCache.stamp(
-      context.credentials.bearer.provider,
-      context.credentials.bearer.marginMs ?? context.marginMs,
-      Date.now(),
-    );
-    return request.newBuilder().headers(request.headers.newBuilder().set('Authorization', `Bearer ${token.token}`).build()).build();
+  switch (context.scheme) {
+    case 'OAUTH2': {
+      invariant(context.credentials.bearer !== undefined, 'resolved OAUTH2 but no bearer credential configured');
+      const token = await context.bearerCache.stamp({
+        provider: context.credentials.bearer.provider,
+        marginMs: context.credentials.bearer.marginMs ?? context.marginMs,
+        nowMs: context.nowMs,
+        signal: context.signal,
+      });
+      return withHeader(request, 'Authorization', `Bearer ${token.token}`);
+    }
+    case 'API_KEY': {
+      invariant(context.credentials.apiKey !== undefined, 'resolved API_KEY but no apiKey credential configured');
+      const {headerName, headerValue} = stampStaticKey(context.credentials.apiKey.credential, context.credentials.apiKey);
+      return withHeader(request, headerName, headerValue);
+    }
+    case 'BASIC':
+    case 'DIGEST':
+    case 'NO_AUTH':
+      return request; // challenge-driven, or no credential at all -- nothing to stamp on the outbound pass
+    default:
+      return assertNever(context.scheme);
   }
-  if (context.scheme === 'API_KEY') {
-    invariant(context.credentials.apiKey !== undefined, 'resolved API_KEY but no apiKey credential configured');
-    const {headerName, headerValue} = stampStaticKey(context.credentials.apiKey.credential, context.credentials.apiKey);
-    return request.newBuilder().headers(request.headers.newBuilder().set(headerName, headerValue).build()).build();
-  }
-  return request;
 }
 
 interface ChallengeSelection {
@@ -3017,6 +3355,8 @@ interface DefaultHookContext {
   readonly bearerCache: BearerTokenCache;
   readonly composing: ComposingHandler;
   readonly marginMs: number;
+  readonly nowMs: number;
+  readonly signal: AbortSignal | undefined;
 }
 
 async function oauth2ChallengeHook(
@@ -3032,14 +3372,22 @@ async function oauth2ChallengeHook(
   if (!challenges.some((challenge) => challenge.scheme === 'bearer')) return undefined;
 
   context.bearerCache.evict(rejected);
+  // AUTH-37's last clause: "The post-eviction challenge path MUST await a GENUINELY FRESH fetch so the retry
+  // never re-sends the rejected token." Plain `stamp()` is not enough -- it routes through `#refresh`, which
+  // coalesces onto an already-in-flight fetch. That fetch may have started BEFORE this 401 came back, and
+  // AUTH-11 explicitly permits a provider that "caches/refreshes internally", so it can resolve to the very
+  // token the server just rejected (and re-cache it). `refreshNow()` bypasses the coalescing for exactly this
+  // one path; every other caller still coalesces, which is what AUTH-34/37 want everywhere else.
+  //
   // Same margin resolution as the preemptive path -- a second, quietly-different default here would mean the
   // refresh triggered by a 401 used a different expiry policy than the stamp that produced the 401.
-  const token = await context.bearerCache.stamp(
-    context.credentials.bearer.provider,
-    context.credentials.bearer.marginMs ?? context.marginMs,
-    Date.now(),
-  );
-  return request.newBuilder().headers(request.headers.newBuilder().set(headerName, `Bearer ${token.token}`).build()).build();
+  const token = await context.bearerCache.refreshNow({
+    provider: context.credentials.bearer.provider,
+    marginMs: context.credentials.bearer.marginMs ?? context.marginMs,
+    nowMs: context.nowMs,
+    signal: context.signal,
+  });
+  return withHeader(request, headerName, `Bearer ${token.token}`);
 }
 
 async function basicDigestChallengeHook(
@@ -3052,17 +3400,29 @@ async function basicDigestChallengeHook(
   const value = await context.composing.stamp(challenges, selection.isProxy, {method: request.method, requestTarget});
   if (value === undefined) return undefined;
   const headerName = selection.isProxy ? 'Proxy-Authorization' : 'Authorization';
-  return request.newBuilder().headers(request.headers.newBuilder().set(headerName, value).build()).build();
+  return withHeader(request, headerName, value);
 }
 
 /** The scheme-dependent default hook body (AUTH-30's generic contract governs invocation; this decides WHAT
  *  each resolved scheme does with a parsed challenge). API_KEY/NO_AUTH never react (AUTH-33's "no replacement"). */
 async function defaultChallengeHook(response: Response, request: Request, context: DefaultHookContext): Promise<Request | undefined> {
-  if (context.scheme === 'API_KEY' || context.scheme === 'NO_AUTH') return undefined;
   const selection = pickChallengeHeader(response);
   if (selection === undefined) return undefined;
-  if (context.scheme === 'OAUTH2') return oauth2ChallengeHook(request, selection, context);
-  return basicDigestChallengeHook(request, selection, context); // BASIC/DIGEST
+
+  // Exhaustive switch + assertNever, not an if-chain (docs/knowledge/data-modeling.md:38): a sixth AuthScheme
+  // added later must not silently inherit the BASIC/DIGEST branch's credential-stamping behaviour.
+  switch (context.scheme) {
+    case 'OAUTH2':
+      return oauth2ChallengeHook(request, selection, context);
+    case 'BASIC':
+    case 'DIGEST':
+      return basicDigestChallengeHook(request, selection, context);
+    case 'API_KEY':
+    case 'NO_AUTH':
+      return undefined; // static/absent credentials have no reactive behaviour (AUTH-30's default-hook wording)
+    default:
+      return assertNever(context.scheme);
+  }
 }
 
 /**
@@ -3074,12 +3434,35 @@ async function defaultChallengeHook(response: Response, request: Request, contex
  *
  * Both challenge statuses are handled: a 401 is answered from `WWW-Authenticate` into `Authorization`, a 407
  * from `Proxy-Authenticate` into `Proxy-Authorization` (AUTH-25). A cross-origin-marked hop answers neither.
+ *
+ * The `@throws` tags below are required, not decorative: this is a barrel-exported symbol, and both
+ * `docs/knowledge/error-handling.md:52` and `documentation.md:24` require every public operation to declare
+ * the failure modes a caller would reasonably act on. Both classes are exported from the barrel alongside this
+ * function so `instanceof` narrowing actually works (`error-handling.md:20` bans duck-typing on `.message`).
+ *
+ * @throws {@link PlaintextCredentialError} when the resolved scheme would attach a credential over a
+ *   non-HTTPS URL (AUTH-28) -- on the outbound pass and again on a challenge replay. Recover by fixing the
+ *   endpoint's scheme; retrying will not help.
+ * @throws {@link AuthResolutionError} when the selected tier lists no scheme with a matching configured
+ *   credential (AUTH-4/AUTH-6), or when the token provider returns a null/already-expired token (AUTH-35).
+ *   The first is a configuration fault; the second is transient and the next request retries the fetch.
+ *
+ * @example
+ * ```ts
+ * const runtime = new PipelineBuilder(transport)
+ *   .append(authStep({
+ *     credentials: {bearer: {provider: async ({signal} = {}) => fetchToken({signal})}},
+ *     tiers: {client: createAuthDescriptor([createAuthRequirement('OAUTH2')])},
+ *   }))
+ *   .build();
+ * ```
  */
 export function authStep(settings: AuthStepSettings): StepDescriptor {
   const bearerCache = new BearerTokenCache();
   const availableSchemes = availableSchemesOf(settings.credentials);
   const composing = composingHandler(buildDefaultHandlers(settings.credentials, settings.handlers));
   const bearerMarginMs = settings.bearerMarginMs ?? 30_000;
+  const now = settings.now ?? Date.now;
 
   return {
     type: AUTH_STEP_TYPE,
@@ -3090,6 +3473,12 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
 
       const requirement = resolveAuthRequirement(effectiveTiers(settings.tiers, ctx.options?.auth), availableSchemes);
       const scheme = requirement.scheme;
+      // One clock read per hop, threaded into every expiry evaluation this hop performs, so the preemptive
+      // stamp and a challenge-driven refresh cannot disagree about "now" mid-call.
+      const nowMs = now();
+      // The caller's cancellation, threaded to the token fetch -- the only external I/O this step performs.
+      // A signal that stops at the first function is decoration (concurrency-and-async.md:44).
+      const {signal} = ctx;
 
       // AUTH-29: cross-origin check first; the marker is cleared unconditionally before either branch, so it
       // can never survive into a substituted request built by the stamping/no-op logic below.
@@ -3101,7 +3490,14 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
         outbound = cleared; // skip the HTTPS guard and preemptive stamping entirely
       } else {
         if (scheme !== 'NO_AUTH') requireHttps(cleared.url, scheme); // AUTH-28
-        outbound = await preemptiveStamp(cleared, {scheme, credentials: settings.credentials, bearerCache, marginMs: bearerMarginMs});
+        outbound = await preemptiveStamp(cleared, {
+          scheme,
+          credentials: settings.credentials,
+          bearerCache,
+          marginMs: bearerMarginMs,
+          nowMs,
+          signal,
+        });
       }
 
       const response = await fork()(outbound);
@@ -3132,6 +3528,8 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
         bearerCache,
         composing,
         marginMs: bearerMarginMs,
+        nowMs,
+        signal,
       };
       const hook = settings.challengeHook ?? ((res: Response, req: Request) => defaultChallengeHook(res, req, hookContext));
 
@@ -3145,6 +3543,23 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
       if (replacement === undefined) return response; // AUTH-33: hook yielded nothing -> unchanged
 
       if (replacement.body !== undefined && !replacement.body.replayable) return response; // AUTH-31, uniformly
+
+      // AUTH-28 again, on the replay path. The outbound guard above is NOT sufficient here: it is skipped
+      // entirely for NO_AUTH, and nothing constrains a caller-supplied hook to preserve the request URL. The
+      // replay is by definition "a request path where a credential will be attached", and AUTH-28 says "ANY"
+      // such path -- so a hook that answers a challenge over plaintext must fail here rather than on the wire.
+      // Guarded on the replacement actually carrying a credential header, so a hook that legitimately returns
+      // a credential-free replacement (mirroring the cross-origin branch) is not blocked. The 401 is closed
+      // before the throw for the same reason AUTH-32 closes it on a hook throw -- this path is past the point
+      // where the caller still owns the response, so propagating unclosed would leak the body.
+      if (replacement.headers.has('Authorization') || replacement.headers.has('Proxy-Authorization')) {
+        try {
+          requireHttps(replacement.url, scheme);
+        } catch (error) {
+          await response.close();
+          throw error;
+        }
+      }
 
       await response.close();
       return fork()(replacement); // AUTH-30: exactly once, no nested re-challenge on this drive
@@ -3183,7 +3598,7 @@ describe('per-call auth descriptor (AUTH-4)', () => {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/auth-step.test.ts packages/core/src/http/request-options.test.ts`
-Expected: PASS — 15 auth-step tests plus the two new request-options tests.
+Expected: PASS — 16 auth-step tests plus the two new request-options tests.
 
 - [ ] **Step 5: Verify the ESLint limits hold**
 
@@ -3544,10 +3959,16 @@ export interface StandardResilienceOptions {
   readonly logging?: LoggingStepSettings | undefined;
 }
 
-const NO_AUTH_SETTINGS: AuthStepSettings = {
-  credentials: {},
-  tiers: {client: createAuthDescriptor([createAuthRequirement('NO_AUTH')])},
-};
+// Built lazily rather than as a top-level `const NO_AUTH_SETTINGS = {...createAuthDescriptor(...)}`: a
+// module-scope factory call is import-time work a bundler must preserve (performance.md:48), and it would pin
+// descriptor.ts/requirement.ts into every bundle that imports the preset. The allocation is per-call but the
+// preset is constructed once per client, not per request.
+function noAuthSettings(): AuthStepSettings {
+  return {
+    credentials: {},
+    tiers: {client: createAuthDescriptor([createAuthRequirement('NO_AUTH')])},
+  };
+}
 
 /**
  * PIPE-24/39: installs exactly the four resilience pillars that exist as of the 2026-07-28 Phase 7b retrofit
@@ -3559,12 +3980,32 @@ const NO_AUTH_SETTINGS: AuthStepSettings = {
  * current scope. A caller wanting to layer this preset onto an already-customized builder reaches for
  * `PipelineBuilder.seedFrom(runtime, 'nest' | 'flatten')` (Task 15) instead of this function growing a
  * "skip occupied slots" branch.
+ *
+ * `standardResilience()` itself only assembles the pipeline; the failures below surface from the returned
+ * runtime's `send()`, and are documented here because this factory is where a caller chooses the auth
+ * configuration that determines whether they can occur at all.
+ *
+ * @throws {@link PlaintextCredentialError} from `send()` when a credentialed scheme meets a non-HTTPS URL
+ *   (AUTH-28).
+ * @throws {@link AuthResolutionError} from `send()` when no configured credential satisfies the resolved
+ *   auth tier (AUTH-4/AUTH-6) or a token provider misbehaves (AUTH-35).
+ *
+ * @example
+ * ```ts
+ * const client = standardResilience(transport, {
+ *   auth: {
+ *     credentials: {apiKey: {credential: new ApiKeyCredential(process.env.API_KEY ?? '')}},
+ *     tiers: {client: createAuthDescriptor([createAuthRequirement('API_KEY')])},
+ *   },
+ * });
+ * const response = await client.send(Request.newBuilder().url('https://api.example.com/v1/things').build());
+ * ```
  */
 export function standardResilience(transport: Transport, options: StandardResilienceOptions = {}): Runtime {
   const builder = new PipelineBuilder(transport);
   return withRedirect(builder, options.redirect)
     .append(retryStep(options.retry))
-    .append(authStep(options.auth ?? NO_AUTH_SETTINGS))
+    .append(authStep(options.auth ?? noAuthSettings()))
     .append(loggingStep(options.logging))
     .build();
 }
@@ -3573,7 +4014,7 @@ export function standardResilience(transport: Transport, options: StandardResili
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/auth/preset.test.ts`
-Expected: PASS — 4 tests.
+Expected: PASS — 5 tests.
 
 - [ ] **Step 5: Public-barrel promotion**
 
@@ -3581,6 +4022,7 @@ In `packages/core/src/index.ts`, add (following the file's existing `export {X, 
 convention established since Phase 1):
 
 ```typescript
+// -- Group 1: the pillar-authoring surface. --
 // `Stage` lives in stage.ts alongside STAGE_ORDER/PILLAR_STAGES (4c Task 1) -- NOT in step.ts.
 export type {Stage} from './pipeline/stage.js';
 export type {StepContext, Next, StepDescriptor} from './pipeline/step.js';
@@ -3591,6 +4033,35 @@ export {retryStep} from './retry/retry-step.js';
 export {redirectStep} from './redirect/redirect-step.js';
 export {authStep} from './auth/auth-step.js';
 export {standardResilience} from './auth/preset.js';
+
+// -- Group 2: everything Group 1's signatures name. A promoted function whose parameter type is @internal is
+//    an API a caller cannot call; api-extractor also reports each omission as ae-forgotten-export. --
+export type {RetryStepOptions} from './retry/retry-step.js';
+export type {RedirectSettings} from './redirect/settings.js';
+export type {LoggingStepSettings} from './observability/logging-step.js'; // Phase 7b retrofit
+export type {StandardResilienceOptions} from './auth/preset.js';
+export type {
+  ApiKeyCredentialConfig,
+  AuthCredentialSet,
+  AuthStepSettings,
+  BasicCredential,
+  BearerCredential,
+  ChallengeHook,
+  DigestCredential,
+} from './auth/auth-step.js';
+export type {AuthTiers} from './auth/resolve.js';
+export type {AuthScheme} from './auth/scheme.js';
+export type {DigestAlgorithm} from './auth/digest.js';
+// Factories, not bare interfaces: AUTH-3 validates and freezes in createAuthDescriptor, and
+// ApiKeyCredential/NameKeyCredential are NOMINAL (they carry `#key`), so no caller-side object literal is
+// assignable. Without these, API_KEY auth is unreachable from outside the package.
+export type {AuthDescriptor} from './auth/descriptor.js';
+export {createAuthDescriptor} from './auth/descriptor.js';
+export type {AuthRequirement} from './auth/requirement.js';
+export {createAuthRequirement} from './auth/requirement.js';
+export type {BearerToken, TokenProvider} from './auth/credential.js';
+export {ApiKeyCredential, NameKeyCredential, createBearerToken} from './auth/credential.js';
+export {AuthResolutionError, DigestChallengeUnsupportedError, PlaintextCredentialError} from './auth/errors.js';
 ```
 
 **Also strip the now-wrong `@internal` TSDoc tags.** 4c marked `PipelineBuilder`, `Runtime`, `Cursor`'s
@@ -3599,23 +4070,34 @@ them while the tag remains makes `lint:publish`/api-extractor flag a documented-
 the public entry point. Remove `@internal` from exactly the symbols in the export list above — and from nothing
 else; `Cursor`, `PipelineBuilder`'s private helpers, and 5a/5b's step internals keep theirs.
 
-Everything else under `packages/core/src/auth/` (the credential types, challenge parser, handlers, bearer
-cache) stays internal — a caller configures auth through `AuthStepSettings` passed to
-`authStep()`/`standardResilience()`, not by constructing handler internals directly. `redirectStep` is promoted
-alongside (it is equally part of the authoring surface and 5b shipped before this phase closes), but 5b's
-`withRedirect`/`stripCrossOriginMarkerStep`/the marker functions stay internal — a caller reaches for
-`redirectStep` directly only if composing a custom pipeline by hand; `standardResilience()` remains the
-recommended path for the common case.
+Everything else under `packages/core/src/auth/` — `challenge.ts`, `md5.ts`, `basic.ts`, `digest.ts`'s handler
+internals (`NonceCountStore`, `computeDigestResponse`), `composing-handler.ts`, `bearer-cache.ts`,
+`static-key.ts` — stays internal. A caller configures auth by *building* an `AuthStepSettings` value from the
+Group 2 factories and passing it to `authStep()`/`standardResilience()`, never by constructing handler
+internals directly. `redirectStep` is promoted alongside (it is equally part of the authoring surface and 5b
+shipped before this phase closes), but 5b's `withRedirect`/`stripCrossOriginMarkerStep`/the marker functions
+stay internal — a caller reaches for `redirectStep` directly only if composing a custom pipeline by hand;
+`standardResilience()` remains the recommended path for the common case.
+
+**Smoke-check the promotion is actually usable** before moving to Step 6: from a scratch file importing *only*
+from `@dexpace/core`'s entry point, construct
+`standardResilience(transport, {auth: {credentials: {apiKey: {credential: new ApiKeyCredential('k')}}, tiers: {client: createAuthDescriptor([createAuthRequirement('API_KEY')])}}})`
+and typecheck it. If any symbol in that expression is unreachable, Group 2 is incomplete — that expression is
+the minimum a caller needs to use the phase's headline feature.
 
 - [ ] **Step 6: Regenerate and review the API report**
 
 Run: `bun run api`
-Expected: `packages/core/etc/core.api.md` gains entries for exactly the symbols listed above (plus their
-transitively-exported types: `RetryStepOptions` is NOT promoted — `retryStep()`'s parameter type stays
-structural/inferred at the call site, matching 5a's own non-promotion of it), and exactly one amended existing
-entry: `RequestOptions` gains the `auth?: AuthDescriptor` member from Task 14 Step 3b (with `AuthDescriptor`
-already present transitively via `AuthStepSettings.tiers`). Review the diff by hand; this is the one phase
-where the API report is expected to change.
+Expected: `packages/core/etc/core.api.md` gains entries for exactly the Group 1 + Group 2 symbols listed above,
+and exactly one amended existing entry: `RequestOptions` gains the `auth?: AuthDescriptor` member from Task 14
+Step 3b. Review the diff by hand; this is the one phase where the API report is expected to change.
+
+**Zero `ae-forgotten-export` warnings is the pass condition.** api-extractor emits one for every type reachable
+from an exported signature that is not itself exported — so a warning naming `RetryStepOptions`,
+`AuthCredentialSet`, `DigestAlgorithm`, or similar means Group 2 is missing an entry, not that the warning
+should be suppressed. Do NOT silence one by narrowing a signature to an inline structural type: that trades a
+named, documentable contract for an anonymous one and hides the same surface from the snapshot that
+`NFR-4`/`tooling-and-quality-gates.md:40` exist to gate.
 
 - [ ] **Step 7: Run the full gate sequence**
 
@@ -3674,26 +4156,38 @@ Sections and their sources:
 
 1. **Descriptor/resolver model** — `AUTH-1` ✅ Task 2; `AUTH-2` ✅ Task 3; `AUTH-3` ✅ Task 4 (via `invariant()`,
    not the design doc's assumed `ArgumentError` — see Global Constraints); `AUTH-4`–`AUTH-7` ✅ Task 5.
-2. **Credentials** — `AUTH-8`–`AUTH-11` ✅ Task 6.
-3. **Challenge parsing** — `AUTH-12`–`AUTH-13` ✅ Task 7.
-4. **Stamping handlers** — `AUTH-14` ✅ Task 9; `AUTH-15`–`AUTH-22` ✅ Tasks 8, 10; `AUTH-23`–`AUTH-25` ✅ Task 12;
-   `AUTH-26` ✅ Task 11.
-5. **The AUTH pillar step** — `AUTH-27` ✅ Task 14; `AUTH-28` ✅ Task 14; `AUTH-29` ✅ Task 14 (both halves: the
-   outbound suppression AND the challenge-reaction suppression), joint conformance test ✅ Task 16;
+2. **Credentials** — `AUTH-8`–`AUTH-10` ✅ Task 6; `AUTH-11` ✅ Tasks 6 + 13 (errors propagate uncached, and
+   `TokenProvider` takes `{signal}` so the call's cancellation reaches the fetch — Deviation Ledger).
+3. **Challenge parsing** — `AUTH-12` ✅ Task 7 (synthetic key `'token68'`, the requirement's own spelling);
+   `AUTH-13` ✅ Task 7.
+4. **Stamping handlers** — `AUTH-14` ✅ Task 9; `AUTH-15`–`AUTH-18`, `AUTH-20`–`AUTH-22` ✅ Tasks 8, 10
+   (`AUTH-22` includes echoing the challenge's `opaque` back, quoted); `AUTH-19` ✅ Task 10 (bounded at 1024
+   and **drained to the cap in a loop after admitting**, per XCUT-14 — not a pre-insert single evict);
+   `AUTH-23`–`AUTH-25` ✅ Task 12; `AUTH-26` ✅ Task 11.
+5. **The AUTH pillar step** — `AUTH-27` ✅ Task 14; `AUTH-28` ✅ Task 14 (**both paths**: the outbound pass and
+   again on a challenge replacement that carries a credential header — the outbound guard alone is skipped for
+   `NO_AUTH` and cannot see a hook-substituted URL); `AUTH-29` ✅ Task 14 (both halves: the outbound
+   suppression AND the challenge-reaction suppression), joint conformance test ✅ Task 16;
    `AUTH-30`–`AUTH-33` ✅ Task 14; `AUTH-38` (SHOULD — guard/hook failures delivered through the async channel)
    ✅ Task 14, satisfied structurally: the step's `fn` is `async`, so a `PlaintextCredentialError` or a hook
    throw becomes a rejected promise rather than a synchronous throw, with no separate code path needed.
 6. **Bearer cache** — `AUTH-34`/`AUTH-37` ✅ Task 13 (one unified policy, not two — see the Deviation Ledger
-   below); `AUTH-35` ✅ Task 13; `AUTH-36` ✅ Task 14.
+   below; AUTH-37's post-eviction "genuinely fresh fetch" clause is `refreshNow()`, which bypasses the
+   single-flight coalescing so the retry cannot re-send the rejected token); `AUTH-35` ✅ Task 13; `AUTH-36`
+   ✅ Task 14.
 7. **`PIPE-35` seedFrom** — ✅ Task 15.
 8. **`PIPE-24`/`PIPE-39` preset** — ✅ Task 16.
 9. **`PIPE-2`'s redirect-hop half** — ✅ **Resolved in Task 16** (joint conformance test, jointly with 5b).
-10. **Public-barrel promotion** — ✅ Task 16.
+10. **Public-barrel promotion** — ✅ Task 16, **both groups**: the pillar-authoring surface and the auth
+    configuration surface its signatures name. Record in the checklist that the pass condition is a caller
+    building a working `AuthStepSettings` importing only from the package entry point — not merely that
+    `authStep` appears in `core.api.md`.
 11. **Deferred out of Phase 5c** — `standardResilience()` gaining a `LOGGING` step → **resolved 2026-07-28,
     Phase 7b retrofit** (Task 16, this document); re-verification of
     "Basic/Digest never preemptively stamp" against reference fixtures → Phase 9; `DigestChallengeUnsupportedError`
-    consumer confirmation → see Deviation Ledger note below; true per-call/per-operation `AuthTiers` wiring
-    through `ExecutionContext` → unscoped future work (see Task 14's plan-time scoping note).
+    consumer confirmation → see Deviation Ledger note below; a per-**operation** `AuthTiers` source → unscoped
+    future work (the `perCall` and `client` tiers both have real sources as of Task 14); AUTH-37's
+    "log-and-continue" logging half for a failed background refresh → Phase 7b, where a `Logger` first exists.
 
 State explicitly at the top whether the plan has been executed, matching the Phase 5a/5b checklists' convention.
 
@@ -3720,12 +4214,19 @@ Reproduced from the design doc, plus every plan-time correction this plan itself
 | `ChallengeHandler.stamp` returns `Promise<string>`, not `string`; gains an optional third `request` parameter and an optional `rank` method | Design doc's prose gives `stamp(challenge, isProxy): string` | SHA-256 needs `crypto.subtle.digest()` (async); Digest's HA2 needs the request method/target, which `challenge`/`isProxy` don't carry; `rank` is needed for AUTH-16's algorithm-preference-over-wire-order requirement across multiple offered Digest challenges. All three are additive and optional/backward-compatible with Basic's simpler implementation |
 | `auth-step.ts`'s default handler list is built from `settings.credentials`, not zero-argument `digestHandler()`/`basicHandler()` calls | Design doc's shorthand: `handlers?: ...; default = [digestHandler(), basicHandler()]` | Both handlers need a username/password to do anything; the shorthand omits where those come from |
 | `Runtime` gains a `transport` getter | Design doc's module layout lists only `builder.ts` as amended for `seedFrom` | `seedFrom(runtime, 'flatten')` structurally cannot reuse the seeded runtime's transport without reading it |
-| The cross-origin marker suppresses the challenge reaction too, not just the outbound stamp | Design doc's step 5 invokes the challenge hook unconditionally after any 401 | Reacting to a challenge on a marked hop would stamp exactly the credential the outbound pass declined to send, onto the server-chosen foreign host, over a URL whose HTTPS guard was deliberately skipped — the leak `AUTH-29` exists to prevent. The marker's scope is the hop, not the pass |
-| `BearerTokenCache.#refresh` validates the fetched token against the caller-injected `nowMs`, not `Date.now()` | Design doc's snippet calls `Date.now()` inside `#refresh` while `stamp()` takes an injected clock | Two clocks in one state machine: a caller (or test) driving time synthetically would have every fetched token rejected as expired, and production code could not control the second clock at all |
-| The background refresh's rejection is explicitly swallowed (`.catch(() => undefined)`) | Design doc's snippet uses a bare `void this.#refresh(provider)` | `AUTH-37` makes a failed background refresh non-fatal *because a valid token was already stamped* — a bare `void` leaves the rejection unhandled, which terminates the process under Node's default policy |
+| Module-layout drift: no `token-provider.ts`; `errors.ts` added; `AuthStepSettings` gains `bearerMarginMs` and `now` | Design doc's layout lists `token-provider.ts` as its own file (AUTH-11), lists no `errors.ts`, and gives `AuthStepSettings` four members | `TokenProvider` is a two-line type over `BearerToken` and belongs beside it in `credential.ts` (`module-organization.md:42`, one concept per file — a provider type and the token it returns are one concept). `errors.ts` is where the design's own "Error Types" section lands, matching 4c's `pipeline/errors.ts` precedent. `bearerMarginMs` surfaces AUTH-34's "configurable refresh margin" (default 30s); `now` is the injected clock, its own row above. File count is unchanged at fifteen |
+| `BearerTokenCache.refresh` validates the fetched token against the caller-injected `nowMs`, not `Date.now()` | Design doc's snippet calls `Date.now()` inside `#refresh` while `stamp()` takes an injected clock | Two clocks in one state machine: a caller (or test) driving time synthetically would have every fetched token rejected as expired, and production code could not control the second clock at all |
+| `AuthStepSettings.now` — the injected clock reaches all the way up to the step, not just the cache | Design doc (and this plan's own first draft) reads `Date.now()` directly inside `auth-step.ts` | The row above is only half a fix. `auth-step.ts` is the cache's ONLY caller, so an ambient `Date.now()` there is exactly the "second, invisible clock the caller cannot control" that row rejects — it makes every expiry/margin/three-zone boundary untestable through the step, which is why the original tests had to write `Date.now() + 60_000`. `docs/knowledge/testing.md:36` bans real-clock reads in a unit test outright. Phase 7a's `Clock` seam may supersede the field; a local hook avoids a forward dependency until then |
+| The background refresh's rejection is swallowed with a NARROWED `.catch`, rethrowing `InvariantViolation` | Design doc's snippet uses a bare `void this.#refresh(provider)` | `AUTH-37` makes a failed background refresh non-fatal *because a valid token was already stamped* — a bare `void` leaves the rejection unhandled, which terminates the process under Node's default policy. But a blanket catch also absorbs programmer errors, and `error-handling.md:24` requires a deliberately-ignored error be "narrowed to the one expected error type" while `:36` requires an `invariant` violation crash loudly. AUTH-37's "log-and-continue" half is deferred to 7b, which is where a `Logger` first exists |
+| `TokenProvider` takes `{signal}`; the call's `AbortSignal` is threaded from `StepContext.signal` to the fetch | Design doc's `TokenProvider = () => Promise<BearerToken>` accepts no cancellation | A token fetch is external I/O on the request path. `concurrency-and-async.md:44`: "a signal accepted at the top of a call chain must be passed through every layer down to the actual I/O primitive; a signal that stops at the first function is decoration." 5a Task 1 already exposes `StepContext.signal`, so one is available; without the parameter a hung provider pins the auth step, every retry nested under it, and the whole request, uncancellable |
+| `BearerTokenCache.refreshNow()` — the post-eviction path bypasses single-flight coalescing | Design doc's `oauth2ChallengeHook` calls plain `stamp()` after `evict()` | `AUTH-37`'s final clause: "The post-eviction challenge path MUST await a genuinely fresh fetch so the retry never re-sends the rejected token." `evict()` clears the cached token but not `#inFlight`, so `stamp()` can coalesce onto a fetch that started BEFORE the 401 — and `AUTH-11` explicitly permits a provider that "caches/refreshes internally", so that fetch can resolve to (and re-cache) the very token the server just rejected. Neither the design doc nor this plan's first draft mentioned the clause |
+| `AUTH-28`'s HTTPS guard is re-applied to a challenge replacement carrying a credential header | Design doc guards the outbound pass only | `AUTH-28` says "on ANY request path where a credential will be attached". The outbound guard is skipped entirely for `NO_AUTH`, and nothing constrains a caller-supplied `challengeHook` to preserve the request URL — so a hook answering a challenge (the documented use case, e.g. a custom OAuth2 grant) could stamp over plaintext. Guarded on the replacement actually carrying `Authorization`/`Proxy-Authorization`, so a deliberately credential-free replacement still passes |
+| `NonceCountStore` drains to the cap in a loop after admitting, not one victim before each insert | Design doc: "drained under the cap with a simple insertion-order eviction" | `concurrency-and-async.md:84` (XCUT-14) requires a server-keyed map "drain back under the cap after each insert **using a loop rather than a single pre-insert check-then-evict**, so a concurrent insert burst converges to the bound", and AUTH-19 words it as draining "after admitting a nonce". A single pre-insert evict removes at most one entry per insert and never converges under a burst of fresh server nonces |
+| The token68 synthetic key is `'token68'`, not `'__token68__'` | Design doc uses `'__token68__'` to avoid a name collision | `AUTH-12` spells the key literally, and Phase 9's conformance sweep reads it verbatim. RFC 7235's token68 is positional, never `name=value`, so the collision the `__` guarded against cannot arise |
+| `AuthResolutionError`/`PlaintextCredentialError` carry their identifying data as `readonly` fields, not only interpolated prose | Design doc's Error Types section describes only what each error "carries" in its message | `error-handling.md:6`/`:44` require identifying inputs as fields so they "survive serialization and appear in structured logs" and a log aggregator can index them "without parsing prose". `DigestChallengeUnsupportedError` already did this, so the file was inconsistent with itself |
+| The public barrel promotes the auth CONFIGURATION surface, not only `authStep`/`standardResilience` | Design doc keeps "the credential types … handlers" `@internal` while promoting the two functions | A promoted function whose parameter types are `@internal` is an API a caller cannot call. `ApiKeyCredential`/`NameKeyCredential` carry `#key`, making them *nominal* — no object literal substitutes — so `API_KEY` auth was unreachable from outside the package entirely, and `AuthDescriptor` must come from `createAuthDescriptor` because that is where AUTH-3 validates and freezes. api-extractor also reports each omission as `ae-forgotten-export`, failing Task 16's own `api`/`lint:publish` gates. Handler internals (challenge parser, MD5, Basic/Digest/composing, bearer cache) stay internal as designed |
 | `AUTH-31`'s gate has a pre-hook fast path when no caller hook is configured | Design doc gates only on the hook's returned replacement | The shipped default hooks preserve the request body verbatim, so a one-shot body already decides the outcome; running the hook first would evict a cached token and fetch a replacement only to discard it. A caller-supplied hook may legitimately substitute a replayable body, so it is still offered the challenge and gated on its actual result |
-| A 407 is answered from `Proxy-Authenticate` into `Proxy-Authorization`; a 401 from `WWW-Authenticate` into `Authorization` | Design doc reacts only to 401, which left `AUTH-25`'s proxy pairing unreachable | Without it `isProxy` could never legitimately be true and the whole proxy half of `AUTH-25` was dead code |
-| `AuthStepSettings.tiers` is one static value, not looked up per-call/per-operation from `ExecutionContext` | Design doc's `AuthTiers {perCall, operation, client}` implies three genuinely different lookup sources | No prior phase wires an auth-requirement extension point into `ExecutionContext` — that plumbing doesn't exist yet anywhere in this roadmap; `resolveAuthRequirement`'s own logic (AUTH-4..7) is unaffected either way |
+| Only the `operation` tier lacks a distinct source; `perCall` and `client` both have one | Design doc's `AuthTiers {perCall, operation, client}` implies three genuinely different lookup sources | `perCall` is genuinely per-call, sourced from `RequestOptions.auth` via `StepContext.options` (Task 14, matching the design doc's own §"Per-call tier override"); `client` is `authStep()`'s construction-time config. Only `operation` has no source, because no phase in this roadmap ships a per-operation layer — that residue is the Deferred Items row below, not a divergence in `resolveAuthRequirement`'s AUTH-4..7 logic, which is unchanged |
 | No async-variant preset | Reference's async standard pipeline (retry+instrumentation+caller-supplied scheduler) | 4c already dispositioned one `Promise`-only execution model |
 | `standardResilience()` installed only REDIRECT/RETRY/AUTH at original execution, not LOGGING | Design doc notes the reference preset also includes instrumentation | **Resolved 2026-07-28** — Phase 7b retrofit (Task 16) adds `loggingStep()` once 7b exists; no longer a live gap |
 
@@ -3775,7 +4276,7 @@ Digest response computation verified against locally-computed (not memorized) RF
 (Task 7) is produced by `basicDigestChallengeHook()` (Task 14) and consumed by `composingHandler.stamp()` (Task
 12) and `digestHandler().stamp()` (Task 10) with the same two fields (`method`, `requestTarget`) throughout.
 `AuthTiers`/`resolveAuthRequirement` (Task 5) is consumed by `AuthStepSettings.tiers` (Task 14) and by
-`NO_AUTH_SETTINGS`/`bearerOptions()` in Task 16's preset and test — all constructed via `createAuthDescriptor`/
+`noAuthSettings()`/`bearerOptions()` in Task 16's preset and test — all constructed via `createAuthDescriptor`/
 `createAuthRequirement` (Tasks 3–4), never a hand-built object literal that could drift from the frozen shape.
 
 **Known rough edge, deliberately left.** Tasks 6, 14, and 16 import `aRequestContext()` (Task 14, 16's `Cursor`-

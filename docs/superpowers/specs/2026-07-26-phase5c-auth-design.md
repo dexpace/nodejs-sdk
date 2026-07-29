@@ -253,7 +253,9 @@ utility that might not honor quoted-string commas. **Total by construction** (`A
 malformed challenge recovers at the next top-level comma (tracked by a quote-depth counter, not a naive `.split
 (',')`, which would break on a quoted value containing a comma); an unterminated quoted string terminates at
 end-of-input; parameters parsed before a malformed tail are kept. A bare scheme (token68 or no `=`) is emitted with
-an empty parameter map; a token68 value is recorded under a synthetic key (`'__token68__'`) so callers can
+an empty parameter map; a token68 value is recorded under the synthetic key `AUTH-12` names literally,
+`'token68'` (RFC 7235's token68 is positional, never `name=value`, so it cannot collide with a real
+auth-param), so callers can
 distinguish "scheme with no params" from "scheme with an opaque token" without a third variant shape.
 
 ## Stamping handlers (`basic.ts`, `digest.ts`, `md5.ts`, `static-key.ts`, `composing-handler.ts`)
@@ -546,11 +548,20 @@ preset now exist. Promoting the authoring surface any earlier would have frozen 
 reshape (the roadmap's own reasoning for withholding it through 5a). Promoted through `@dexpace/core`'s single
 public barrel as of this phase: `Stage`, `STAGE_ORDER`, `PILLAR_STAGES`, `StepDescriptor`, `StepContext`, `Next`,
 `PipelineBuilder`, `Runtime`, `retryStep`, `redirectStep` (5b's, promoted alongside since it is equally part of
-the authoring surface and 5b ships before this phase closes), `authStep`, `standardResilience`. Everything under
-`packages/core/src/auth/` *not* in that list (the credential types, challenge parser, handlers, bearer cache)
-stays `@internal` — a caller configures auth through `AuthStepSettings` passed to `authStep()`/`standardResilience
-()`, not by constructing handler internals directly. `packages/core/etc/core.api.md`'s diff at plan-writing time
-is the mechanical proof of exactly this surface and no more.
+the authoring surface and 5b ships before this phase closes), `authStep`, `standardResilience` — **and every type
+those signatures name**, because a promoted function whose parameter type is `@internal` is an API a caller
+cannot call. That second group is `AuthStepSettings`/`StandardResilienceOptions` and their transitive members
+(`AuthCredentialSet`, `AuthTiers`, `AuthDescriptor`, `AuthRequirement`, `AuthScheme`, `DigestAlgorithm`,
+`BearerToken`, `TokenProvider`, `ChallengeHook`, `RetryStepOptions`, `RedirectSettings`), the factories that are
+the only sanctioned way to build them (`createAuthDescriptor`, `createAuthRequirement`, `createBearerToken`, and
+the `ApiKeyCredential`/`NameKeyCredential` constructors — both classes carry `#key`, which makes them *nominal*,
+so no caller-side object literal substitutes for them), and the three error leaves callers need for `instanceof`
+narrowing. Everything under
+`packages/core/src/auth/` *not* in either list (the challenge parser, MD5, the handlers, the bearer cache)
+stays `@internal` — a caller *builds* an `AuthStepSettings` value from those factories and hands it to
+`authStep()`/`standardResilience()`, never constructing handler internals directly.
+`packages/core/etc/core.api.md`'s diff at plan-writing time is the mechanical proof of exactly this surface and
+no more; an `ae-forgotten-export` warning means the second group is still incomplete.
 
 ## Error Types
 
