@@ -34,6 +34,9 @@ because it depends on its siblings; it can execute alone. One consequence for Ta
   (Task 1 exports it `@internal` if Phase 1 kept it module-private)
 - `packages/core/src/http/request-options.js` — `RequestOptions`, `RequestOptions.EMPTY`
 - `packages/core/src/http/errors.js` — `DexpaceError`
+- `packages/core/src/io/errors.js` — `IoError` (tests only: Tasks 6 and 7 use it as the stand-in transport and
+  close failure, because `PAGE-28` requires the *original* cause to surface and a bare `Error` would not prove
+  that no pagination-flavoured wrapper was introduced)
 - `packages/core/src/seams/transport.js` — `Transport` (`send(request, options?, signal?): Promise<Response>`)
 - `packages/core/src/testing/fake-transport.js` — `FakeTransport`, `countingResponse()` (`@internal`, from 5a)
 - `packages/core/src/invariant.js` — `invariant()`
@@ -624,6 +627,7 @@ import type {Headers} from '../http/headers.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import type {Status} from '../http/status.js';
+import {invariant} from '../invariant.js';
 
 /**
  * A pagination strategy's parse output: the items on this page plus the request that fetches the next one
@@ -662,9 +666,16 @@ export class Page<T> {
   readonly status: Status;
   readonly headers: Headers;
   readonly request: Request;
+  // `#private` rather than the styleguide's default `private` (styleguide 6.6): `Page` is a *published* type
+  // holding a live connection, and `private` is compile-time-only — a consumer could reach the response through
+  // bracket access and close or re-read it behind the engine's back, breaking PAGE-3's single-owner rule and
+  // PAGE-27's close-exactly-once. Runtime unreachability is the requirement here, not just encapsulation.
   readonly #response: Response;
 
   constructor(response: Response, items: readonly T[]) {
+    invariant(response !== undefined, 'a Page must own a response (PAGE-3)');
+    invariant(items !== undefined, 'a Page’s items must never be null (PAGE-2)');
+
     this.#response = response;
     // Captured now, so they outlive the response (PAGE-2). Copied so a caller's later mutation cannot reach in.
     this.items = Object.freeze([...items]);
@@ -1048,7 +1059,12 @@ test('the default cap is effectively unbounded (PAGE-10)', async () => {
 
 test('per-call options reach every page exchange, not just the first (PAGE-36)', async () => {
   const transport = transportOf(3);
-  const options = RequestOptions.EMPTY;
+  // Deliberately NOT `RequestOptions.EMPTY`. The failure PAGE-36 guards is an engine that honours the caller's
+  // options on page 1 and falls back to the default on pages 2..N — and against `EMPTY` that bug is invisible,
+  // because the substituted default IS `EMPTY`. A distinctive instance makes the identity assertion bite.
+  // (Use whichever HTTP-3 `newBuilder()` setter Phase 1 actually shipped; the only thing that matters here is
+  // that `options !== RequestOptions.EMPTY`.)
+  const options = RequestOptions.EMPTY.newBuilder().timeout(1_234).build();
   const paginator = new Paginator({
     transport,
     initialRequest: initialRequest(),
@@ -1080,6 +1096,7 @@ import type {Request} from '../http/request.js';
 import type {RequestOptions} from '../http/request-options.js';
 import type {Response} from '../http/response.js';
 import type {Transport} from '../seams/transport.js';
+import {invariant} from '../invariant.js';
 import {PaginationError} from './errors.js';
 import {Page} from './page.js';
 import type {PaginationStrategy} from './strategy.js';
@@ -1116,8 +1133,10 @@ export interface PaginatorInit<T> {
  * that response rather than yielding it.
  */
 export class Paginator<T> {
+  // `#private` rather than `private` (styleguide 6.6 defaults to `private`): this is a published class, so the
+  // config bag must be unreachable via bracket access from consumer code, not merely compile-time-hidden.
+  // It is the class's ONLY field — PAGE-8 requires the engine to hold immutable configuration and nothing else.
   readonly #init: PaginatorInit<T>;
-  #pagesViewTaken = false;
 
   constructor(init: PaginatorInit<T>) {
     // PAGE-9: fail fast at construction, not lazily on the first fetch, so a misconfiguration surfaces at the
@@ -1128,6 +1147,10 @@ export class Paginator<T> {
       );
     }
     this.#init = Object.freeze({...init});
+
+    invariant(this.#init.transport !== undefined, 'Paginator requires a transport');
+    invariant(this.#init.initialRequest !== undefined, 'Paginator requires an initialRequest');
+    invariant(this.#init.strategy !== undefined, 'Paginator requires a strategy');
   }
 
   /**
@@ -1171,16 +1194,14 @@ export class Paginator<T> {
    * page it is holding stays open until the process exits. Either stay in a `for await`, or bind the pages you
    * pull with `await using` (see {@link Page}), or call `.return()` on the iterator yourself.
    *
-   * Single-use (PAGE-14): both a second `pages()` call and a second `[Symbol.asyncIterator]()` on the returned
-   * view fail loudly rather than silently restarting the walk.
+   * Single-use (PAGE-14) — **per view, not per paginator**. A second `[Symbol.asyncIterator]()` on *this*
+   * returned view fails loudly rather than silently restarting the walk. Calling `pages()` again is the
+   * sanctioned recovery path PAGE-14 itself names ("a caller restarts pagination by requesting a fresh view
+   * from the engine"), so it returns a new, independent view. Guarding `pages()` too would make the engine
+   * stateful, which PAGE-8 forbids ("the engine itself MUST hold only immutable configuration and be safe to
+   * share") and would break two concurrent callers sharing one `Paginator`.
    */
   pages(): AsyncIterable<Page<T>> {
-    if (this.#pagesViewTaken) {
-      throw new PaginationError(
-        'the page-level view is single-use; call pages() at most once per paginator',
-      );
-    }
-    this.#pagesViewTaken = true;
     const walk = this.#walk.bind(this);
     let iteratorTaken = false;
     return {
@@ -1217,6 +1238,12 @@ export class Paginator<T> {
         fetched += 1;
 
         const info = await parseOrClose(strategy, response, request);
+
+        // PAGE-4: parse must always return a well-formed result and must never signal termination through a
+        // side channel. A strategy that returns nothing is a programmer error, so it crashes at the fault
+        // rather than silently ending the walk as if the server had run out of pages.
+        invariant(info !== undefined, 'PaginationStrategy.parse must return a PageInfo, never undefined');
+        invariant(info.items !== undefined, 'PageInfo.items must never be null or absent (PAGE-2)');
 
         // PAGE-26/PAGE-33: an abort that landed while this exchange was in flight means the page must be
         // dropped AND closed rather than delivered.
@@ -1412,14 +1439,19 @@ test('advancing the page view closes the previous page (PAGE-12)', async () => {
   expect(closed).toEqual([0, 1]);
 });
 
-test('the page view is single-use — a second call throws (PAGE-14)', () => {
-  const paginator = new Paginator({
-    transport: transportOf(1),
-    initialRequest: initialRequest(),
-    strategy: twoPageStrategy(),
-  });
-  paginator.pages();
-  expect(() => paginator.pages()).toThrow(PaginationError);
+test('a second pages() call returns a fresh, independent view — the restart PAGE-14 names', async () => {
+  // PAGE-14's own recovery clause: "a caller restarts pagination by requesting a fresh view from the engine."
+  // Guarding pages() itself would block that path AND make the engine stateful, which PAGE-8 forbids.
+  const transport = transportOf(4);
+  const paginator = new Paginator({transport, initialRequest: initialRequest(), strategy: twoPageStrategy()});
+
+  const first = [];
+  for await (const page of paginator.pages()) first.push(page.items[0]);
+  const second = [];
+  for await (const page of paginator.pages()) second.push(page.items[0]);
+
+  expect(second).toEqual(first);
+  expect(transport.sendCount).toBe(4);
 });
 
 test('the page view is single-use at the ITERATOR level too (PAGE-14)', async () => {
@@ -2434,6 +2466,7 @@ git commit -m "feat(core): add cursor, page-number, and Link-header strategies (
 // instance threaded through every call).
 import {expect, test} from 'bun:test';
 import {Page} from './page.js';
+import {PaginationError} from './errors.js';
 import {paginateWithFetchers, type PagingOptions} from './fetchers.js';
 import type {Response} from '../http/response.js';
 
@@ -2596,6 +2629,33 @@ test('the cap bounds a fetcher pair that never terminates, fetching nothing extr
   expect(closed.sort()).toEqual(['a', 'x1', 'x2']);
 });
 
+test('the fetcher view is single-use at the iterator level, and does not re-run first() (PAGE-14, PAGE-34)', async () => {
+  let firstCalls = 0;
+  const iterable = paginateWithFetchers<string>({
+    first: () => {
+      firstCalls += 1;
+      return Promise.resolve({page: fakePage(['a'], () => undefined)});
+    },
+    next: () => {
+      throw new Error('must not be called');
+    },
+  });
+
+  for await (const _page of iterable) {
+    /* drain */
+  }
+
+  await expect(
+    (async () => {
+      for await (const _page of iterable) {
+        /* must not restart */
+      }
+    })(),
+  ).rejects.toBeInstanceOf(PaginationError);
+  // PAGE-34 says the first-page fetcher runs exactly once. Without the guard a second loop would run it again.
+  expect(firstCalls).toBe(1);
+});
+
 test('a throwing fetcher releases the held page, keeping its own failure primary (PAGE-15)', async () => {
   const fetcherFailure = new Error('page 2 fetch blew up');
   const closeFailure = new Error('close failed');
@@ -2635,6 +2695,7 @@ Expected: FAIL — `Cannot find module './fetchers.js'`.
 ```typescript
 // packages/core/src/pagination/fetchers.ts
 // SPDX-License-Identifier: MIT
+import {invariant} from '../invariant.js';
 import {PaginationError} from './errors.js';
 import type {Page} from './page.js';
 
@@ -2681,14 +2742,30 @@ export interface FetcherPaginationInit<T> {
  * **Next link wins** over the continuation token. A blank or whitespace-only link with no fallback token ends
  * the stream, as does an `undefined` return from either fetcher — an `undefined` first page yields an empty
  * stream rather than an error.
+ *
+ * **Single-use** (PAGE-14). This is a page-level view, so its iterator may be obtained at most once; a second
+ * `for await` over the same returned value throws rather than silently restarting. Without the guard a second
+ * loop would re-run `first()`, breaking PAGE-34's "exactly once" and double-consuming the walk. Call
+ * `paginateWithFetchers()` again for a fresh walk — the same restart path `Paginator.pages()` offers.
  */
 export function paginateWithFetchers<T>(init: FetcherPaginationInit<T>): AsyncIterable<Page<T>> {
   if (init.maxPages !== undefined && (!Number.isInteger(init.maxPages) || init.maxPages <= 0)) {
     throw new PaginationError(`maxPages must be a positive integer; received ${String(init.maxPages)}`);
   }
+  invariant(typeof init.first === 'function', 'paginateWithFetchers requires a first-page fetcher');
+  invariant(typeof init.next === 'function', 'paginateWithFetchers requires a next-page fetcher');
+
+  let iteratorTaken = false;
 
   return {
     async *[Symbol.asyncIterator](): AsyncGenerator<Page<T>> {
+      if (iteratorTaken) {
+        throw new PaginationError(
+          'the fetcher pagination view is single-use; its iterator may be obtained at most once',
+        );
+      }
+      iteratorTaken = true;
+
       const options: PagingOptions = {};
       let held: Page<T> | undefined;
       let delivered = 0;

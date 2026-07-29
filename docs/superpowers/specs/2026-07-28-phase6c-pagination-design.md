@@ -183,18 +183,32 @@ and the consumer receiving it, an abandonment can land. That is covered by the g
 whatever page is currently held.
 
 `PAGE-14`'s single-use rule is not free — a generator function called twice returns two independent generators —
-so it is guarded at **two** levels, and the second is the one that matters. Guarding only `pages()` would leave
-the hole the requirement explicitly names: `for await` calls `[Symbol.asyncIterator]()` afresh on every loop, so
-iterating a single returned view twice would silently restart the entire walk. The view therefore carries its own
-`iteratorTaken` flag as well, exactly as 6b's `SseStream` does. `items()` is deliberately **not** single-use:
-`PAGE-14` scopes the restriction to the page-level view, and `PAGE-8` requires two independent iterations to work.
+and the level it is guarded at is the level that matters. The hole the requirement explicitly names is at the
+*iterator*: `for await` calls `[Symbol.asyncIterator]()` afresh on every loop, so iterating a single returned view
+twice would silently restart the entire walk. Each view therefore carries its own `iteratorTaken` flag, exactly as
+6b's `SseStream` does.
+
+The guard goes **there and nowhere else.** Guarding `pages()` itself would be wrong twice over. `PAGE-14`'s own
+closing clause names the recovery path — *"a caller restarts pagination by requesting a fresh view from the
+engine"* — so a `pages()` that throws on its second call removes the escape the requirement hands the caller. And
+the flag would have to live on the `Paginator`, contradicting `PAGE-8`'s *"the engine itself MUST hold only
+immutable configuration and be safe to share"*: two concurrent consumers sharing one paginator would race, and
+one of them would get an error instead of a walk. So `pages()` mints a fresh single-use view on every call.
+`items()` is deliberately not single-use at either level: `PAGE-14` scopes the restriction to the page-level view,
+and `PAGE-8` requires two independent iterations to work.
 
 `PAGE-15`'s two-close-failures case uses native `SuppressedError`, the same mechanism 5a and 6b use — and it
 applies to the walk's *own* failure paths too, not only to back-to-back close failures. A generator whose body
 throws and whose `finally` then fails to close the held page would surface the close error and lose the transport
 or parse failure the caller actually needs. So the drive routine catches, releases with the walk's failure kept
-primary, and leaves the bare `finally` for the paths where nothing is in flight (exhaustion, `break`, consumer
-throw) — which is where `PAGE-15` wants a close error to surface on its own.
+primary, and leaves the bare `finally` for the paths where nothing is in flight (exhaustion and `break`) — which
+is where `PAGE-15` wants a close error to surface on its own.
+
+A **consumer throw** belongs with the `catch`, not the `finally`, and the distinction is easy to get backwards: a
+throw from a `for await` body is delivered *into* the generator at its suspended `yield`, so it lands inside the
+drive routine's own `try` and the consumer's error becomes the primary. That is the correct outcome — the caller
+needs their own failure back, with any close failure suppressed onto it — but it means the `finally` only ever
+runs with nothing in flight.
 
 ### `PAGE-12`'s scoped-construct obligation
 
@@ -302,18 +316,34 @@ and it gets a comment saying so.
 An alternative entry point for callers who already have per-page fetch functions:
 
 ```typescript
+interface FetcherPage<T> {
+  readonly page: Page<T>;
+  readonly nextLink?: string;
+  readonly continuationToken?: string;
+}
+
 function paginateWithFetchers<T>(init: {
-  first: (options: PagingOptions) => Promise<Page<T> | undefined>;
-  next: (link: string, options: PagingOptions) => Promise<Page<T> | undefined>;
+  first: (options: PagingOptions) => Promise<FetcherPage<T> | undefined>;
+  next: (key: string, options: PagingOptions) => Promise<FetcherPage<T> | undefined>;
   maxPages?: number;
 }): AsyncIterable<Page<T>>;
 ```
 
+A fetcher returns a `FetcherPage`, not a bare `Page`. It has to: `PAGE-34` keys the *next* fetch off "the
+previous page's next link, falling back to its continuation token," and `Page` — whose fields `PAGE-2` fixes at
+items, status, headers, and originating request — carries neither. The link and token are per-hop routing state,
+not page state, so they ride alongside the page rather than being bolted onto it.
+
 The first fetcher runs exactly once. Subsequent pages key off the previous page's next link, falling back to its
 continuation token only when no link is present — **link wins**. A blank link with no fallback token, or an
-`undefined` page from either fetcher, ends the stream; an `undefined` first page yields an empty stream. Each
+`undefined` return from either fetcher, ends the stream; an `undefined` first page yields an empty stream. Each
 fetcher builds a page that owns its response and must not close it; a fetcher that throws before building the
 page remains responsible for that response (a TSDoc contract obligation — the engine has no handle to close).
+
+The returned iterable is a page-level view, so `PAGE-14` binds it exactly as it binds `Paginator.pages()`: its
+iterator may be obtained at most once, and a second `for await` over the same value throws instead of silently
+re-running `first()` — which would otherwise break `PAGE-34`'s "exactly once" outright. Calling
+`paginateWithFetchers()` again is the restart path.
 
 `PAGE-35`'s single mutable `PagingOptions` instance is threaded through every fetcher call, so a custom retriever
 can stash state between pages. Cross-call mutation visibility is the *point*, so it is documented rather than
@@ -368,9 +398,16 @@ query-params.ts` — the `@internal` encoder export named above.
 
 ## Public Barrel
 
-Promoted: `Paginator`, `Page`, `PageInfo`, `PaginationStrategy`, `cursorStrategy`, `pageNumberStrategy`,
-`linkHeaderStrategy`, `paginateWithFetchers`, `PagingOptions`, `PaginationError`. A caller consuming a paginated
-endpoint needs all of them, and no later phase reshapes them — 6c closes Phase 6.
+Promoted: `Paginator`, `PaginatorInit`, `Page`, `PageInfo`, `pageInfo`, `PaginationStrategy`, `cursorStrategy`,
+`pageNumberStrategy`, `linkHeaderStrategy`, `paginateWithFetchers`, `FetcherPaginationInit`, `FetcherPage`,
+`PagingOptions`, `PaginationError`. A caller consuming a paginated endpoint needs all of them, and no later
+phase reshapes them — 6c closes Phase 6.
+
+Three of those are non-obvious and worth stating so the api-extractor report is not read as drift. `pageInfo` is
+the *factory*, not the interface: anyone writing a custom `PaginationStrategy` has to return one, and `PAGE-4`
+requires the result be well-formed and frozen, which only the factory guarantees. `PaginatorInit` and
+`FetcherPaginationInit` are the argument types of exported constructors/functions — a caller cannot name the
+shape they must pass without them.
 
 Kept `@internal`: `spliceQueryParam`, `readQueryParam`, and the link-header tokenizer. They are strategy
 implementation details; publishing them would publish a second URL-manipulation surface next to Phase 1's
@@ -400,6 +437,10 @@ implementation details; publishing them would publish a second URL-manipulation 
   containing `+`, `%20`, `/`, `=`, and spaces.
 - A second `[Symbol.asyncIterator]()` on one `pages()` view throwing `PaginationError` **and** driving zero extra
   transport sends — the assertion that distinguishes a real single-use guard from one placed on `pages()` alone.
+  Its mirror image: a **second `pages()` call returning a fresh working view** that drives a full second fetch
+  sequence, which is `PAGE-14`'s own named restart path and would fail against a paginator-level guard.
+- The same iterator-level single-use assertion on `paginateWithFetchers()`' returned view, paired with a
+  `firstCalls === 1` check — an unguarded view re-runs the first-page fetcher and breaks `PAGE-34` outright.
 - A transport failure surfacing unwrapped (`PAGE-28`), and a transport failure whose held-page release *also*
   fails surfacing as `SuppressedError` with the transport failure primary (`PAGE-15`).
 - The capped fetcher walk asserting the next-page fetcher ran `N-1` times, not `N`, and that every page fetched

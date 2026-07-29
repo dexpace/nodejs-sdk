@@ -15,9 +15,41 @@ implements or depends on a schema library. A second package, `packages/codec-jso
 `JSON.parse`/`JSON.stringify` and imports core only through its **public** entry point — which is what forces the
 seam's barrel promotion.
 
-**Tech Stack:** TypeScript 5.8+, `bun test`, `fast-check` for the two round-trip invariants, `expect-type` for the
-type-level assertions, `api-extractor` (now two reports). No new runtime dependencies in either package —
-`SEAM-1` untouched. No `node:` imports anywhere in either package.
+**Tech Stack:** TypeScript 5.8+, `bun test`, `fast-check` for the encode/decode round-trip invariant (Task 10
+Step 5 — one property test, and `packages/codec-json/package.json` must declare `fast-check` for it to resolve),
+`expect-type` for the type-level assertions, `api-extractor` (now two reports). No new runtime dependencies in
+either package — `SEAM-1` untouched. No `node:` imports anywhere in either package.
+
+> ### ⛔ BLOCKED on one cross-phase decision — Task 5's close-failure path
+>
+> **`SuppressedError` is not available on the declared runtime floor.** Task 5's `closingAfter` helper builds a
+> `SuppressedError` to keep a decode failure primary when `response.close()` also fails. `SuppressedError` is a
+> V8 global from the full Explicit Resource Management proposal and is **absent on every 18.x runtime**; adding
+> `esnext.disposable` to `lib` supplies the *type* only. So it type-checks, passes `bun test` on a modern local
+> runtime, and then throws `ReferenceError: SuppressedError is not defined` at call time on the floor — the
+> exact `NFR-10` trap `docs/knowledge/tooling-and-quality-gates.md:60-61` describes. Task 13 Step 8's
+> `bun run verify:node-floor` and `bun run test:node` would both fail.
+>
+> This is **the same open decision Phase 4b records** at `plans/2026-07-25-phase4b-recovery-chain.md:22-47`,
+> which names Phases 5a, 6b and 6c as the other sites. **6a is a fifth site** — add it there. Whichever option
+> lands must land in all five:
+>
+> - **(a) Raise `engines.node`** past the first release shipping Explicit Resource Management. Consumer-visible
+>   breaking change, and the checkpoint forbids unsanctioned floor moves. Confirm the exact release first.
+> - **(b) A runtime-guarded `suppress(primary, secondary)` helper** in `packages/core/src/`, using native
+>   `SuppressedError` when `globalThis.SuppressedError` exists and attaching a `suppressed` property otherwise.
+>   Changes Task 5's `expect(caught).toBeInstanceOf(SuppressedError)` assertion to assert the primary's type and
+>   its `suppressed` property instead.
+>
+> Everything else in this plan is executable; only Task 5's `closingAfter` and its two close-failure tests wait
+> on the decision. Do not substitute a bare `finally { await response.close() }` as a workaround — that lets a
+> close failure replace the decode failure, which is the defect `closingAfter` exists to prevent.
+>
+> **Second open decision, non-blocking: assertion density.** This phase ships one `invariant()` call (Task 6)
+> across roughly fifteen functions, against `docs/knowledge/assertions.md:6-7`'s 2-per-function module average.
+> Phase 4b raised the identical gap at `plans/2026-07-25-phase4b-recovery-chain.md:49-51`; both phases must
+> resolve it the same way or the codebase ends up half-migrated, which
+> `docs/knowledge/styleguide-overview.md:32-33` forbids outright.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, 4a, 4b, 4c, 5a, 5b, and 5c are implemented exactly as
 their plans specify. **6b (SSE) and 6c (Pagination) are not prerequisites and this plan is not a prerequisite for
@@ -62,6 +94,19 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
 - **Library builds use plain `tsc`, never `Bun.build`** (`styleguide/typescript-bun/08`).
 - **Every new class/interface is `Object.freeze`d or `readonly` throughout.** No mutable serde state
   (`SERDE-29`).
+- **ESLint limits are hard:** `max-params: 3`, `max-depth: 3`, `max-lines-per-function: 70`. `max-params`
+  **counts optional parameters**, so `(a, b, c, d?)` is four and errors. Phase 1 reserves the `eslint-disable`
+  for private builder-internal constructors only — nothing in this phase qualifies. Three functions here would
+  have breached it in a naive shape and are built as options-object forms instead: `foldTristate`,
+  `decodeResponse`, `decodeSuccessResponse`.
+- **`exactOptionalPropertyTypes` is on.** Every optional field is declared `?: T | undefined`, never bare
+  `?: T` — and an assignment whose right-hand side may be `undefined` (`this.status = options?.status`) needs
+  the field's declared type to include `undefined`, or it is a compile error `bun test` will not catch.
+- **`DexpaceError` already sets `this.name = new.target.name`** (Phase 2,
+  `plans/2026-07-23-phase2-seam-foundations.md:352-356`). Subclasses must **not** restate it —
+  `docs/knowledge/error-handling.md:8-9` makes that explicit, and a hardcoded string becomes a lie on rename.
+- **Every `as` carries a why-comment** (`docs/knowledge/type-system.md:12-13`), in implementation and test code
+  alike.
 
 ---
 
@@ -149,11 +194,11 @@ import {DexpaceError} from '../http/errors.js';
 export interface SerdeErrorOptions {
   readonly cause?: unknown;
   /** HTTP status, present only when the error was raised by a status-aware response handler (SERDE-28). */
-  readonly status?: number;
+  readonly status?: number | undefined;
   /** `ETag` of the originating response, preserved so conditional-request context survives (SERDE-28). */
-  readonly etag?: string | null;
+  readonly etag?: string | null | undefined;
   /** `Location` of the originating response, preserved so redirect context survives (SERDE-28). */
-  readonly location?: string | null;
+  readonly location?: string | null | undefined;
 }
 
 /**
@@ -163,13 +208,16 @@ export interface SerdeErrorOptions {
  * `SerdeError` base class. Use {@link isSerdeError} to catch both directions at once.
  */
 export class SerializationError extends DexpaceError {
-  readonly status?: number;
+  // Declared `T | undefined` rather than `status?: number`: `exactOptionalPropertyTypes` is on, and the
+  // constructor assigns a possibly-undefined value. The key must exist either way — a reader checking
+  // `'status' in error` should get a straight answer.
+  readonly status: number | undefined;
   readonly etag: string | null;
   readonly location: string | null;
 
   constructor(message: string, options?: SerdeErrorOptions) {
     super(message, {cause: options?.cause});
-    this.name = 'SerializationError';
+    // No `this.name = ...` here: DexpaceError's constructor already does `this.name = new.target.name`.
     this.status = options?.status;
     this.etag = options?.etag ?? null;
     this.location = options?.location ?? null;
@@ -183,13 +231,14 @@ export class SerializationError extends DexpaceError {
  * A genuine stream failure is **not** this type — it propagates as `IoError`, unwrapped (SERDE-12).
  */
 export class DeserializationError extends DexpaceError {
-  readonly status?: number;
+  /** See {@link SerializationError.status} for why this is `| undefined` and not an optional property. */
+  readonly status: number | undefined;
   readonly etag: string | null;
   readonly location: string | null;
 
   constructor(message: string, options?: SerdeErrorOptions) {
     super(message, {cause: options?.cause});
-    this.name = 'DeserializationError';
+    // No `this.name = ...`: DexpaceError's `new.target.name` covers it.
     this.status = options?.status;
     this.etag = options?.etag ?? null;
     this.location = options?.location ?? null;
@@ -229,7 +278,8 @@ git commit -m "feat(core): add SerializationError, DeserializationError, isSerde
 **Interfaces:**
 - Consumes: nothing at runtime — this task is pure type declarations.
 - Produces: `interface Schema<T> {parse(input: unknown): T}`; `interface Serializer` with
-  `serialize(value: unknown): Uint8Array`, `serializeInto(value: unknown, target: Uint8Array, offset?: number):
+  `serializeToString(value: unknown): string`, `serialize(value: unknown): Uint8Array`,
+  `serializeInto(value: unknown, target: Uint8Array, offset?: number):
   number`, `serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>`;
   `interface Deserializer` with `deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T` and
   `deserializeFrom<T>(source: ReadableStream<Uint8Array>, schema: Schema<T>, typeName?: string): Promise<T>`;
@@ -282,6 +332,13 @@ test('serializeInto returns a byte count and accepts an optional offset', () => 
   expectTypeOf<Serializer['serializeInto']>().parameter(2).toEqualTypeOf<number | undefined>();
 });
 
+test('all four SEAM-20 allocation profiles are present, including the fresh-string one', () => {
+  expectTypeOf<Serializer['serializeToString']>().returns.toEqualTypeOf<string>();
+  expectTypeOf<Serializer['serialize']>().returns.toEqualTypeOf<Uint8Array>();
+  expectTypeOf<Serializer>().toHaveProperty('serializeTo');
+  expectTypeOf<Serializer>().toHaveProperty('serializeInto');
+});
+
 test('the stream profiles take platform stream types, never a core-internal io type', () => {
   expectTypeOf<Serializer['serializeTo']>().parameter(1).toEqualTypeOf<WritableStream<Uint8Array>>();
   expectTypeOf<Deserializer['deserializeFrom']>().parameter(0).toEqualTypeOf<ReadableStream<Uint8Array>>();
@@ -324,6 +381,14 @@ export interface Schema<T> {
  * No method takes a {@link Schema} — encoding has the value in hand and needs no witness.
  */
 export interface Serializer {
+  /**
+   * Encode to a freshly allocated string.
+   *
+   * One of `SEAM-20`'s four allocation profiles. A codec whose wire form is not textual (CBOR, protobuf) throws
+   * a {@link SerializationError} from this method rather than inventing a lossy rendering.
+   */
+  serializeToString(value: unknown): string;
+
   /** Encode to a freshly allocated buffer. */
   serialize(value: unknown): Uint8Array;
 
@@ -424,8 +489,10 @@ git commit -m "feat(core)!: reshape Serde into a schema-witness SPI, closing SEA
 - Produces: `type Tristate<T>`; `const TRISTATE_BRAND: unique symbol`; `function absent(): Tristate<never>`;
   `function nullValue(): Tristate<never>`; `function present<T>(value: NonNullable<T>): Tristate<T>`;
   `function ofNullable<T>(value: T | null | undefined): Tristate<T>`;
-  `function foldTristate<T, R>(t: Tristate<T>, onAbsent: () => R, onNull: () => R, onPresent: (value: T) => R): R`;
-  `function valueOrNull<T>(t: Tristate<T>): T | null`; `function isAbsent`/`isNull`/`isPresent`.
+  `interface TristateBranches<T, R> {readonly onAbsent: () => R; readonly onNull: () => R; readonly onPresent:
+  (value: T) => R}`; `function foldTristate<T, R>(t: Tristate<T>, branches: TristateBranches<T, R>): R`;
+  `function valueOrNull<T>(t: Tristate<T>): T | null`; `function isAbsent`/`isNull`/`isPresent`;
+  `function isTristate`; `function tristateToString`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -441,6 +508,7 @@ import {
   isAbsent,
   isNull,
   isPresent,
+  isTristate,
   nullValue,
   ofNullable,
   present,
@@ -473,7 +541,11 @@ test('ofNullable maps null and undefined to Null, never to Absent', () => {
 
 test('foldTristate dispatches all three branches', () => {
   const label = <T,>(t: ReturnType<typeof ofNullable<T>> | ReturnType<typeof absent>) =>
-    foldTristate(t, () => 'A', () => 'N', (v) => `P:${String(v)}`);
+    foldTristate(t, {
+      onAbsent: () => 'A',
+      onNull: () => 'N',
+      onPresent: (v) => `P:${String(v)}`,
+    });
   expect(label(absent())).toBe('A');
   expect(label(nullValue())).toBe('N');
   expect(label(present('hi'))).toBe('P:hi');
@@ -494,10 +566,26 @@ test('sentinels have a stable, identity-free string form (SERDE-30)', () => {
 });
 
 test('values are frozen — a Tristate cannot be mutated after construction', () => {
+  // `as {kind: string}`: deliberately widening away `readonly` and the literal type to prove the *runtime*
+  // freeze, which the type system alone cannot demonstrate.
   const t = present(1) as {kind: string};
   expect(() => {
     t.kind = 'absent';
   }).toThrow();
+});
+
+test('isTristate accepts only branded values — truth table', () => {
+  // A custom type guard needs the full table, not just the happy case (docs/knowledge/testing.md:34).
+  expect([isTristate(absent()), isTristate(nullValue()), isTristate(present(1))]).toEqual([true, true, true]);
+  expect([
+    isTristate(null),
+    isTristate(undefined),
+    isTristate({}),
+    isTristate({kind: 'absent'}),
+    isTristate('absent'),
+    isTristate(0),
+    isTristate([]),
+  ]).toEqual([false, false, false, false, false, false, false]);
 });
 ```
 
@@ -585,7 +673,16 @@ export function present<T>(value: NonNullable<T>): Tristate<T> {
  * definition observed the field, so "missing" is not one of the outcomes available to it.
  */
 export function ofNullable<T>(value: T | null | undefined): Tristate<T> {
+  // `as NonNullable<T>`: the two nullish cases returned above, so the compiler's `T | null | undefined` is
+  // narrower than it can prove for an unresolved `T`. No runtime check is possible on an erased type parameter.
   return value === null || value === undefined ? NULL : present<T>(value as NonNullable<T>);
+}
+
+/** The three branches {@link foldTristate} dispatches to. */
+export interface TristateBranches<T, R> {
+  readonly onAbsent: () => R;
+  readonly onNull: () => R;
+  readonly onPresent: (value: T) => R;
 }
 
 /**
@@ -594,20 +691,19 @@ export function ofNullable<T>(value: T | null | undefined): Tristate<T> {
  * Named `foldTristate`, not `fold`, because `Outcome<T>` (Phase 4b) already owns a `fold` in this codebase.
  * Both land in the same public barrel eventually; two different `fold`s exported from one entry point would be
  * an ambiguity a caller has to resolve at every import site.
+ *
+ * The branches travel in one object rather than as three trailing parameters: positionally this is a
+ * four-parameter function, and ESLint's `max-params: 3` counts them all. It also reads better — three bare
+ * arrow arguments in a row are indistinguishable at the call site.
  */
-export function foldTristate<T, R>(
-  tristate: Tristate<T>,
-  onAbsent: () => R,
-  onNull: () => R,
-  onPresent: (value: T) => R,
-): R {
+export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R {
   switch (tristate.kind) {
     case 'absent':
-      return onAbsent();
+      return branches.onAbsent();
     case 'null':
-      return onNull();
+      return branches.onNull();
     case 'present':
-      return onPresent(tristate.value);
+      return branches.onPresent(tristate.value);
   }
 }
 
@@ -616,14 +712,26 @@ export function valueOrNull<T>(tristate: Tristate<T>): T | null {
   return tristate.kind === 'present' ? tristate.value : null;
 }
 
-export function isAbsent<T>(tristate: Tristate<T>): boolean {
+/** True when the key was missing from the wire — "leave unchanged" (SERDE-18). */
+export function isAbsent<T>(
+  tristate: Tristate<T>,
+): tristate is {readonly [TRISTATE_BRAND]: true; readonly kind: 'absent'} {
   return tristate.kind === 'absent';
 }
 
-export function isNull<T>(tristate: Tristate<T>): boolean {
+/** True when the key carried an explicit wire `null` — "clear" (SERDE-18). */
+export function isNull<T>(
+  tristate: Tristate<T>,
+): tristate is {readonly [TRISTATE_BRAND]: true; readonly kind: 'null'} {
   return tristate.kind === 'null';
 }
 
+/**
+ * True when the key carried a value, narrowing so `.value` is reachable without a second check (SERDE-18).
+ *
+ * All three predicates narrow, so a caller can branch on any of them; they are not a mix of narrowing and
+ * plain-boolean forms.
+ */
 export function isPresent<T>(
   tristate: Tristate<T>,
 ): tristate is {readonly [TRISTATE_BRAND]: true; readonly kind: 'present'; readonly value: T} {
@@ -637,19 +745,18 @@ export function isTristate(value: unknown): value is Tristate<unknown> {
 
 /** Stable, identity-free rendering for logs and assertions (SERDE-30). */
 export function tristateToString<T>(tristate: Tristate<T>): string {
-  return foldTristate(
-    tristate,
-    () => 'Absent',
-    () => 'Null',
-    (value) => `Present(${String(value)})`,
-  );
+  return foldTristate(tristate, {
+    onAbsent: () => 'Absent',
+    onNull: () => 'Null',
+    onPresent: (value) => `Present(${String(value)})`,
+  });
 }
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd packages/core && bun test src/serde/tristate.test.ts && cd ../.. && bun run typecheck`
-Expected: 10 pass, 0 fail; typecheck exits 0.
+Expected: 11 pass, 0 fail; typecheck exits 0.
 
 - [ ] **Step 6: Commit**
 
@@ -687,6 +794,9 @@ const fakeSerde = (mediaType: string, encode: (value: unknown) => Uint8Array): S
   mediaType,
   serializer: {
     serialize: encode,
+    serializeToString: () => {
+      throw new Error('unused');
+    },
     serializeInto: () => {
       throw new Error('unused');
     },
@@ -819,8 +929,13 @@ git commit -m "feat(core): add serdeBody() defaulting Content-Type to the serde'
 **Interfaces:**
 - Consumes: `Response` from `../http/response.js`; `Deserializer`, `Schema` from `../seams/serde.js`;
   `DeserializationError` from `./errors.js`; `IoError` from `../io/errors.js`.
-- Produces: `function decodeResponse<T>(response: Response, deserializer: Deserializer, schema: Schema<T>,
-  typeName?: string): Promise<T>`.
+- Produces: `interface DecodeTarget<T> {readonly schema: Schema<T>; readonly typeName?: string | undefined}`;
+  `function decodeResponse<T>(response: Response, deserializer: Deserializer, target: DecodeTarget<T>):
+  Promise<T>`.
+
+**Why the third parameter is an object.** `(response, deserializer, schema, typeName?)` is four positional
+parameters and `max-params: 3` counts the optional one, so the naive shape is a lint error at Task 7's gate. The
+schema and its diagnostic label describe one thing — the decode target — so they travel together.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -900,13 +1015,13 @@ function fakeResponse(body: ReadableStream<Uint8Array> | null): {
 
 test('a valid body decodes to the typed value and the response closes exactly once', async () => {
   const {response, closes} = fakeResponse(bodyOf('{"id":7}'));
-  await expect(decodeResponse(response, jsonish, dtoSchema, 'Dto')).resolves.toEqual({id: 7});
+  await expect(decodeResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'})).resolves.toEqual({id: 7});
   expect(closes()).toBe(1);
 });
 
 test('a missing body throws DeserializationError naming the target, and still closes', async () => {
   const {response, closes} = fakeResponse(null);
-  const promise = decodeResponse(response, jsonish, dtoSchema, 'Dto');
+  const promise = decodeResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'});
   await expect(promise).rejects.toBeInstanceOf(DeserializationError);
   await expect(promise).rejects.toThrow(/Dto/);
   expect(closes()).toBe(1);
@@ -914,14 +1029,14 @@ test('a missing body throws DeserializationError naming the target, and still cl
 
 test('a missing body with no typeName falls back to a documented label', async () => {
   const {response} = fakeResponse(null);
-  await expect(decodeResponse(response, jsonish, dtoSchema)).rejects.toThrow(/the target type/);
+  await expect(decodeResponse(response, jsonish, {schema: dtoSchema})).rejects.toThrow(/the target type/);
 });
 
 test('a codec/shape failure is wrapped as DeserializationError with the original chained', async () => {
   const {response, closes} = fakeResponse(bodyOf('{"id":"not-a-number"}'));
   let caught: unknown;
   try {
-    await decodeResponse(response, jsonish, dtoSchema, 'Dto');
+    await decodeResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'});
   } catch (e: unknown) {
     caught = e;
   }
@@ -935,7 +1050,7 @@ test('a genuine stream failure propagates unwrapped as IoError (SERDE-12)', asyn
   const {response, closes} = fakeResponse(failingBody(ioFailure));
   let caught: unknown;
   try {
-    await decodeResponse(response, jsonish, dtoSchema, 'Dto');
+    await decodeResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'});
   } catch (e: unknown) {
     caught = e;
   }
@@ -961,15 +1076,16 @@ test('a close failure does NOT mask the decode failure — decode primary, close
   const closeFailure = new IoError('close failed');
   let caught: unknown;
   try {
-    await decodeResponse(
-      failingCloseResponse(bodyOf('{"id":"not-a-number"}'), closeFailure),
-      jsonish,
-      dtoSchema,
-      'Dto',
-    );
+    await decodeResponse(failingCloseResponse(bodyOf('{"id":"not-a-number"}'), closeFailure), jsonish, {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    });
   } catch (e: unknown) {
     caught = e;
   }
+  // `as SuppressedError`: narrowed by the `toBeInstanceOf` above, which the compiler cannot follow.
+  // NOTE: these three assertions change shape if the cross-phase `SuppressedError` decision lands on the
+  // runtime-guarded `suppress()` helper — see this plan's ⛔ banner.
   expect(caught).toBeInstanceOf(SuppressedError);
   expect((caught as SuppressedError).error).toBeInstanceOf(DeserializationError);
   expect((caught as SuppressedError).suppressed).toBe(closeFailure);
@@ -978,7 +1094,10 @@ test('a close failure does NOT mask the decode failure — decode primary, close
 test('a close failure on the SUCCESS path surfaces plainly — it is the only failure there is', async () => {
   const closeFailure = new IoError('close failed');
   await expect(
-    decodeResponse(failingCloseResponse(bodyOf('{"id":7}'), closeFailure), jsonish, dtoSchema, 'Dto'),
+    decodeResponse(failingCloseResponse(bodyOf('{"id":7}'), closeFailure), jsonish, {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    }),
   ).rejects.toBe(closeFailure);
 });
 ```
@@ -1030,11 +1149,21 @@ async function closingAfter<T>(response: Response, work: () => Promise<T>): Prom
   return result;
 }
 
+/** What to decode into: the runtime witness, plus the optional label that names it in an error message. */
+export interface DecodeTarget<T> {
+  readonly schema: Schema<T>;
+  readonly typeName?: string | undefined;
+}
+
 /**
  * Decode a response body directly through a {@link Deserializer} into the schema's type (SERDE-27).
  *
- * The body is **streamed**, never materialized first. The response is closed on every path — success, missing
- * body, codec failure, and stream failure alike — so no path can strand the connection.
+ * The live body stream is handed to the deserializer — **this function never buffers it**. Whether the codec
+ * on the other side buffers is the codec's business: `@dexpace/codec-json` must, because `JSON.parse` has no
+ * incremental form, and that limitation is recorded in the phase's Deviation Ledger.
+ *
+ * The response is closed on every path — success, missing body, codec failure, and stream failure alike — so no
+ * path can strand the connection, and a close failure never displaces the failure that actually matters.
  *
  * Failure routing follows SERDE-12: only malformed-input and shape-mismatch failures are wrapped as
  * {@link DeserializationError} with the original chained; a genuine stream failure (`IoError`) propagates
@@ -1043,20 +1172,19 @@ async function closingAfter<T>(response: Response, work: () => Promise<T>): Prom
 export async function decodeResponse<T>(
   response: Response,
   deserializer: Deserializer,
-  schema: Schema<T>,
-  typeName?: string,
+  target: DecodeTarget<T>,
 ): Promise<T> {
-  const target = typeName ?? UNNAMED_TARGET;
+  const label = target.typeName ?? UNNAMED_TARGET;
   return closingAfter(response, async () => {
     const body = response.body;
     if (body === null) {
-      throw new DeserializationError(`response carried no body to decode into ${target}`);
+      throw new DeserializationError(`response carried no body to decode into ${label}`);
     }
     try {
-      return await deserializer.deserializeFrom(body, schema, typeName);
+      return await deserializer.deserializeFrom(body, target.schema, target.typeName);
     } catch (e: unknown) {
       if (e instanceof IoError || e instanceof DeserializationError) throw e;
-      throw new DeserializationError(`failed to decode the response body into ${target}`, {cause: e});
+      throw new DeserializationError(`failed to decode the response body into ${label}`, {cause: e});
     }
   });
 }
@@ -1085,8 +1213,9 @@ git commit -m "feat(core): add decodeResponse() streaming handler closing on eve
 **Interfaces:**
 - Consumes: everything Task 5 produced, plus `toHttpError` and `HttpStatusError` from
   `../body/http-status-error.js`, and `Status` from `../http/status.js`.
-- Produces: `function decodeSuccessResponse<T>(response: Response, deserializer: Deserializer, schema: Schema<T>,
-  typeName?: string): Promise<T>`.
+- Produces: `function decodeSuccessResponse<T>(response: Response, deserializer: Deserializer, target:
+  DecodeTarget<T>): Promise<T>` — the same three-parameter shape as `decodeResponse`, for the same
+  `max-params: 3` reason.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1145,29 +1274,33 @@ function fakeStatusResponse(
 
 test('2xx decodes the body', async () => {
   const {response, closes} = fakeStatusResponse(200, bodyOf('{"id":1}'));
-  await expect(decodeSuccessResponse(response, jsonish, dtoSchema, 'Dto')).resolves.toEqual({id: 1});
+  await expect(decodeSuccessResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'})).resolves.toEqual({id: 1});
   expect(closes()).toBe(1);
 });
 
 test('500 throws the mapped HTTP error, not a decode of the error payload as the success type', async () => {
-  const {response} = fakeStatusResponse(500, bodyOf('{"error":"boom"}'));
-  await expect(decodeSuccessResponse(response, jsonish, dtoSchema, 'Dto')).rejects.toBeInstanceOf(
+  const {response, closes} = fakeStatusResponse(500, bodyOf('{"error":"boom"}'));
+  await expect(decodeSuccessResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'})).rejects.toBeInstanceOf(
     HttpStatusError,
   );
+  // SERDE-27's close-on-every-path covers this branch too, even though the close happens inside `toHttpError`.
+  // Asserting it here is what keeps that delegation honest if 3b's implementation ever changes.
+  expect(closes()).toBe(1);
 });
 
 test('a non-canonical 599 is treated as a server error, not as an "other" status', async () => {
-  const {response} = fakeStatusResponse(599, bodyOf('nope'));
-  await expect(decodeSuccessResponse(response, jsonish, dtoSchema, 'Dto')).rejects.toBeInstanceOf(
+  const {response, closes} = fakeStatusResponse(599, bodyOf('nope'));
+  await expect(decodeSuccessResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'})).rejects.toBeInstanceOf(
     HttpStatusError,
   );
+  expect(closes()).toBe(1);
 });
 
 test('304 closes and raises a status-leading DeserializationError preserving ETag/Location', async () => {
   const {response, closes} = fakeStatusResponse(304, null, {etag: 'W/"v1"', location: '/next'});
   let caught: unknown;
   try {
-    await decodeSuccessResponse(response, jsonish, dtoSchema, 'Dto');
+    await decodeSuccessResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'});
   } catch (e: unknown) {
     caught = e;
   }
@@ -1182,7 +1315,7 @@ test('304 closes and raises a status-leading DeserializationError preserving ETa
 
 test('a 1xx is also an "other" status, closed and reported, never decoded', async () => {
   const {response, closes} = fakeStatusResponse(102, bodyOf('{"id":1}'));
-  await expect(decodeSuccessResponse(response, jsonish, dtoSchema, 'Dto')).rejects.toBeInstanceOf(
+  await expect(decodeSuccessResponse(response, jsonish, {schema: dtoSchema, typeName: 'Dto'})).rejects.toBeInstanceOf(
     DeserializationError,
   );
   expect(closes()).toBe(1);
@@ -1218,13 +1351,12 @@ import {toHttpError} from '../body/http-status-error.js';
 export async function decodeSuccessResponse<T>(
   response: Response,
   deserializer: Deserializer,
-  schema: Schema<T>,
-  typeName?: string,
+  target: DecodeTarget<T>,
 ): Promise<T> {
   const status = response.status;
 
   if (status.isSuccess) {
-    return decodeResponse(response, deserializer, schema, typeName);
+    return decodeResponse(response, deserializer, target);
   }
 
   if (status.isClientError || status.isServerError) {
@@ -1241,7 +1373,7 @@ export async function decodeSuccessResponse<T>(
   return closingAfter(response, () =>
     Promise.reject(
       new DeserializationError(
-        `${String(status.code)}: response status is not decodable into ${typeName ?? UNNAMED_TARGET}`,
+        `${String(status.code)}: response status is not decodable into ${target.typeName ?? UNNAMED_TARGET}`,
         {status: status.code, etag, location},
       ),
     ),
@@ -1345,6 +1477,8 @@ export {
 } from './serde/tristate.js';
 export type {Tristate} from './serde/tristate.js';
 export {decodeResponse, decodeSuccessResponse} from './serde/response-handlers.js';
+export type {DecodeTarget} from './serde/response-handlers.js';
+export type {TristateBranches} from './serde/tristate.js';
 export {serdeBody} from './body/serde-body.js';
 ```
 
@@ -1463,7 +1597,8 @@ explicit, then remove it once Step 3 lands.
   "devDependencies": {
     "@dexpace/core": "workspace:*",
     "typescript": "catalog:",
-    "@microsoft/api-extractor": "catalog:"
+    "@microsoft/api-extractor": "catalog:",
+    "fast-check": "catalog:"
   },
   "scripts": {
     "build": "tsc -b",
@@ -1475,6 +1610,11 @@ explicit, then remove it once Step 3 lands.
 `@dexpace/core` appears in **both** `peerDependencies` (the shipped contract, guaranteeing one copy in a
 consumer's tree) and `devDependencies` (so the workspace resolves it locally for build and test). That pairing is
 the standard shape and is what `sdk-design-nodejs/02` §2 prescribes.
+
+`fast-check` is a `devDependency` here, not only at the root: Task 10 Step 5 ships
+`src/json-serde.property.test.ts` in *this* package, and under the monorepo's isolated linker
+(`docs/knowledge/tooling-and-quality-gates.md:64`) an undeclared import does not resolve. Under a hoisted layout
+it would resolve by accident, which is the same failure one release later.
 
 - [ ] **Step 4: Add the root catalog (`NFR-14`)**
 
@@ -1513,13 +1653,23 @@ Expected: `bun.lock` updates and resolves both packages with a single `@dexpace/
   "compilerOptions": {
     "composite": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "target": "<copy verbatim from packages/core/tsconfig.json>",
+    "lib": ["<copy verbatim from packages/core/tsconfig.json>"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [{"path": "../core"}]
 }
 ```
+
+**`target`/`lib` are restated here, not inherited.** `docs/knowledge/tooling-and-quality-gates.md:51` requires
+each package's `lib`/`target` to be pinned to *its own* declared `engines.node` floor rather than inherited from
+the root's editor-tooling config — and this package declares `"engines": {"node": ">=18.17"}` of its own.
+Inheriting is how a symbol newer than the floor type-checks cleanly and then throws at call time on the floor
+runtime (`tooling-and-quality-gates.md:60-61`), which is exactly the `SuppressedError` trap in this plan's ⛔
+banner. Copy the two values from `packages/core/tsconfig.json`; if they differ from what core declares, stop —
+one of the two packages is wrong.
 
 Add `{"path": "./packages/codec-json"}` to the root `tsconfig.json`'s `references` array.
 
@@ -1541,18 +1691,52 @@ Add `{"path": "./packages/codec-json"}` to the root `tsconfig.json`'s `reference
 export {};
 ```
 
-- [ ] **Step 7: Generalize the SEAM-1 verifier**
+- [ ] **Step 7: Write the package README**
+
+`docs/knowledge/documentation.md:28-31` makes this a condition of publishing, not a nicety: every publishable
+package ships a README whose top gets a new engineer from zero to one working call in about 30 seconds — one
+sentence on what it is, the install line, one runnable example, links out for the rest.
+
+````markdown
+<!-- packages/codec-json/README.md -->
+# @dexpace/codec-json
+
+The reference JSON wire codec for the dexpace SDK — `JSON.parse`/`JSON.stringify` behind the `Serde` seam, with
+PATCH tri-state semantics wired in by default. Zero dependencies beyond a `@dexpace/core` peer.
+
+```sh
+bun add @dexpace/codec-json @dexpace/core
+```
+
+```typescript
+import {decodeResponse, serdeBody} from '@dexpace/core';
+import {jsonSerde} from '@dexpace/codec-json';
+import {z} from 'zod';                     // any schema library works — this package depends on none
+
+const serde = jsonSerde();
+const User = z.object({id: z.number(), name: z.string()});
+
+const body = serdeBody({name: 'ada'}, serde);            // Content-Type: application/json
+const user = await decodeResponse(response, serde.deserializer, {schema: User, typeName: 'User'});
+```
+
+The schema you pass is both the runtime witness and the source of the static type — there is no separate type
+argument to keep in sync. See the SDK docs for `Tristate` PATCH fields (`tristate()` / `tristateObject()`) and
+for the unknown-field policy, which is your schema's decision, not this codec's.
+````
+
+- [ ] **Step 8: Generalize the SEAM-1 verifier**
 
 In `scripts/verify-seam-1.mjs`, replace the hard-coded `packages/core/package.json` read with a loop over
 `readdirSync('packages')`, asserting `dependencies` is `{}` for every package and additionally asserting the
 peer-dependency pair for every non-core package. Keep the existing failure message format.
 
-- [ ] **Step 8: Run the gate**
+- [ ] **Step 9: Run the gate**
 
 Run: `bun install && bun run typecheck && bun run build && bun test scripts/verify-seam-1.test.mjs && bun run verify:seam-1`
 Expected: all green; `packages/codec-json/dist/index.js` exists.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add packages/codec-json package.json tsconfig.json bun.lock scripts/verify-seam-1.mjs scripts/verify-seam-1.test.mjs packages/core/package.json
@@ -1580,7 +1764,7 @@ git commit -m "build: scaffold @dexpace/codec-json with peer-dep dedup and a ver
 // SPDX-License-Identifier: MIT
 // Exercises: SERDE-1 (round-trip through one bundle), SERDE-2 (declared media type), SERDE-3 (never closes a
 // caller stream), SERDE-4 (offset, byte count, RangeError with no cause), SERDE-9 (library error never escapes),
-// SERDE-25 (fresh instance per call).
+// SERDE-25 (fresh instance per call), SEAM-20 (all four allocation profiles).
 import {expect, test} from 'bun:test';
 import {SerializationError} from '@dexpace/core';
 import {jsonSerde} from './json-serde.js';
@@ -1599,6 +1783,15 @@ test('each call returns a fresh, frozen bundle (SERDE-25)', () => {
 test('serialize encodes to UTF-8 JSON bytes', () => {
   const bytes = jsonSerde().serializer.serialize({id: 1, name: 'ünïcode'});
   expect(new TextDecoder().decode(bytes)).toBe('{"id":1,"name":"ünïcode"}');
+});
+
+test('serializeToString is the fresh-string allocation profile SEAM-20 requires', () => {
+  const serde = jsonSerde();
+  expect(serde.serializer.serializeToString({id: 1, name: 'ünïcode'})).toBe('{"id":1,"name":"ünïcode"}');
+  // The string and byte profiles are two views of one encoding, not two encoders that can drift.
+  expect(new TextEncoder().encode(serde.serializer.serializeToString({a: 1}))).toEqual(
+    serde.serializer.serialize({a: 1}),
+  );
 });
 
 test('an unencodable value throws SerializationError, never the library type (SERDE-9)', () => {
@@ -1697,18 +1890,27 @@ export interface JsonSerdeOptions {
 const ENCODER = new TextEncoder();
 const MEDIA_TYPE = 'application/json';
 
-function encodeToBytes(value: unknown, replacer: ((key: string, value: unknown) => unknown) | undefined): Uint8Array {
-  let text: string;
+function encodeToText(value: unknown, replacer: ((key: string, value: unknown) => unknown) | undefined): string {
   try {
-    text = JSON.stringify(value, replacer) ?? 'null';
+    // `?? 'null'`: JSON.stringify returns `undefined` (not a string) for a top-level undefined/function/symbol
+    // and for a top-level Absent the replacer has already turned into null. Emitting the JSON null literal is
+    // the only representable answer for a byte- or string-producing profile.
+    return JSON.stringify(value, replacer) ?? 'null';
   } catch (e: unknown) {
     throw new SerializationError('failed to encode value as JSON', {cause: e});
   }
-  return ENCODER.encode(text);
+}
+
+function encodeToBytes(value: unknown, replacer: ((key: string, value: unknown) => unknown) | undefined): Uint8Array {
+  return ENCODER.encode(encodeToText(value, replacer));
 }
 
 function makeSerializer(replacer: ((key: string, value: unknown) => unknown) | undefined): Serializer {
   return Object.freeze({
+    serializeToString(value: unknown): string {
+      return encodeToText(value, replacer);
+    },
+
     serialize(value: unknown): Uint8Array {
       return encodeToBytes(value, replacer);
     },
@@ -1756,11 +1958,21 @@ function makeDeserializer(): Deserializer {
   });
 }
 
+/**
+ * A behaviour-neutral stand-in for the Tristate replacer, replaced in Task 11.
+ *
+ * Not `undefined`: `useTristate ? undefined : undefined` is a lint error (`no-unnecessary-condition`) and reads
+ * as a typo. A passthrough keeps this task independently green and lint-clean while making the seam Task 11
+ * fills obvious.
+ */
+const PASSTHROUGH_REPLACER = (_key: string, value: unknown): unknown => value;
+
 /** Build a fresh JSON {@link Serde} (SERDE-1, SERDE-2, SERDE-25). */
 export function jsonSerde(options?: JsonSerdeOptions): Serde {
   const useTristate = options?.tristate ?? true;
-  // Task 11 replaces `undefined` with the Tristate replacer when `useTristate` is true.
-  const replacer = useTristate ? undefined : undefined;
+  // Task 11 swaps PASSTHROUGH_REPLACER for the real `tristateReplacer`. Until then the option is accepted but
+  // has no observable effect, which is why SERDE-19's proof lives in Task 11's tests, not this task's.
+  const replacer = useTristate ? PASSTHROUGH_REPLACER : undefined;
   return Object.freeze({
     mediaType: MEDIA_TYPE,
     serializer: makeSerializer(replacer),
@@ -1781,7 +1993,7 @@ export type {JsonSerdeOptions} from './json-serde.js';
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd packages/codec-json && bun test src/json-serde.test.ts`
-Expected: 9 pass, 0 fail.
+Expected: 10 pass, 0 fail.
 
 - [ ] **Step 6: Commit**
 
@@ -1943,6 +2155,8 @@ function decodeText<T>(text: string, schema: Schema<T>, typeName: string | undef
 
   let parsed: unknown;
   try {
+    // `as unknown`: JSON.parse is typed `any`, which would silently infect everything downstream. The cast
+    // narrows *away* from `any`, the one direction the type-system chapter asks for at a boundary.
     parsed = JSON.parse(text) as unknown;
   } catch (e: unknown) {
     throw new DeserializationError(`malformed JSON while decoding ${target}`, {cause: e});
@@ -1973,6 +2187,16 @@ function makeDeserializer(): Deserializer {
       schema: Schema<T>,
       typeName?: string,
     ): Promise<T> {
+      // `text` accumulates the WHOLE body before parsing, and is deliberately uncapped.
+      //
+      // SERDE-27 asks a decoder not to materialize the body. `JSON.parse` has no incremental form, so this
+      // codec cannot honor that — a limitation of the format, not of the seam: `decodeResponse` hands over the
+      // live stream and never buffers, and a codec with a streaming parser satisfies SERDE-27 fully behind this
+      // same interface. Recorded in the phase's Deviation Ledger.
+      //
+      // No byte cap: truncating a legitimate large payload is a worse failure than the memory it would save,
+      // and a caller who needs a bound imposes it on the transport, where the whole response is bounded at once.
+      //
       // A streaming decoder keeps multi-byte characters intact across chunk boundaries; decoding each chunk
       // independently would corrupt any character split across two reads.
       const decoder = new TextDecoder('utf-8');
@@ -1999,7 +2223,7 @@ function makeDeserializer(): Deserializer {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/codec-json && bun test src/json-serde.test.ts`
-Expected: 18 pass, 0 fail.
+Expected: 19 pass, 0 fail.
 
 - [ ] **Step 5: Add the round-trip property test**
 
@@ -2146,7 +2370,7 @@ export function tristateReplacer(this: unknown, key: string, value: unknown): un
 In `packages/codec-json/src/json-serde.ts`, replace the Task 9 placeholder line
 
 ```typescript
-const replacer = useTristate ? undefined : undefined;
+const replacer = useTristate ? PASSTHROUGH_REPLACER : undefined;
 ```
 
 with
@@ -2154,6 +2378,8 @@ with
 ```typescript
 const replacer = useTristate ? tristateReplacer : undefined;
 ```
+
+and delete `PASSTHROUGH_REPLACER` — nothing else references it.
 
 and add `import {tristateReplacer} from './tristate-replacer.js';`.
 
@@ -2197,12 +2423,20 @@ git commit -m "feat(codec-json): add the Tristate replacer with top-level/array 
 // Exercises: SERDE-16 (missing → Absent, explicit null → Null, value → Present with element type preserved),
 // SERDE-17 (a missing key resolves to Absent via the combinator's own default, not a JSON.parse reviver).
 import {expect, test} from 'bun:test';
-import type {Schema} from '@dexpace/core';
+import {expectTypeOf} from 'expect-type';
+import type {Schema, Tristate} from '@dexpace/core';
 import {tristate, tristateObject} from './tristate-schema.js';
 
 const numberSchema: Schema<number> = {
   parse(input: unknown): number {
     if (typeof input !== 'number') throw new Error('not a number');
+    return input;
+  },
+};
+
+const stringSchema: Schema<string> = {
+  parse(input: unknown): string {
+    if (typeof input !== 'string') throw new Error('not a string');
     return input;
   },
 };
@@ -2241,6 +2475,16 @@ test('tristateObject leaves non-tristate keys untouched', () => {
   const schema = tristateObject({age: numberSchema});
   expect(schema.parse({age: 1, other: 'kept'}).age.kind).toBe('present');
 });
+
+test('tristateObject preserves each field\'s element type through the mapped return (SERDE-16)', () => {
+  // `tristateObject`'s return is a mapped-plus-conditional type built behind an `as never`, so a runtime test
+  // cannot catch an inference regression here — only `expectTypeOf` can (docs/knowledge/testing.md:30).
+  const parsed = tristateObject({age: numberSchema, name: stringSchema}).parse({});
+  expectTypeOf(parsed.age).toEqualTypeOf<Tristate<number>>();
+  expectTypeOf(parsed.name).toEqualTypeOf<Tristate<string>>();
+  // A key the shape never named stays `unknown`, not `Tristate<unknown>`.
+  expectTypeOf(parsed.somethingElse).toBeUnknown();
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2272,6 +2516,8 @@ export function tristate<T>(inner: Schema<T>): Schema<Tristate<T>> {
     parse(input: unknown): Tristate<T> {
       if (input === MISSING || input === undefined) return absent();
       if (input === null) return nullValue();
+      // `as NonNullable<T>`: the null and undefined branches returned above, so the value cannot be nullish —
+      // a fact the compiler cannot derive through `inner.parse`'s unconstrained `T`.
       return present<T>(inner.parse(input) as NonNullable<T>);
     },
   };
@@ -2293,11 +2539,15 @@ export function tristateObject<S extends Record<string, Schema<unknown>>>(
       if (typeof input !== 'object' || input === null) {
         throw new TypeError('tristateObject expects an object');
       }
+      // `as Record<string, unknown>`: the guard above established it is a non-null object; TypeScript narrows
+      // to `object`, which is not indexable.
       const source = input as Record<string, unknown>;
       const out: Record<string, unknown> = {...source};
       for (const [key, schema] of fields) {
         out[key] = schema.parse(key in source ? source[key] : MISSING);
       }
+      // `as never`: the declared return is a mapped-plus-conditional type the compiler cannot see this loop
+      // building key by key. The type-level test below is what actually checks it — no runtime test can.
       return out as never;
     },
   };
@@ -2316,7 +2566,7 @@ export {tristateReplacer} from './tristate-replacer.js';
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd packages/codec-json && bun test src/tristate-schema.test.ts`
-Expected: 6 pass, 0 fail.
+Expected: 7 pass, 0 fail.
 
 - [ ] **Step 6: Commit**
 
@@ -2426,6 +2676,7 @@ test.each([
   ['string → float', '"1.5"', numberSchema],
   ['string → boolean', '"true"', boolSchema],
   ['empty string → integer', '""', intSchema],
+  ['empty string → float', '""', numberSchema],
   ['empty string → boolean', '""', boolSchema],
   ['float → integer (lossy narrowing)', '1.5', intSchema],
   ['boolean → integer', 'true', intSchema],
@@ -2518,6 +2769,14 @@ target column **Resolved in Phase 6a**, adding one sentence of evidence each:
   non-core package, and `cross-package.test.ts` proves the brand survives the boundary.
 - `Concrete Serde implementation (@dexpace/codec-json)` and `SEAM-21` — both closed.
 
+Do **not** mark `NFR-8`/`NFR-9` resolved here. `NFR-8` names "the runtime-wired SPI seams … (serde)" and "the
+Tristate type" among the surfaces a shipped keep-configuration must cover, and both are created in this phase —
+but the keep-config and its shrink-and-run guard are one workspace-wide deliverable.
+`plans/2026-07-28-phase9-cross-cutting-conformance.md` ships `@dexpace/shrink-test` and already lists
+`@dexpace/codec-json` and `jsonSerde` in `participatingPackages` and its fixture app. 6a's only obligation is
+that both surfaces stay reachable through the public barrels, which Task 7 and Task 13 Step 1 prove. Record the
+deferral against Phase 9 by name so a Phase 9 sweep does not read two MUSTs as dropped.
+
 - [ ] **Step 8: Run the full gate**
 
 Run: `cd /home/mohammad/Projects/dexpace/nodejs-sdk && bun install && bun run typecheck && bun run lint && bun run build && bun test --coverage && bun run api && bun run lint:publish && bun run verify:dual-consumption && bun run verify:seam-1 && bun run verify:node-floor && bun run test:node && bun run audit`
@@ -2544,3 +2803,6 @@ Append these to the running ledger when this phase completes:
 | `SERDE-23` satisfied by delegation, not enforcement | `SERDE-23` (SHOULD) | Core cannot override a caller's schema strictness without defeating the point of caller-supplied schemas. Documented as a recommendation in the codec's TSDoc |
 | `Serde` is not generic in a payload type | Phase 2's provisional `Serde<T>` | A bundle is per-format, not per-type, once the witness is a decode parameter — which is what `SERDE-1` says |
 | `SERDE-7`'s reified/inline decode helper is not shipped | `SERDE-7` | TypeScript has no reified generics; the schema parameter is already mandatory on every decode entry point, so there is no less-typed path for a helper to route away from |
+| No serde-specific error base class; two flat leaves under `DexpaceError` plus an `isSerdeError` guard | `SEAM-23`, `SERDE-9`/`SERDE-10` ("both of the common serde exception root") | The checkpoint's §5.2 two-level cap is why 3b retrofitted `IoError`'s tier away; a `SerdeError` base would be the third instance of the banned shape. `DexpaceError` is the common root and `isSerdeError` is the catch-one-category mechanism, so the requirement's intent holds and its structure does not |
+| `@dexpace/codec-json` buffers the whole decoded body before parsing, with no byte cap | `SERDE-27` ("without first materializing the whole body as a string/byte array") | `JSON.parse` has no incremental form. `decodeResponse` itself never buffers, so the seam honors the requirement and this one codec cannot; a streaming-parser codec satisfies it behind the same interface. A cap is deliberately not imposed — truncating a legitimate large payload is worse than the memory it saves |
+| `foldTristate` and both response handlers take an options object where the reference's shape would be positional | `docs/knowledge/function-design.md:22-23` vs `max-params: 3` (recorded corpus conflict) | Four positional parameters is a lint error; the corpus's prose rule and its own enforcement threshold disagree by one, and this phase follows the enforcement threshold, as 4b's `fold` did |

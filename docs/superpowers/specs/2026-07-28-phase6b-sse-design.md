@@ -85,18 +85,29 @@ reads — which is most of `SSE-27` and `SSE-28` for free rather than reimplemen
 ## The Parser
 
 ```typescript
+/** SSE's own end-of-stream sentinel — not 3a's `END_OF_STREAM`, which is `read()`'s `-1`. */
+const SSE_END: unique symbol;
+
 /** @internal */
 class SseLineReader {
   constructor(source: BufferedSource, maxLineBytes?: number);
-  nextLine(): Promise<string | typeof END_OF_STREAM>;
+  nextLine(): Promise<string | typeof SSE_END>;
 }
 
 /** @internal */
 class SseParser {
   constructor(source: BufferedSource, options?: {maxLineBytes?: number});
-  next(): Promise<SseEvent | typeof END_OF_STREAM>;
+  next(): Promise<SseEvent | typeof SSE_END>;
 }
 ```
+
+**Three details of 3a's surface shape the reader, and getting any of them wrong is silent.**
+`BufferedSource` has no public constructor — instances come from `BufferedSource.overStream(stream)` /
+`overBytes(bytes)`, and `overStream` takes the `ReadableStream` itself, not a reader. `readByte()` is typed
+`Promise<number>` and **rejects** with `EndOfStreamError` when the source is spent (`IO-11`); it has no
+`undefined` result, so the reader probes `exhausted()` *before* each read rather than testing the read's value.
+And `readBytes()` takes no count — it drains everything — so `SSE-12`'s confirmed three-byte BOM consume is
+`readExactly(3)`.
 
 `SseParser` is a class, not a generator, because `SSE-15`/`SSE-16` require observable state (the end sentinel
 must stay stable across repeated pulls; the BOM-consumed flag must persist) and `SSE-17` requires it to *not* own
@@ -135,17 +146,39 @@ the same choice 3a made for `readUtf8Line()`.
 `SSE-20`'s defensive copy is `Object.freeze(data.slice())` at construction. There is no copy-with operation in
 this phase: no requirement asks for one, and nothing in 6b or a later phase mutates an event.
 
+`makeSseEvent` is the one construction point, so it is where the two field constraints the grammar enforces are
+asserted (`docs/knowledge/assertions.md:6-9`): a `retryMs` that is a non-negative safe integer (`SSE-11`) and an
+`id` free of `U+0000` (`SSE-9`). Both are positive-and-negative-space checks on a programmer error rather than a
+stream condition — the parser is the only production caller and it already filters both, so a violation here
+means the filter broke, which is exactly what an `invariant` is for.
+
 ## The Facade
 
 ```typescript
+interface SseStreamOptions {
+  readonly onReleaseFailure?: (error: unknown) => void;
+}
+
+interface SseStreamFromOptions extends SseStreamOptions {
+  readonly maxLineBytes?: number;
+  readonly signal?: AbortSignal;
+}
+
 class SseStream implements AsyncIterable<SseEvent> {
-  constructor(parser: SseParser, resource: {close(): Promise<void>});
+  constructor(parser: SseParser, resource: SseResource, options?: SseStreamOptions);
   [Symbol.asyncIterator](): AsyncIterator<SseEvent>;
   close(): Promise<void>;
 }
 
-function sseStreamFrom(response: Response, options?: {maxLineBytes?: number}): SseStream;
+function sseStreamFrom(response: Response, options?: SseStreamFromOptions): SseStream;
 ```
+
+**Cancellation is an `AbortSignal`, as every long-running operation's is** (`docs/knowledge/api-design.md:34`,
+`docs/knowledge/concurrency-and-async.md:18`). For a pull-based stream the abort *action* is a close, so the
+signal adds a trigger rather than a code path: an iterator between pulls then ends cleanly (`SSE-27`) and one
+blocked in a read surfaces `IoError` (`SSE-31`), both releasing exactly once. The listener is registered by
+`sseStreamFrom`, not by the constructor, because a constructor may only assign its arguments to fields
+(`docs/knowledge/data-modeling.md:24`).
 
 The facade owns exactly one closeable resource and closes it exactly once across every termination path
 (`SSE-23`). Three flags carry the whole lifecycle: `iteratorTaken` (`SSE-26`'s single-pass rule), `closed`
@@ -161,6 +194,16 @@ internal release routine, not inferred from context:
 - Release on an **explicit `close()`** — a failing close propagates. The caller asked; the caller hears.
 - Release with **an error already in flight** (`SSE-29`, `SSE-36`) — the primary error propagates with the close
   failure attached via native `SuppressedError`, the same mechanism 5a uses.
+
+> **`SuppressedError` is blocked on a cross-phase decision, and 6b does not get to make it.**
+> `plans/2026-07-25-phase4b-recovery-chain.md:24-48` establishes that `SuppressedError` is a V8 global from the
+> full Explicit Resource Management proposal, absent on every 18.x runtime — Node backported
+> `Symbol.dispose`/`Symbol.asyncDispose` alone — while `engines.node` is `">=18.17"` and `verify:node-floor`
+> pins exactly that. `esnext.disposable` supplies the *type* only, so the construction type-checks, passes
+> `bun test`, and then throws `ReferenceError` on the floor runner. The open options are raising
+> `engines.node` or adding a runtime-guarded `suppress(primary, secondary)` helper; whichever lands must land
+> across 4b, 5a, 6a, 6b and 6c together. Everything this section says about *which* error stays primary is
+> unaffected by that choice — only the construction call is.
 
 "Out-of-band" is a `Logger` concern and no `Logger` exists until Phase 7. 6b's release routine takes an optional
 `onReleaseFailure?: (error: unknown) => void` callback, defaulting to a no-op, so Phase 7 wires a real logger in
@@ -200,6 +243,12 @@ becomes the string `"undefined"` at run time. So:
 - **`close()` remains the supported teardown on every runtime**, and dispose delegates to it, so there is one
   release path and it inherits close's idempotence rather than adding a second guard.
 
+One consequence to state plainly, because it is easy to write a test that cannot compile: an optional
+`[Symbol.asyncDispose]` means `SseStream` is not an `AsyncDisposable`, and `await using` requires one. So
+`await using stream = sseStreamFrom(...)` does **not** type-check under this design — a stream typed as *maybe*
+disposable is not disposable. The member is callable directly, and that is what the test exercises; the
+statement form arrives with the floor move, not before it.
+
 Promoting this to an unconditional `implements AsyncDisposable` is a one-line change gated on `engines.node`
 moving past 18.18; the roadmap's deferred-items row now says so instead of claiming no public resource type
 exists. Naming `Symbol.asyncDispose` in a type position also requires `esnext.disposable` on the TypeScript
@@ -224,10 +273,23 @@ adding a `skip`/`done` pair to it would force every existing `fold` call site in
 variants that can never occur there. Same union idiom, same styleguide pattern, separate type — reuse of the
 *shape*, which is what `sdk-design-nodejs/07` §7.2 actually argues for.
 
+The union is closed, so the adapter's `switch` closes with `default: return assertNever(outcome)`
+(`docs/knowledge/data-modeling.md:16`) — a fourth outcome added later must be a compile error here, not a
+silently dropped event.
+
 `SSE-33`'s joining (`data.join('\n')`, `''` when empty) happens here and only here — `SSE-8` is explicit that the
 parser must not join. `SSE-35`'s laziness is a plain `async function*`: the mapper runs inside the loop body, so a
 consumer taking one element decodes exactly one event. `SSE-34`'s Skip drains inside the same pull, which is the
 one sanctioned exception to `SSE-39`'s 1:1 rule ("only as many as needed to produce one element").
+
+**`SSE-36`'s release-then-propagate belongs to the adapter, not to the facade.** A mapper throw looks like it
+should ride the facade's existing catch, and it does not: that catch only sees failures raised by the facade's
+*own* pull of the parser. A throw from the adapter's loop body unwinds by calling the facade iterator's
+`return()`, which runs the facade's **quiet** release — the path `SSE-30` requires to swallow a close failure.
+Left there, the close error would be swallowed exactly where `SSE-36` says to attach it. So the adapter wraps
+the mapper call itself, releases through the facade's public `close()` (explicit-close semantics), and attaches
+any close failure as suppressed; the facade's later `return()` finds the resource already released and does
+nothing (`SSE-28`).
 
 ## Enforcing `SSE-37`
 
@@ -261,9 +323,9 @@ Phase 9's sweep reads this table rather than re-deriving it.
 
 | Surface | From | Why |
 |---|---|---|
-| `BufferedSource` (`read`, `peek`, `close`) | 3a | `peek()` is `SSE-12`'s lookahead; `close()` is already idempotent and already rejects later reads, covering most of `SSE-27`/`SSE-28` |
+| `BufferedSource` (`overStream`, `exhausted`, `readByte`, `readExactly`, `peek`, `close`) | 3a | `peek()` is `SSE-12`'s lookahead; `close()` is already idempotent and already rejects later reads, covering most of `SSE-27`/`SSE-28`. `exhausted()` — not a sentinel from `readByte()` — is how end of stream is detected, because `readByte()` rejects rather than returning one |
 | `IoError` | 3a | Every read-path failure surfaces as one shape, including the torn-down-mid-read case |
-| `SuppressedError` usage pattern | 5a | `SSE-29`/`SSE-36`'s "close failure attached to the primary" is the identical mechanism |
+| `SuppressedError` usage pattern | 5a | `SSE-29`/`SSE-36`'s "close failure attached to the primary" is the identical mechanism — **and inherits 5a's unresolved blocker**, see below |
 | `Response.body` / `Response.close()` | 3b | `sseStreamFrom` binds to them; it does not reach for a transport — which is also half of why `SSE-38` holds by construction |
 | The `kind`-discriminated union idiom | 4b | `MapperOutcome<T>` mirrors `Outcome<T>`'s shape without extending its type |
 
@@ -271,22 +333,36 @@ Phase 9's sweep reads this table rather than re-deriving it.
 
 ```
 packages/core/src/sse/
-  event.ts          # SseEvent, sseEventsEqual, isSseEventEmpty, sseEventToString   (SSE-20–SSE-22)
-  line-reader.ts    # SseLineReader — CR/LF/CRLF framing, BOM strip, optional cap    (SSE-2, SSE-12, SSE-19)
+  event.ts          # SseEvent, SseEventFields, makeSseEvent, sseEventsEqual,
+                    # isSseEventEmpty, sseEventToString                              (SSE-20–SSE-22)
+  line-reader.ts    # SSE_END, SseLineReader, SseLineTooLongError                    (SSE-2, SSE-12, SSE-19)
   parser.ts         # SseParser — field grammar, dispatch, EOF                       (SSE-1, SSE-3–SSE-16)
-  stream.ts         # SseStream, sseStreamFrom                                       (SSE-23–SSE-32)
-  typed.ts          # MapperOutcome, SseMapper, typedSseStream                       (SSE-33–SSE-36)
+  stream.ts         # SseResource, SseStreamOptions, SseStreamFromOptions,
+                    # SseStream, sseStreamFrom                                       (SSE-23–SSE-32)
+  typed.ts          # MapperOutcome, mapperValue, MAPPER_SKIP, MAPPER_DONE,
+                    # SseMapper, typedSseStream                                      (SSE-33–SSE-36)
   errors.ts         # SseStreamError
 ```
+
+`SseLineTooLongError` lives beside the only thing that raises it rather than in `errors.ts`: the cap is the line
+reader's own policy, and a caller who never sets `maxLineBytes` can never see the type. `SSE_END` likewise stays
+with the reader that defines the sentinel.
 
 No folder barrel (`docs/knowledge/module-organization.md:18`).
 
 ## Public Barrel
 
-Promoted: `SseEvent`, `SseStream`, `sseStreamFrom`, `typedSseStream`, `MapperOutcome`, `SseMapper`,
-`SseStreamError`, `sseEventsEqual`, `isSseEventEmpty`, `sseEventToString`. A caller consuming an SSE endpoint
-needs all of them, and unlike 5a's pillar-step surface there is no later sub-phase that might reshape them —
-6c never touches SSE.
+Promoted — values: `sseStreamFrom`, `SseStream`, `typedSseStream`, `mapperValue`, `MAPPER_SKIP`, `MAPPER_DONE`,
+`makeSseEvent`, `sseEventsEqual`, `isSseEventEmpty`, `sseEventToString`, `SseStreamError`,
+`SseLineTooLongError`. Types: `SseEvent`, `SseEventFields`, `SseResource`, `SseStreamOptions`,
+`SseStreamFromOptions`, `MapperOutcome`, `SseMapper`.
+
+A caller consuming an SSE endpoint needs all of them, and unlike 5a's pillar-step surface there is no later
+sub-phase that might reshape them — 6c never touches SSE. The three that are less obvious: `makeSseEvent` is
+how a test or a fake produces an event without reaching for the `@internal` parser; `mapperValue`/`MAPPER_SKIP`/
+`MAPPER_DONE` are the only sanctioned way to build a `MapperOutcome`, since the union's members are frozen
+literals a caller should not hand-roll; and `SseLineTooLongError` is catchable only by the caller who opted into
+`maxLineBytes`, so withholding it would leave that caller matching on a message.
 
 Kept `@internal`: `SseParser`, `SseLineReader`. They are driven only through the facade, and publishing them
 would publish a way to violate `SSE-17`'s non-ownership contract by accident.
@@ -313,8 +389,11 @@ would publish a way to violate `SSE-17`'s non-ownership contract by accident.
 - `sseStreamFrom` reaching the response body's `cancel()` hook, not merely a close counter: the `BufferedSource`
   holds the reader lock, so a facade that closes only the response would fail against a real `Response` while
   passing against a double.
-- `await using` on an `SseStream` releasing exactly once where the runtime has `Symbol.asyncDispose`, and the
-  member being absent (with `close()` still working) where it does not.
+- The disposal member releasing exactly once where the runtime has `Symbol.asyncDispose`, and being absent (with
+  `close()` still working) where it does not. Invoked directly, **not** via `await using` — the optional member
+  is not an `AsyncDisposable`, so the statement form would not compile.
+- Aborting an `sseStreamFrom` signal releasing the response exactly once and letting an idle iterator end
+  cleanly on its next pull.
 - The `SSE-37`/`SSE-38` detector's own negative cases: a TSDoc *documenting* the absence of reconnection, and a
   commented-out serde import, are both non-violations.
 
@@ -327,4 +406,6 @@ would publish a way to violate `SSE-17`'s non-ownership contract by accident.
 | `maxLineBytes` off by default | `SSE-19` (MAY) | Matches the reference's own no-cap behavior so a port swap changes nothing; the exposure is documented on the option |
 | `MapperOutcome<T>` is a separate type from `Outcome<T>` | `sdk-design-nodejs/07` §7.2's "reused rather than re-invented" | The *idiom* is reused; extending the recovery chain's union would force every existing `fold` site to handle unreachable variants |
 | `SSE-37` and `SSE-38` enforced by a build script, not by module-graph structure | `SSE-37`, `SSE-38` | The reference gets it free from package boundaries; this port puts serde in the same package, so the invariant needs a mechanical guard or it is only a convention. The script strips comments before the `SSE-38` marker scan and skips `*.test.ts` for markers only — a gate that failed on a TSDoc *documenting* the absence of reconnection would be deleted rather than obeyed |
-| `[Symbol.asyncDispose]` on `SseStream` is optional and runtime-guarded, not an `implements AsyncDisposable` | `styleguide/typescript/13` §13.1–13.2 | The symbol postdates the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not polyfill it for a declaring library. `close()` stays the supported path everywhere; dispose delegates to it. Unconditional once the floor moves past 18.18 |
+| `[Symbol.asyncDispose]` on `SseStream` is optional and runtime-guarded, not an `implements AsyncDisposable` | `styleguide/typescript/13` §13.1–13.2 | The symbol postdates the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not polyfill it for a declaring library. `close()` stays the supported path everywhere; dispose delegates to it. Cost: `await using` does not type-check against an optional member. Unconditional once the floor moves past 18.18 |
+| Byte-at-a-time line framing via `readByte()` | `docs/knowledge/performance.md:16-17` | `readByte()` is `readExactly(1)` underneath, so framing allocates per byte on the parse path. Deferred deliberately on the guide's own terms (`performance.md:4,24` — no micro-fix before a profile names the bottleneck) and recorded so Phase 10 revisits it with a `*.bench.ts` instead of rediscovering it. A bulk-`read()` framing is the fix if a profile calls for one; no observable contract changes |
+| `SSE-29`/`SSE-36` construct a native `SuppressedError` | `NFR-10` / the declared `>=18.17` floor | Not 6b's deviation to take or reverse — inherited from the cross-phase blocker at `plans/2026-07-25-phase4b-recovery-chain.md:24-48`, which must resolve across 4b/5a/6a/6b/6c together. Listed here so Phase 10 sees 6b in that set |

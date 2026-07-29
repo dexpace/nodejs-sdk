@@ -35,9 +35,10 @@ dependencies — `SEAM-1` untouched.
 > `bun run verify:node-floor`, `bun run test:node`, and the `node-floor-conformance` job pinned to `18.17.0`
 > would all fail.
 >
-> **Needs a decision, and it is cross-phase** — Phases 5a, 6b and 6c reach for `SuppressedError` on the same
-> premise (`plans/2026-07-26-phase5a-retry.md:36`, `specs/2026-07-28-phase6b-sse-design.md:163`,
-> `specs/2026-07-28-phase6c-pagination-design.md:192`), so whichever option lands must land in all four:
+> **Needs a decision, and it is cross-phase** — Phases 5a, 6a, 6b and 6c reach for `SuppressedError` on the same
+> premise (`plans/2026-07-26-phase5a-retry.md:36`, `plans/2026-07-28-phase6a-serde.md`'s `closingAfter` helper,
+> `specs/2026-07-28-phase6b-sse-design.md:163`, `specs/2026-07-28-phase6c-pagination-design.md:192`), so
+> whichever option lands must land in all five:
 >
 > - **(a) Raise `engines.node`** past the first release shipping Explicit Resource Management. Consumer-visible
 >   breaking change, and the checkpoint forbids unsanctioned floor moves. Confirm the exact release first.
