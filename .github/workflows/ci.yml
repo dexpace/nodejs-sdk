@@ -1,0 +1,57 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Build
+        run: bun run build
+
+      - name: Test (with coverage)
+        run: bun test --coverage
+
+      - name: API surface check
+        run: bun run api
+
+      # `lint:publish` ignores attw's `cjs-resolves-to-esm` rule. That is not a
+      # workaround for a fixable defect: @dexpace/core is ESM-only by design (no
+      # `require` condition in its exports map), so a CJS `require()` of it
+      # necessarily resolves to ESM and attw always flags it. Every other attw
+      # rule stays blocking. The `main`/`types` fields on the package exist so
+      # legacy `node10` resolution still finds the entry point — without them
+      # attw reports a hard resolution failure.
+      - name: Package health (publint + attw)
+        run: bun run lint:publish
+
+      - name: Dual JS/TS consumption check
+        run: bun run verify:dual-consumption
+
+      - name: SEAM-1 zero-dependency check
+        run: bun run verify:seam-1
+
+      - name: Runtime-floor consistency check
+        run: bun run verify:runtime-floor
+
+      - name: Dependency audit
+        run: bun run audit

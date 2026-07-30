@@ -1,0 +1,36 @@
+{
+  "name": "nodejs-sdk",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18",
+    "@changesets/cli": "^2",
+    "@dexpace/core": "workspace:*",
+    "@eslint-community/eslint-plugin-eslint-comments": "^4",
+    "@microsoft/api-extractor": "^7",
+    "@types/bun": "latest",
+    "eslint": "^9",
+    "fast-check": "^3",
+    "globals": "^17.8.0",
+    "gts": "^7",
+    "publint": "^0.3",
+    "typescript": "^5.8",
+    "typescript-eslint": "^8"
+  },
+  "scripts": {
+    "lint": "gts lint .",
+    "fix": "gts fix .",
+    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit",
+    "build": "tsc -p packages/core/tsconfig.build.json",
+    "test": "bun test",
+    "api": "cd packages/core && bun run api:ci",
+    "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm",
+    "audit": "bun audit --audit-level=high --prod",
+    "verify:dual-consumption": "node scripts/verify-dual-consumption.mjs",
+    "verify:seam-1": "node scripts/verify-seam-1.mjs",
+    "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs"
+  }
+}

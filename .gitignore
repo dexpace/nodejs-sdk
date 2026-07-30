@@ -112,3 +112,6 @@ dist
 # TernJS port file
 .tern-port
 /.idea/
+
+# api-extractor scratch output (the committed report lives in packages/*/etc/)
+packages/*/temp/
