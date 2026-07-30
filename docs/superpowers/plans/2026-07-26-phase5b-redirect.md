@@ -17,10 +17,15 @@ loop/hop-cap guarding, and the pillar adapter plus its bundled marker-stripping 
 > discriminant on `'return-current'`, so a genuine "loop-detected" vs. "hop-cap-exceeded" vs. "normal
 > termination" distinction is NOT covered here — reshaping `Decision` for that is out of scope for this
 > retrofit (a `SHOULD`, not a `MUST`, and 5b's `decide.test.ts` asserts the current shape throughout); the
-> malformed-Location event of `REDIR-28` is deferred with it, for the same reason. This plan's execution now
-> depends on Phase 7b's `observability/logger.ts` and `observability/redaction.ts` existing first for Task 6
-> specifically; every other task is unaffected. See
-> `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s "Amendments to 5a and 5b" section.
+> malformed-Location event of `REDIR-28` is deferred with it, for the same reason.
+>
+> **Applied by Phase 7b, not by this plan (corrected 2026-07-29).** Phase 5b executes *before* Phase 7b, so a
+> call site here importing `observability/logger.js` or `observability/redaction.js` would not resolve at this
+> plan's own execution time — and 7b needs 5b's redirect step for its own retrofit conformance test, so the
+> earlier "5b now depends on 7b first" wording was a cycle. **An agent executing this plan must skip the Phase
+> 7b retrofit blocks in Task 6** and build `redirect-step.ts` without any `observability/` import; Phase 7b's
+> plan Task 9 adds the three emission sites afterwards. See
+> `docs/superpowers/plans/2026-07-28-phase7b-observability.md`'s Prerequisite and Task 9.
 
 **Architecture:** A new `packages/core/src/redirect/` folder of seven files. `decide.ts` is a pure function — no
 I/O, no clock, no side effects beyond the `Request` value it returns — that resolves one hop's outcome from a

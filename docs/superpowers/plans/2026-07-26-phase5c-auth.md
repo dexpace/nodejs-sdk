@@ -13,10 +13,15 @@ the pillar-authoring surface.
 > **Amended 2026-07-28 (Phase 7b retrofit):** `standardResilience()` (Task 16) now installs a fourth step,
 > `loggingStep(options.logging)`, into the previously-empty `LOGGING` slot — this task's own doc comment
 > already named "Phase 7" as the phase that would ship it. Narrow blast radius: nothing outside `preset.ts`
-> and its own test depends on this change, so this plan's execution now depends on Phase 7b's
-> `observability/logging-step.ts` existing first for Task 16 specifically (every other task in this plan is
-> unaffected) — see `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s
-> `standardResilience()` amendment section.
+> and its own test depends on this change.
+>
+> **Applied by Phase 7b, not by this plan (corrected 2026-07-29).** Phase 5c executes *before* Phase 7b, so
+> `preset.ts` importing `observability/logging-step.js` would not resolve at this plan's own execution time —
+> and 7b needs 5c's preset to amend, so the earlier "5c now depends on 7b first" wording was a cycle.
+> **An agent executing this plan must skip the Phase 7b retrofit blocks in Task 16**: build
+> `standardResilience()` installing the three pillars that exist by then (redirect, retry, auth), leaving
+> `LOGGING` empty. Phase 7b's plan Task 9 installs the fourth. See
+> `docs/superpowers/plans/2026-07-28-phase7b-observability.md`'s Prerequisite and Task 9.
 
 **Architecture:** A new `packages/core/src/auth/` folder of fifteen files, plus one amendment to
 `packages/core/src/pipeline/builder.ts`. The descriptor/resolver half (`scheme.ts`/`requirement.ts`/

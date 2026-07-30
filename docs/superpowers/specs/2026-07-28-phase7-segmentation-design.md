@@ -64,18 +64,26 @@ work, thrown away) or shipping `OBS-35` unwired (a real gap, not a documented sc
 dependency in the other direction and is the smaller, lower-risk half — a good default lead in its own right,
 independent of the coupling.
 
-This also matches dependency order for the two retrofits identified during 7a's own brainstorm (§16.4's `Clock`
+This also matches dependency order for the three retrofits identified during 7a's own brainstorm (§16.4's `Clock`
 seam absorbing 5a's ad hoc `now`/`random` injection point; §16.6's RFC 1123 formatter/parser absorbing 5a's
-private `pacing.ts` parser) — both are 7a-internal amendments to already-written phases, unrelated to 7b.
+private `pacing.ts` parser; `CFG-35`'s shared retryability classifier absorbing 5a's private `classify.ts` status
+set) — all three are 7a amendments to already-written phases, unrelated to 7b.
+
+**They do, however, invert 7a's order against Phase 5.** All three retrofits point 5a's plan at 7a modules, so
+7a's `config/` must be *executed* before 5a's plan runs — and 7b's parallel amendments do the same for 5b's Task
+6 and 5c's Task 16. The 7a-leads-7b ordering above is about the two sub-phases relative to each other; relative
+to the roadmap as a whole, both sub-phases move ahead of Phase 5's execution. See the roadmap's "Execution order
+is no longer the numeric order for Phase 5" note and each affected plan's Prerequisite section.
 
 ## 5. Roadmap changes this decision implies
 
 - Phase table row 7 splits into 7a / 7b, package column unchanged (`@dexpace/core` for both, plus
   `@dexpace/logging-pino`/`@dexpace/logging-debug` for 7b).
 - The Deferred Items Log rows in §3 above are updated in place to point at 7a/7b instead of bare "Phase 7."
-- Two new deferred-item rows this segmentation itself produces, added to the roadmap's log:
+- Three new deferred-item rows this segmentation itself produces, added to the roadmap's log:
 
   | Item | Originated in | Target | Note |
   |---|---|---|---|
   | 5a's `RetryConfig.clock`/`random` retyped against 7a's real `Clock` seam, replacing its ad hoc injection point | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | Single-sources the injectable-determinism seam 5a's own design already noted it was pre-empting |
   | 5a's private RFC 1123 parser in `pacing.ts` re-sourced from 7a's shared `http-date.ts` | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | 7a's module is a superset (adds the formatter 5a never needed); 5a's parser becomes an import, not a second implementation |
+  | 5a's private `RETRYABLE_STATUSES`/`isRetryableStatus` in `classify.ts` re-sourced from 7a's `config/retryable.ts` | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | `CFG-35` mandates one shared retryability definition; 7a ships the identical `RETRY-1` set and 5a re-exports it unchanged |

@@ -25,8 +25,8 @@ living beside retry/auth conceptually, for the reason 5a's own design already ga
 header composition with zero retry coupling, and its token source (`CFG-36`'s build/runtime descriptor) is a 7a
 deliverable.
 
-Two retrofits to 5a's (written, unexecuted) design and plan are part of this phase's deliverable, not incidental
-cleanup — both are single-sourcing corrections the project's own discipline (`RECOV-30`, `CFG-35`) already
+Three retrofits to 5a's (written, unexecuted) design and plan are part of this phase's deliverable, not incidental
+cleanup — all three are single-sourcing corrections the project's own discipline (`RECOV-30`, `CFG-35`) already
 requires:
 
 1. **`Clock` retrofit.** 5a's `RetryConfig` currently types its wait-timing dependency as an ad hoc `now: () =>
@@ -38,9 +38,15 @@ requires:
    of an informational weekday and single-digit day, per `RETRY-15`). 7a's `http-date.ts` is a superset — it adds
    the *formatter* `CFG-29` needs, which 5a never built — and 5a's `pacing.ts` is amended to import
    `parseHttpDate` from it instead of keeping a private copy.
+3. **Retryability-classifier retrofit.** 5a's `classify.ts` defined `RETRYABLE_STATUSES`/`isRetryableStatus`
+   (`RETRY-1`) privately. `CFG-35` mandates one shared retryability definition, which this phase ships as
+   `config/retryable.ts` (Task 3) — the identical set (408, 429, 5xx except 501 and 505). 5a's design/plan are
+   amended so `classify.ts` re-exports 7a's symbols unchanged instead of defining a second copy.
 
-Both retrofits are document edits to 5a's already-written files, not code changes — no phase has executed code
-yet (confirmed: no `packages/` directory exists in this repository as of this brainstorm).
+All three retrofits are document edits to 5a's already-written files, not code changes — no phase has executed
+code yet (confirmed: no `packages/` directory exists in this repository as of this brainstorm). Together they
+make 7a's `config/` module a **prerequisite of 5a's execution** (5a's plan's Prerequisite section records the
+resulting inversion of the numeric phase order), not merely a later consumer of it.
 
 ## The `Configuration` model (`CFG-1`–`CFG-14`, `CFG-37`, `CFG-38`)
 

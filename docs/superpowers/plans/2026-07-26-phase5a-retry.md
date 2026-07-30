@@ -20,10 +20,15 @@ satisfying `product-spec/09-retry-and-resilience.md` (`RETRY-1`–`RETRY-45`) an
 > **Amended 2026-07-28 (Phase 7b retrofit):** `engine.ts`'s `runWithRetry` (Task 8) gains two `SHOULD`-level
 > structured log events via `getGlobalLogger()` — attempt-failed (with the next delay) and retries-exhausted
 > (only when stopping after at least one retry with a failure outcome, cleanly derivable from
-> `decision.outcome.kind` with no reshape). Narrow blast radius — only this file's own emission points. This
-> plan's execution now additionally depends on Phase 7b's `observability/logger.ts` existing first for Task 8
-> specifically. See `docs/superpowers/specs/2026-07-28-phase7b-observability-design.md`'s "Amendments to 5a
-> and 5b" section.
+> `decision.outcome.kind` with no reshape). Narrow blast radius — only this file's own emission points.
+>
+> **Applied by Phase 7b, not by this plan (corrected 2026-07-29).** Phase 5a executes *before* Phase 7b, so a
+> call site here importing `observability/logger.js` would not resolve at this plan's own execution time — and
+> 7b in turn needs 5a's `FakeTransport`, which made the earlier "5a now depends on 7b first" wording a cycle
+> neither side could break. **An agent executing this plan must skip the Phase 7b retrofit blocks in Task 8**
+> and build `engine.ts` without any `observability/` import; Phase 7b's plan Task 9 adds the two emission
+> sites afterwards. The blocks stay here as the specification of what Task 9 will write. See
+> `docs/superpowers/plans/2026-07-28-phase7b-observability.md`'s Prerequisite and Task 9.
 
 **Architecture:** A new `packages/core/src/retry/` folder of eight independent files with no folder-level barrel,
 plus one file in `src/recovery/` and one in a new `src/testing/`. The engine core is pure functions —

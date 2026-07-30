@@ -27,10 +27,11 @@ planning only.
 
 ## Scope
 
-8a ships every `TRANSPORT-*` requirement across two published packages plus one small unpublished devDependency
-(a shared conformance-test package, precedent: `@dexpace/shrink-test`) and — pending §5's decision — one
-additional small published package for `FileBody`. It does **not** ship `§18`'s `ASYNC-*` requirements or
-`@dexpace/rx` — that is 8b's, with zero contract dependency in either direction (segmentation design §2).
+8a ships every `TRANSPORT-*` requirement across **four published packages** — `@dexpace/transport-fetch`,
+`@dexpace/transport-undici`, `@dexpace/body-file` (§5), `@dexpace/transport-shared` (§7) — plus one small
+unpublished devDependency, `@dexpace/transport-conformance` (§8; precedent: `@dexpace/shrink-test`). It does
+**not** ship `§18`'s `ASYNC-*` requirements or `@dexpace/rx` — that is 8b's, with zero contract dependency in
+either direction (segmentation design §2).
 
 ## The collapsed `Transport` interface (recap, unchanged from Phase 2)
 
@@ -111,12 +112,42 @@ or connection reset surfaces as a normal failure the SDK's own retry layer (5a) 
 from scratch against the original `Body`, which is exactly what `RETRY-5`/`RETRY-7`'s replayability gate already
 requires. Recorded as satisfied-by-construction, not built.
 
+**`TRANSPORT-19` (abandoned streaming-body producer) *does* apply to the streaming branch** and is real work, not
+a collapse: the `writeTo(writable)` pump running into the `TransformStream` is a producer that outlives a
+connect-failure or an early abort. Its promise is therefore never left floating — it is retained, and on any
+`send()` exit path other than a delivered response the transport calls `writable.abort(cause)` and then awaits the
+retained promise with its rejection swallowed, so the producer unblocks and no file handle or pending write is
+stranded. `writable.abort()` is idempotent, satisfying `TRANSPORT-19`'s idempotent-teardown clause. A rejection
+from `writeTo` **before** `fetch()` settles must also fail the send: the two are raced, and a `writeTo` rejection
+surfaces as `TransportFailureError` with the original as `cause` rather than being swallowed while `fetch` hangs
+on a stream that will never close.
+
 **Response mapping.** `fetchResponse.headers` copied leniently (`TRANSPORT-14`): iterate `Headers.entries()` — the
 WHATWG `Headers` object already normalizes/validates names at construction, so the "single malformed header drops
 only that header" case reduces to *skipping an entry that would throw on read*, wrapped in a per-entry try/catch
 around the iteration rather than a bulk try/catch around the whole response (so one bad header cannot abort the
-rest). `fetchResponse.body` (already a `ReadableStream<Uint8Array> | null`) passed straight through to
-`Response.newBuilder().body(...)` — no re-wrapping, satisfying `TRANSPORT-25`'s lazy-stream requirement for free.
+rest). Multi-valued inbound headers are read through `Headers.getSetCookie()` for `Set-Cookie` and the ordinary
+comma-joined `entries()` value for every other name (the WHATWG object's own multi-value rule), and are fed into
+the SDK `Headers` builder with the **lenient inbound** setter (`HTTP-19`), not the strict outbound one — the
+strict path rejects obs-text (`>= 0x80`) that `TRANSPORT-14` explicitly requires be preserved.
+
+`fetchResponse.body` (a `ReadableStream<Uint8Array> | null`) is wrapped in Phase 3b's response-body type — the
+stream is handed over as-is, never drained or pre-buffered (`TRANSPORT-25`), and the wrapper's `close()` calls
+`stream.cancel()` so `Response.close()` cascades to the native body and releases the connection. It is *not*
+passed to `Response.newBuilder().body()` raw: `Body` is the SDK's own interface (`kind`/`mediaType`/
+`contentLength`/`replayable`), and `Response.text()` / `BODY-15`'s idempotent connection-releasing close both live
+on that wrapper, not on a bare `ReadableStream`.
+
+**Inbound `Content-Type`/`Content-Length` downgrade (`TRANSPORT-27`).** An inbound `Content-Type` is parsed with
+`MediaType.parse()` inside a try/catch; on failure (or absence) the response body's media type is `null` — "no
+media type" — never a failed response. An absent or non-numeric `Content-Length` maps to the `-1` unknown-length
+sentinel (`BODY-35`), never to `0`.
+
+**Adaptation-throw guard (`TRANSPORT-22`).** Everything from the point `fetch()` resolves to the point the SDK
+`Response` is returned runs inside one try/catch; on any throw the native `fetchResponse.body?.cancel()` runs
+(errors from that cancel swallowed) before the original throwable propagates, so a header-mapping or
+`Status.of()` failure cannot leak a live socket. This is the same guard `TRANSPORT-9`'s already-aborted branch
+uses, applied to the throw path rather than the race path, and it is identical in both transports.
 
 **Header-drop policy (`TRANSPORT-10`–`TRANSPORT-13`).** Node's `fetch` (undici-backed) already refuses to set
 `Content-Length`/`Host`/`Transfer-Encoding`/`Connection` on the `Headers` object passed to `init.headers` — setting
@@ -127,6 +158,17 @@ at the SDK model layer but rejected by `fetch`'s own stricter validation (`TRANS
 (try/catch around each individual `headers.set(name, value)` call, not the whole loop) and dropped with the same
 verbose log — never escaping `send()`.
 
+Outbound headers are emitted by **appending each value of each name** onto the native `Headers` object
+(`headers.append(name, value)` per entry), never by collapsing the SDK `Headers` into a plain object — an
+`Object.fromEntries()` collapse would silently keep only the last value of a repeated name and violate `HTTP-14`'s
+multiple-values-per-name contract at the transport boundary.
+
+`TRANSPORT-13`'s drop-log policy is wired here, at the transport's own call site, over the `dropped` list
+`mapOutboundHeaders`/`degradeInboundHeaders` return (§7): a `headerDropLogging` option on both transports'
+options objects selects `'all'` | `'first-per-name'` (default) | `'quiet'`, and the `'first-per-name'` mode keeps
+a case-insensitive `Set` of already-logged names bounded by a named `MAX_LOGGED_DROP_NAMES` constant, evicting in
+a drain-to-cap loop, so a server or caller synthesising unbounded distinct names cannot grow it (`XCUT-14`).
+
 **Cancellation/timeout (`TRANSPORT-3`–`TRANSPORT-9`).** `composeSignal(userSignal, options?.timeoutMs ??
 this.#defaultTimeoutMs)` from Phase 2, passed as `init.signal`. `TRANSPORT-6` (sub-resolution clamping) is
 confirmed **not applicable** here: `AbortSignal.timeout(ms)` takes millisecond resolution directly with no coarser
@@ -134,7 +176,13 @@ native unit underneath to truncate against — there is no rounding step in this
 value to fall through. `TRANSPORT-9` (adaptation-race close) is the one place `SEAM-30`'s TSDoc obligation becomes
 real code: after `await fetch(...)` resolves, check `signal.aborted` before constructing the SDK `Response`; if
 already aborted, call `fetchResponse.body?.cancel()` (given a `.catch(() => {})`, per Phase 2's own footgun note
-about unhandled rejections under Node's default policy) instead of delivering. `TRANSPORT-7`/`TRANSPORT-8`: `fetch`
+about unhandled rejections under Node's default policy) instead of delivering, and then throw **the same
+canonical SDK type the pre-dispatch catch would have thrown** — `TransportFailureError` when
+`isTimeoutSignal(signal)`, `CancellationError` otherwise. Never re-throw `signal.reason` raw: that is a
+`DOMException` (`TimeoutError`/`AbortError`), neither an `IoError` subtype (so `TRANSPORT-20` and 5a's
+`isRetryableFailure` cause-walk both miss it) nor the terminal `CancellationError` `TRANSPORT-3` requires. Both
+transports share one `abortToSdkError(signal, cause)` helper in `@dexpace/transport-shared` so the two branches
+cannot drift. `TRANSPORT-7`/`TRANSPORT-8`: `fetch`
 has no internal-cancel-vs-timeout distinction beyond what `isTimeoutSignal` already resolves — `TRANSPORT-8`'s
 clause is scoped (per §17's own preamble) to transports with an internal-cancel path; `transport-fetch` has none,
 so it is out of scope here by the spec's own terms, not a gap.
@@ -166,17 +214,52 @@ construction, but this `Transport` must reach whatever origin each `Request` nam
 general-purpose, multi-origin dispatcher (this is also what makes passing `origin` per call meaningful in the
 first place). A caller may supply their own already-constructed `Agent` (or any `Dispatcher`) via the
 `dispatcher` option — the `BYO` path `TRANSPORT-15` and `docs/knowledge/concurrency-and-async.md`'s "SDK closes
-only what it created" both require. `close()` is real here: `TRANSPORT-15`/`TRANSPORT-16` bite for the
-owned-agent case — `await this.#ownedAgent?.close()` guarded by a `#closed` boolean flip-checked-first for
-idempotence, never touching `options.dispatcher` when one was supplied. Matches `docs/knowledge/
-resource-management.md`'s idempotent-close-with-flag pattern and non-blocking-shutdown discipline (`undici`'s
-`.close()` already returns a `Promise` that waits for in-flight requests to drain rather than force-closing —
-the graceful-shutdown default `ASYNC-16` prefers).
+only what it created" both require.
+
+**Dispatcher selection is one exclusive decision, resolved once at construction**, and it decides ownership at the
+same time — there is exactly one `dispatcher` binding and exactly one `owned` flag, never a second agent
+constructed and then discarded:
+
+1. `options.dispatcher` supplied → use it, `owned = false`. Supplying **both** `dispatcher` and `proxy` is a
+   construction-time error (`invariant`), not a silent win for one of them: the caller's dispatcher may already be
+   a `ProxyAgent`, and silently ignoring either option is the ambiguity `SEAM-5`'s loud-fail discipline rejects.
+2. `options.proxy` supplied (and no `dispatcher`) → `new ProxyAgent(...)`, `owned = true`. A `ProxyAgent` the
+   transport constructed is an SDK-created resource `TRANSPORT-15` requires `close()` to release, exactly like an
+   owned `Agent`.
+3. neither → `new Agent(options.agentOptions)`, `owned = true`.
+
+The `ProxyAgent` is constructed from the *whole* `ProxyOptions` (7a), not just its address: `uri` is the fully
+schemed `` `${proxy.protocol}://${proxy.host}:${proxy.port}` `` — a bare `host:port` is not a valid absolute URL
+and `ProxyAgent` rejects it — and `proxy.credentials`, when present, become the `token` (`Basic ` + base64
+`user:pass`), never a logged value. `proxy.bypassAll` and `proxy.nonProxyHosts` are honored **per send**
+(`CFG-23`/`CFG-27`): `send()` routes through a second, non-proxied owned `Agent` when the request URL's host
+matches the bypass decision, because a `ProxyAgent` installed as *the* dispatcher would otherwise tunnel every
+origin regardless of the caller's `NO_PROXY`. Both owned agents are released by the one `close()`.
+
+`close()` is real here: `TRANSPORT-15`/`TRANSPORT-16` bite for every owned case — `await` each owned dispatcher's
+`.close()` guarded by a `closed` boolean flip-checked-first for idempotence, never touching `options.dispatcher`
+when one was supplied. Matches `docs/knowledge/resource-management.md`'s idempotent-close-with-flag pattern and
+non-blocking-shutdown discipline (`undici`'s `.close()` already returns a `Promise` that waits for in-flight
+requests to drain rather than force-closing — the graceful-shutdown default `ASYNC-16` prefers). Per
+`resource-management.md`'s "a class that owns a resource must implement `Symbol.asyncDispose` rather than
+exposing a public `close()` as the primary teardown interface," both transports additionally expose
+`[Symbol.asyncDispose]` delegating to `close()` — `close()` stays because Phase 2 locked it into the `Transport`
+seam, and delegation keeps it a single teardown path.
+
+**`TRANSPORT-1` is pinned explicitly, not inherited.** Every dispatch passes `maxRedirections: 0`. undici's
+default is already 0, but a BYO `Dispatcher` may have been constructed with a redirect interceptor, and
+`TRANSPORT-1` requires the SDK pipeline be the single redirect authority regardless of who built the dispatcher.
+`TRANSPORT-2` needs no counterpart: undici performs no automatic connection-failure retry unless a `RetryAgent`
+is explicitly composed, which this package never does.
 
 **Request/response mapping** follows the same shape as `transport-fetch` (`Body.writeTo` → a `Readable`/stream
-undici accepts; `undici`'s response `body` — an async-iterable, converted to a `ReadableStream<Uint8Array>` via
-`Readable.toWeb(Readable.from(...))` or undici's own `body` which is already a `BodyReadable` — is wrapped once,
-not re-read). Two things `undici` gives that bare `fetch` cannot, both real, additive work here (this is the
+undici accepts; `undici`'s response `body` is already a `BodyReadable`, adapted with `Readable.toWeb(result.body)`
+— **never** by draining it into a `ReadableStream`'s `start()`, which would eagerly pull the whole body into
+memory and defeat `TRANSPORT-25`'s not-pre-buffered requirement. `toWeb` preserves demand-driven reads and, via
+the body wrapper's `close()` → `stream.cancel()` → `result.body.destroy()`, preserves the close-cascade that
+returns the connection to the pool). The same lenient inbound copy, multi-value handling, `TRANSPORT-27`
+downgrade, and `TRANSPORT-22` adaptation-throw guard described for `transport-fetch` apply verbatim; only the
+source object differs. Two things `undici` gives that bare `fetch` cannot, both real, additive work here (this is the
 package's whole reason to exist per `package-and-dependency-layout.md`'s "richer, pulls in a real library"
 framing):
 
@@ -188,7 +271,10 @@ framing):
   logged (shared discipline with `docs/knowledge/redaction-and-security.md`'s redaction policy) and never answered
   to a 401 (only a matching 407) — a request-scoped check on the challenge's response status before invoking any
   auth-stamping path, structurally impossible to misroute since the 401/407 branch is a single `if` at the call
-  site, not two independently-maintained code paths.
+  site, not two independently-maintained code paths. The superseded 407 response's body **must be dumped before
+  the retry is dispatched** (`await result.body.dump()`), on both the retry and the handler-failed path: undici
+  will not release the connection for an undrained body, and `PIPE-40`/`RECOV-12`'s "close every superseded
+  intermediate response" is the same obligation one layer up.
 - **`TRANSPORT-28`/file bodies**, via undici's lower-level `Dispatcher` body option accepting a Node stream
   directly, letting a `fs.createReadStream(path, {start, end})` flow through without the extra `ReadableStream`
   adaptation layer `transport-fetch` would need. See §5 — this is *not* the kernel `sendfile(2)` zero-copy path
@@ -239,8 +325,11 @@ export interface FileBodyOptions {
 export function fileBody(path: string, options?: FileBodyOptions): FileBodyDescriptor;
 ```
 
-`fileBody()` needs `node:fs` for `HTTP-40`/`BODY-11`'s fail-fast construction-time validation (file exists, is a
-regular file, offset/count bounds against the size captured at construction) — this is exactly the reason it
+`fileBody()` needs `node:fs` for `HTTP-40`/`BODY-11`'s fail-fast construction-time validation — the full list, all
+four checks, none of them derivable from another: the file exists and is a **regular** file; `start >= 0` **and
+`start <= size`**; `count >= 0`; and `start + count <= size`. The middle pair matters because `count` defaults to
+`size - start`, so a `start` past end-of-file silently yields a *negative* default count that still satisfies
+`start + count <= size` and produces a zero-byte upload instead of an error. This is exactly the reason it
 cannot live in core, and exactly the reason a fourth package is the right shape rather than folding the factory
 into one transport (the other transport would then either duplicate the validation or depend on a sibling
 transport package, which is architecturally backwards). `@dexpace/body-file` depends on `@dexpace/core` as a peer
@@ -249,10 +338,22 @@ satisfied with zero. `writeTo(sink)` opens a **fresh** `fs.createReadStream(path
 1})` per call (`HTTP-40`'s "fresh handle per write") and pipes it into the sink, detecting a short read and raising
 `BODY-13`'s transferred-of-total error. `replayable` is always `true` (`HTTP-40`).
 
-**Roadmap-table consequence:** Phase 8a ships four packages, not three — `@dexpace/transport-fetch`,
-`@dexpace/transport-undici`, `@dexpace/body-file`, plus the unpublished `@dexpace/transport-conformance`
-devDependency (§8). The roadmap's Phase 8a table row and package-and-dependency-layout's package list should be
-amended to add `@dexpace/body-file` alongside the two transports.
+**Sink ownership, decided once for the whole phase (`BODY-8`'s "a port MUST decide its stream-ownership rule
+deliberately").** `Body.writeTo(sink)` **does not close the caller's sink**; it releases its writer lock and, on
+failure, calls `writer.abort(cause)` so a downstream consumer sees the error rather than a silently truncated
+stream. Closing belongs to whoever created the sink — which is why `transport-fetch`'s streaming branch closes
+its own `TransformStream` writable after `writeTo` resolves, rather than relying on the body to do it. A body
+that closed the sink would break every tee/multipart composition that writes more than one body into one sink,
+and `SEAM-20`'s "streaming variants MUST NOT close the caller's target" says the same thing for the serde seam.
+
+**Roadmap-table consequence:** Phase 8a ships **five** packages, not two — four published
+(`@dexpace/transport-fetch`, `@dexpace/transport-undici`, `@dexpace/body-file`, `@dexpace/transport-shared` §7)
+plus the unpublished `@dexpace/transport-conformance` devDependency (§8). The roadmap's Phase 8a table row and
+package-and-dependency-layout's package list should be amended to add **both** `@dexpace/body-file` and
+`@dexpace/transport-shared` alongside the two transports. Each of the four published packages carries the full
+published-package apparatus — `api-extractor.json` + a checked-in `etc/<name>.api.md` snapshot (`NFR-4`),
+`lint:publish`, its own `etc` gate — including `transport-shared`, whose `@internal` marking governs what
+consumers are meant to *use*, not whether its surface is snapshotted.
 
 **Zero-copy dispatch (`TRANSPORT-28`'s SHOULD), resolved — no Node analogue exists.** Checked directly: neither
 the global `fetch` implementation nor `undici`'s public `Dispatcher`/`request()` API exposes a `sendfile(2)`-
@@ -295,18 +396,38 @@ small, published package both transports depend on as a regular dependency:
 export function mapOutboundHeaders(
   headers: Headers,
   forbidden: readonly string[],
-  opts?: {bodyDerivedMediaType?: string},
+  opts?: {bodyDerivedMediaType?: string | undefined},
 ): {sent: Headers; dropped: readonly string[]};
 
+/** `raw` carries one entry per value, so a repeated name appears more than once (HTTP-14). */
 export function degradeInboundHeaders(
-  raw: Iterable<[string, string]>,
+  raw: Iterable<readonly [string, string]>,
 ): {headers: Headers; dropped: readonly string[]};
+
+// packages/transport-shared/src/abort-mapping.ts
+/** Maps an aborted signal to the canonical SDK type: TransportFailureError on timeout, else CancellationError. */
+export function abortToSdkError(signal: AbortSignal, cause: unknown): DexpaceError;
+
+// packages/transport-shared/src/drop-log.ts
+export type HeaderDropLogging = 'all' | 'first-per-name' | 'quiet';
+/** Bounded, case-insensitive, drain-to-cap dedup of already-logged names (TRANSPORT-13, XCUT-14). */
+export function createDropLogger(mode: HeaderDropLogging): (dropped: readonly string[]) => void;
 ```
 
-`@dexpace/transport-shared` depends only on its `@dexpace/core` peer (zero external libraries), is not part of
-either transport's own public barrel (`@internal`-only exports — a consumer never installs it directly), and
-carries no I/O of its own; `TRANSPORT-13`'s bounded, case-insensitive drop-log dedup policy is a
-`getGlobalLogger()`-facing concern layered on top at each transport's own call site, not inside this pure helper.
+`@dexpace/transport-shared` depends only on its `@dexpace/core` peer (zero external libraries) and is not
+re-exported from either transport's own public barrel (`@internal` exports — a consumer never installs it
+directly), though it is still a **published** package with its own `api-extractor.json` and checked-in
+`etc/transport-shared.api.md` snapshot, because `NFR-4` snapshots every published unit regardless of how its
+exports are marked. `header-mapping.ts` carries no I/O of its own; `TRANSPORT-13`'s bounded, case-insensitive
+drop-log dedup policy lives in `drop-log.ts`, which is the one module here that touches `getGlobalLogger()` and
+is instantiated once per transport instance at its call site — the *policy* is shared so the two transports
+cannot drift, the *logger call* is still made by the transport.
+
+**Inbound copies use the lenient header path.** `degradeInboundHeaders` builds through `@dexpace/core`'s
+inbound/lenient `Headers` setter (`HTTP-19`), never the strict outbound one. The strict path rejects every byte
+`>= 0x80`, which would drop precisely the obs-text values `TRANSPORT-14` requires be *preserved* (a Latin-1
+`Content-Disposition` filename being the canonical case), and would make this module's own "preserves an obs-text
+byte in a value" test unsatisfiable.
 
 ## Reused, Not Rebuilt
 
@@ -387,15 +508,21 @@ packages/body-file/
 packages/transport-shared/    # published, @internal-only exports; not part of either transport's public barrel
   package.json          # peerDependencies: {"@dexpace/core"}; dependencies: {}
   tsconfig.json
+  api-extractor.json     # published => snapshotted, NFR-4, regardless of the @internal marking
+  etc/transport-shared.api.md
   src/
     header-mapping.ts     # mapOutboundHeaders, degradeInboundHeaders (§7)
+    abort-mapping.ts       # abortToSdkError (§4's TRANSPORT-3/4/20 canonical mapping, shared)
+    drop-log.ts             # HeaderDropLogging, createDropLogger (TRANSPORT-13)
     index.ts
 
 packages/transport-conformance/    # private: true, unpublished
-  package.json
+  package.json           # "exports": {".": "./src/index.ts"} -- source-resolved, no build step;
+                          #  both transports list it in devDependencies as "workspace:*"
   src/
     run-suite.ts
     fixtures.ts
+    index.ts               # re-exports runTransportConformanceSuite/TransportCapabilities
 
 packages/core/src/io/errors.ts     # RETROFIT: + TransportFailureError
 packages/core/src/body/body.ts     # RETROFIT: + 'file' kind, + FileBodyDescriptor interface
@@ -403,10 +530,12 @@ packages/core/src/body/body.ts     # RETROFIT: + 'file' kind, + FileBodyDescript
 
 ## Public Barrel
 
-Each of the three published packages exports directly from its own `src/index.ts` (no internal barrels, per
+Each of the four published packages exports directly from its own `src/index.ts` (no internal barrels, per
 `docs/knowledge/module-organization.md`, same discipline every prior package followed): `transport-fetch` exports
 `fetchTransport`/`FetchTransportOptions`; `transport-undici` exports `undiciTransport`/`UndiciTransportOptions`;
-`body-file` exports `fileBody`/`FileBodyOptions`. `@dexpace/core`'s existing root barrel gains
+`body-file` exports `fileBody`/`FileBodyOptions`; `transport-shared` exports `mapOutboundHeaders`/
+`degradeInboundHeaders`/`abortToSdkError`/`createDropLogger`/`HeaderDropLogging`, every one of them marked
+`@internal`. `@dexpace/core`'s existing root barrel gains
 `TransportFailureError` (from `io/errors.js`) and `FileBodyDescriptor` (type-only export, from `body/body.js`) —
 two additions to the barrel already amended every phase since Phase 1.
 
@@ -417,6 +546,16 @@ two additions to the barrel already amended every phase since Phase 1.
 `TRANSPORT-14`) never throws past `send()`. `close()` never throws on repeated calls (`TRANSPORT-16`). No new
 `Error` subclass beyond `TransportFailureError` — `MultipartBoundaryError`/`ConsumedBodyError`/`HttpStatusError`
 etc. are all pre-existing and untouched by this phase.
+
+An abort is **never** surfaced as its raw `signal.reason` (`DOMException` `AbortError`/`TimeoutError`): every
+abort path in both transports goes through `abortToSdkError()` (§7), because a `DOMException` is neither an
+`IoError` subtype — so `TRANSPORT-20` and 5a's `isRetryableFailure` cause-walk would both miss a timeout — nor
+the terminal `CancellationError` `TRANSPORT-3` requires for a caller abort.
+
+**Post-close behavior (`SEAM-15`, MAY-with-SHOULD-document).** Both transports document that `send()` after
+`close()` rejects: `transport-undici` with whatever the closed dispatcher raises, wrapped in
+`TransportFailureError`; `transport-fetch` never rejects for this reason, since its `close()` is a no-op over a
+runtime global it does not own. Stated in each package's README and the `close()` TSDoc.
 
 ## Testing
 
@@ -436,7 +575,7 @@ send never throws and either the header survives or is dropped with a log, never
 | No kernel-level zero-copy file transfer (`TRANSPORT-28`'s SHOULD) | OkHttp `okio.Source`/`FileChannel.transferTo` | Neither `fetch` nor `undici` expose a `sendfile(2)`-shaped path for outbound request bodies on this platform; `transport-undici`'s direct-stream dispatch is the closest available approximation, not a literal zero-copy path |
 | `transport-fetch` has no proxy support at all (`TRANSPORT-30` scoped out) | Reference transports both support proxying | Node's bare global `fetch` has no proxy hook without depending on `undici` internally, which would undermine `transport-fetch`'s zero-added-dependency purpose; `§17`'s own preamble licenses single-transport scoping |
 | `TRANSPORT-8` (native-internal-cancel-vs-timeout distinction) does not apply to `transport-fetch` | OkHttp reference implements it | `§17`'s own text scopes this clause to transports with an internal-cancel path; `fetch` has none |
-| No re-subscribable-producer replay machinery (`TRANSPORT-18`) | OkHttp resends a request body on proxy-407/GOAWAY internally | Neither `fetch` nor `undici` retries a partially-written request internally; a failed send surfaces normally and the SDK's own retry layer (5a) re-invokes `send()` against the original `Body`, already gated by `RETRY-5`/`RETRY-7`'s replayability check |
+| No re-subscribable-producer replay machinery (`TRANSPORT-18`) | OkHttp resends a request body on proxy-407/GOAWAY internally | Neither `fetch` nor `undici` retries a partially-written request internally; a failed send surfaces normally and the SDK's own retry layer (5a) re-invokes `send()` against the original `Body`, already gated by `RETRY-5`/`RETRY-7`'s replayability check. **Scoped to `TRANSPORT-18` only — `TRANSPORT-19` is built, not collapsed** (see §3's abandoned-producer teardown) |
 | `Response.protocol` is a hardcoded `Protocol.HTTP_1_1` best-effort default in both transports, not an observed negotiated value | OkHttp/`java.net.http` both expose the actual negotiated protocol (HTTP/1.1 vs. HTTP/2) per response | Neither the WHATWG `fetch` `Response` object nor undici's `Dispatcher.ResponseData` surfaces which protocol version was actually negotiated for a given exchange; there is no public API on either to read it from. A caller relying on `Response.protocol` reflecting real HTTP/2 usage will observe `HTTP_1_1` regardless. Revisit if either library ever exposes this |
 
 ## Deferred Items (add to the roadmap's Deferred Items Log)

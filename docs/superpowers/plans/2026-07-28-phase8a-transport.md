@@ -2,18 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `@dexpace/transport-fetch`, `@dexpace/transport-undici`, and `@dexpace/body-file`, plus the shared
-unpublished `@dexpace/transport-conformance` devDependency and two small retrofits to `@dexpace/core`
+**Goal:** Ship the four published packages `@dexpace/transport-fetch`, `@dexpace/transport-undici`,
+`@dexpace/body-file`, and `@dexpace/transport-shared`, plus the unpublished `@dexpace/transport-conformance`
+devDependency and two small retrofits to `@dexpace/core`
 (`TransportFailureError`, `FileBodyDescriptor`) — satisfying `docs/product-spec/17-transport-adapter-conformance-contract.md`
 (`TRANSPORT-1`–`TRANSPORT-30`) per `docs/superpowers/specs/2026-07-28-phase8a-transport-design.md`.
 
-**Architecture:** Four new workspace packages plus two amendments to already-shipped `@dexpace/core` files. Both
+**Architecture:** Five new workspace packages plus two amendments to already-shipped `@dexpace/core` files. Both
 transports implement the identical `Transport` interface (Phase 2, unchanged) and are proven against one shared
 conformance suite so they cannot silently drift from each other. `@dexpace/body-file` is a thin, `node:fs`-only
-package that both transports depend on for `FileBodyDescriptor` recognition; `@dexpace/core` itself gains only a
+package that **neither transport depends on**: recognition flows through `FileBodyDescriptor`, a type-only
+interface in `@dexpace/core`, which both transports narrow on structurally via `body.kind === 'file'` — the
+factory package is a peer of the transports, never an upstream of them. `@dexpace/core` itself gains only that
 type-only interface and a string-literal union member, costing nothing against its zero-`node:`-import invariant.
 
-**Tech Stack:** TypeScript 5.8+, `undici` (peer-installed alongside Node's bundled copy — see Task 7), `bun test`,
+**Tech Stack:** TypeScript 5.8+, `undici` (a regular `dependency` of `@dexpace/transport-undici`, not a peer —
+see the Global Constraints), `bun test`,
 `node:http`/`node:fs` (test-only in `transport-conformance` and `body-file`'s own tests; `node:fs` is also a real
 runtime dependency of `@dexpace/body-file`'s production code, which is exactly why it cannot live in `@dexpace/core`).
 
@@ -49,19 +53,20 @@ The full gate sequence (`typecheck`/`lint`/`build`/`test --coverage`/`api`/`lint
 - **One `TransportFailureError`, defined once, in `@dexpace/core`.** Never declare a second transport-failure
   class in either transport package. Both packages import and throw/reject with the same import.
 - **One header-drop/degrade helper, shared, not duplicated per transport.** `TRANSPORT-10`/`TRANSPORT-12`'s
-  algorithm (Content-Type authority, per-header graceful degradation) is identical for both packages; write it
-  once in `@dexpace/transport-conformance`'s sibling internal module or, if that reads oddly for production code
-  living in a devDependency, as a small internal-only export each transport package vendors via a workspace
-  `file:` reference is **wrong** — instead, place the shared algorithm as an `@internal` export of
-  `@dexpace/body-file` is also wrong (unrelated concern). Resolve this at Task 5/7 by placing it in
-  `@dexpace/transport-fetch` first (it ships first) and having `@dexpace/transport-undici` import it as a
-  regular `dependency` on `@dexpace/transport-fetch` — **do not do this**; it would make one transport depend on
-  a sibling transport, which the segmentation design and this plan otherwise deliberately avoid. Instead: a
-  fifth micro-package, `@dexpace/transport-shared` (published, tiny, zero deps beyond the `@dexpace/core` peer,
-  `@internal`-only exports, not part of any package's public barrel), holds `mapOutboundHeaders()` and
-  `degradeInboundHeaders()`. Both transports depend on it as a regular dependency. See Task 4a.
-- **ESLint limits are hard:** `max-params: 3`, `max-depth: 3`, `max-lines-per-function: 70`.
-- **`exactOptionalPropertyTypes` is on.** Every optional field is declared `?: T | undefined`.
+  algorithm (Content-Type authority, per-header graceful degradation) is identical for both packages, so it lives
+  in exactly one place: `@dexpace/transport-shared` (Task 4a) — a published micro-package, zero deps beyond the
+  `@dexpace/core` peer, `@internal`-only exports, not re-exported from any other package's public barrel. Both
+  transports depend on it as a regular `dependency`. Do **not** put it in `@dexpace/transport-conformance` (that
+  package is an unpublished devDependency and must not ship production code), in `@dexpace/body-file` (unrelated
+  concern), or in one transport for the other to import (that would make one transport depend on a sibling
+  transport, which the segmentation design deliberately avoids). It also holds `abortToSdkError()` and
+  `createDropLogger()` — see the design doc §7.
+- **ESLint limits are hard:** `max-params: 3`, `max-depth: 3`, `max-lines-per-function: 70`. A function needing a
+  fourth input takes a single options object, not a fourth parameter.
+- **`exactOptionalPropertyTypes` is on.** Declare optional fields with the optional-property syntax `?: T` (the
+  styleguide's stated preference over the explicit-union form); add `| undefined` **only** where a caller
+  legitimately passes an explicit `undefined` through — which under this flag is a distinct, deliberate contract,
+  not the default spelling.
 - **No TS `enum`** (`erasableSyntaxOnly`). Unions and frozen constant objects only.
 - **Explicit return types on every exported function.** Kebab-case filenames. Named exports only.
 - **SPDX header, line 1 of every new file:** `// SPDX-License-Identifier: MIT`.
@@ -80,16 +85,20 @@ packages/core/src/io/errors.ts        # + TransportFailureError                 
 packages/core/src/body/body.ts         # + 'file' kind, + FileBodyDescriptor            (Task 2, retrofit)
 
 packages/body-file/src/
+  invariant.ts                          # local fail-fast helper (see Task 3 Step 4)   (Task 3)
   file-body.ts                          # fileBody, FileBodyOptions                    (Task 3)
   index.ts
 
 packages/transport-shared/src/
   header-mapping.ts                      # mapOutboundHeaders, degradeInboundHeaders    (Task 4a)
+  abort-mapping.ts                        # abortToSdkError                              (Task 4a)
+  drop-log.ts                              # HeaderDropLogging, createDropLogger          (Task 4a)
   index.ts
 
 packages/transport-conformance/src/       # private: true, unpublished
   run-suite.ts                              # runTransportConformanceSuite             (Task 4b)
   fixtures.ts                                # node:http-backed local test server
+  index.ts                                    # re-export barrel the two transports import
 
 packages/transport-fetch/src/
   fetch-transport.ts                          # fetchTransport                         (Task 5)
@@ -101,7 +110,9 @@ packages/transport-undici/src/
   undici-transport.conformance.test.ts              # wires Task 4b's suite             (Task 9)
 ```
 
-Ten production/retrofit files across six packages (five new, one amended), each with a colocated `*.test.ts`.
+Fifteen production/retrofit files across six packages (five new, one amended); every non-barrel, non-fixture
+module carries a colocated `*.test.ts`. All four published packages additionally carry `package.json`,
+`tsconfig.json`, `api-extractor.json`, and a checked-in `etc/<name>.api.md` (`NFR-4`).
 
 ---
 
@@ -245,8 +256,8 @@ git commit -m "feat(core): add 'file' Body kind and FileBodyDescriptor recogniti
 ### Task 3: `@dexpace/body-file` — `fileBody()`
 
 **Files:**
-- Create: `packages/body-file/package.json`, `tsconfig.json`, `api-extractor.json`
-- Create: `packages/body-file/src/file-body.ts`, `file-body.test.ts`, `index.ts`
+- Create: `packages/body-file/package.json`, `tsconfig.json`, `api-extractor.json`, `etc/body-file.api.md`
+- Create: `packages/body-file/src/invariant.ts`, `file-body.ts`, `file-body.test.ts`, `index.ts`
 
 **Interfaces:**
 - Consumes: `Body`, `FileBodyDescriptor` (Task 2, type-only).
@@ -312,6 +323,18 @@ describe('fileBody (HTTP-40, BODY-11)', () => {
   test('rejects a negative start or out-of-range count at construction', () => {
     expect(() => fileBody(filePath, {start: -1})).toThrow();
     expect(() => fileBody(filePath, {start: 4, count: 10})).toThrow();
+    expect(() => fileBody(filePath, {count: -1})).toThrow();
+    // start past EOF: the default count would be size-start = -92, which still satisfies
+    // start + count <= size, so it needs its own check or it silently uploads zero bytes.
+    expect(() => fileBody(filePath, {start: 100})).toThrow();
+  });
+
+  test('writeTo does not close the caller-owned sink', async () => {
+    const body = fileBody(filePath);
+    let closed = false;
+    const sink = new WritableStream<Uint8Array>({close: () => void (closed = true), write: () => {}});
+    await body.writeTo(sink);
+    expect(closed).toBe(false); // sink ownership stays with whoever created it -- design doc §5
   });
 
   test('writeTo streams exactly the declared byte range', async () => {
@@ -346,7 +369,7 @@ Expected: FAIL — module does not exist.
 // SPDX-License-Identifier: MIT
 import {createReadStream, statSync} from 'node:fs';
 import type {FileBodyDescriptor} from '@dexpace/core';
-import {invariant} from './invariant.js'; // re-exported internal helper, or import from a shared spot per project convention
+import {invariant} from './invariant.js'; // local one-liner -- see the note below this block
 
 export interface FileBodyOptions {
   readonly start?: number;
@@ -358,7 +381,12 @@ export function fileBody(path: string, options: FileBodyOptions = {}): FileBodyD
   invariant(stats.isFile(), `not a regular file: ${path}`);
   const start = options.start ?? 0;
   invariant(start >= 0, `start must be non-negative, got ${start}`);
+  // BODY-11/HTTP-40 needs all four checks. `start <= size` is NOT implied by `start + count <= size`:
+  // the default count is `size - start`, which goes negative for a start past EOF and then passes the
+  // sum check, silently producing a zero-byte upload instead of an error.
+  invariant(start <= stats.size, `start (${start}) exceeds file size (${stats.size})`);
   const count = options.count ?? stats.size - start;
+  invariant(count >= 0, `count must be non-negative, got ${count}`);
   invariant(start + count <= stats.size, `start + count (${start + count}) exceeds file size (${stats.size})`);
 
   return Object.freeze({
@@ -372,30 +400,50 @@ export function fileBody(path: string, options: FileBodyOptions = {}): FileBodyD
     async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
       const writer = sink.getWriter();
       let transferred = 0;
+      // A fresh handle per write (HTTP-40) -- destroyed on every exit path so an early failure
+      // strands no file descriptor (TRANSPORT-19's teardown obligation at the body layer).
+      const stream = createReadStream(path, {start, end: start + count - 1});
       try {
-        const stream = createReadStream(path, {start, end: start + count - 1});
         for await (const chunk of stream) {
-          const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as Buffer);
+          // `chunk` is a Buffer from a byte-mode fs stream; Buffer IS a Uint8Array, so this is a
+          // view, not a copy, and needs no allocation.
+          const bytes = chunk as Buffer;
           await writer.write(bytes);
           transferred += bytes.byteLength;
         }
         invariant(transferred === count, `short write: transferred ${transferred} of ${count} bytes`); // BODY-13
+      } catch (error) {
+        // Signal the failure downstream rather than leaving a half-written stream looking complete.
+        await writer.abort(error);
+        throw error;
       } finally {
-        await writer.close();
+        stream.destroy();
+        // Release the lock, never close: the sink belongs to the caller (design doc §5's
+        // stream-ownership decision, BODY-8). Closing it would break multipart/tee composition
+        // and would deadlock transport-fetch, which closes its own TransformStream writable.
+        writer.releaseLock();
       }
     },
   });
 }
 ```
 
-`invariant()` here throws a plain `Error` for fail-fast construction validation (matching `CFG-37`'s convention);
-if the project's shared `invariant` helper is package-private to `@dexpace/core`, vendor a one-line local copy
-rather than depend on `@dexpace/core`'s `@internal` surface across the package boundary.
+`invariant()` here throws a plain `Error` for fail-fast construction validation (matching `CFG-37`'s convention).
+`@dexpace/core`'s own `invariant` is `@internal` and must not be reached across a package boundary, so this
+package carries its own `src/invariant.ts` — create it in this step, it is one function:
+
+```typescript
+// packages/body-file/src/invariant.ts
+// SPDX-License-Identifier: MIT
+export function invariant(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+```
 
 - [ ] **Step 5: Run and confirm it passes**
 
 Run: `cd packages/body-file && bun test src/file-body.test.ts`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 6: Public barrel + commit**
 
@@ -412,17 +460,23 @@ git commit -m "feat(body-file): add @dexpace/body-file with fileBody() (HTTP-40,
 
 ---
 
-### Task 4a: `@dexpace/transport-shared` — shared header-mapping helpers
+### Task 4a: `@dexpace/transport-shared` — shared header-mapping, abort-mapping, and drop-log helpers
 
 **Files:**
-- Create: `packages/transport-shared/package.json`, `tsconfig.json`
-- Create: `packages/transport-shared/src/header-mapping.ts`, `header-mapping.test.ts`, `index.ts`
+- Create: `packages/transport-shared/package.json`, `tsconfig.json`, `api-extractor.json`,
+  `etc/transport-shared.api.md` (it is a *published* package — `NFR-4` snapshots every published unit regardless
+  of the `@internal` marking on its exports)
+- Create: `packages/transport-shared/src/header-mapping.ts`, `header-mapping.test.ts`, `abort-mapping.ts`,
+  `abort-mapping.test.ts`, `drop-log.ts`, `drop-log.test.ts`, `index.ts`
 
 **Interfaces:**
-- Produces: `mapOutboundHeaders(headers: Headers, forbidden: readonly string[]): {sent: Headers; dropped: readonly string[]}`,
-  `degradeInboundHeaders(rawHeaders: Iterable<[string, string]>): {headers: Headers; dropped: readonly string[]}`.
+- Produces: `mapOutboundHeaders(headers: Headers, forbidden: readonly string[], opts?): {sent: Headers; dropped: readonly string[]}`,
+  `degradeInboundHeaders(rawHeaders: Iterable<readonly [string, string]>): {headers: Headers; dropped: readonly string[]}`,
+  `abortToSdkError(signal: AbortSignal, cause: unknown): DexpaceError`,
+  `createDropLogger(mode: HeaderDropLogging): (dropped: readonly string[]) => void`.
 
-- [ ] **Step 1: Scaffold** (same `package.json`/`tsconfig.json` shape as Task 3; `@internal`-only, not re-exported
+- [ ] **Step 1: Scaffold** (same `package.json`/`tsconfig.json`/`api-extractor.json` shape as Task 3;
+  `@internal`-only exports, not re-exported
   from either transport's own public barrel — a workspace `dependency`, not a `devDependency`, since it ships in
   each transport's production bundle).
 
@@ -493,13 +547,15 @@ export function mapOutboundHeaders(
   const forbiddenSet = new Set(forbidden.map((h) => h.toLowerCase()));
   const dropped: string[] = [];
   const builder = Headers.newBuilder();
+  // `entries()` yields one pair per VALUE, so a name with two values arrives twice; `add`, not
+  // `set`, or the second value silently replaces the first and breaks HTTP-14.
   for (const [name, value] of headers.entries()) {
     if (forbiddenSet.has(name.toLowerCase())) {
       dropped.push(name.toLowerCase());
       continue;
     }
     try {
-      builder.set(name, value); // may throw on a model-valid, wire-invalid name/value (TRANSPORT-12)
+      builder.add(name, value); // may throw on a model-valid, wire-invalid name/value (TRANSPORT-12)
     } catch {
       dropped.push(name.toLowerCase());
     }
@@ -511,17 +567,20 @@ export function mapOutboundHeaders(
 }
 
 export function degradeInboundHeaders(
-  raw: Iterable<[string, string]>,
+  raw: Iterable<readonly [string, string]>,
 ): {headers: Headers; dropped: readonly string[]} {
   const dropped: string[] = [];
   const builder = Headers.newBuilder();
   for (const [name, value] of raw) {
-    if (CONTROL_BYTE.test(name) || CONTROL_BYTE.test(value)) {
+    // Name: control OR non-ASCII drops the header (TRANSPORT-14, HTTP-17).
+    // Value: control drops it, but obs-text (>= 0x80) is PRESERVED, which is why the write below
+    // goes through the lenient inbound setter (HTTP-19) and not the strict outbound `add`.
+    if (NON_ASCII_OR_CONTROL.test(name) || CONTROL_BYTE.test(value)) {
       dropped.push(name);
       continue;
     }
     try {
-      builder.set(name, value);
+      builder.addInbound(name, value); // HTTP-19's lenient path, Phase 1
     } catch {
       dropped.push(name);
     }
@@ -530,9 +589,61 @@ export function degradeInboundHeaders(
 }
 ```
 
-`TRANSPORT-13`'s bounded, case-insensitive once-per-name drop-log dedup is a `getGlobalLogger()`-facing concern,
-wired at each transport's call site (Tasks 5/7), not inside this pure, I/O-free helper — this module returns the
-`dropped` list; logging policy lives above it.
+`NON_ASCII_OR_CONTROL` is `/[\x00-\x1F\x7F-￿]/u`. **Confirm `addInbound` against Phase 1's shipped `Headers`
+builder before writing this** — `HTTP-19` mandates a distinct lenient inbound path, so the method exists; only
+its spelling is assumed here. Using the strict `add`/`set` for inbound values is a defect, not a style choice: it
+rejects every byte `>= 0x80` and would fail this task's own "preserves an obs-text byte" test.
+
+`TRANSPORT-13`'s bounded, case-insensitive once-per-name drop-log dedup is a `getGlobalLogger()`-facing concern
+and lives in this package's `drop-log.ts`, not in the pure `header-mapping.ts` above — the *policy* is shared so
+the two transports cannot drift, but it is instantiated per transport instance and invoked at each transport's
+own call site (Tasks 5/7) over the `dropped` list these functions return:
+
+```typescript
+// packages/transport-shared/src/drop-log.ts
+// SPDX-License-Identifier: MIT
+import {getGlobalLogger} from '@dexpace/core';
+
+export type HeaderDropLogging = 'all' | 'first-per-name' | 'quiet';
+
+/** Bound on the dedup set so an attacker synthesising distinct names cannot grow it (TRANSPORT-13, XCUT-14). */
+const MAX_LOGGED_DROP_NAMES = 128;
+
+export function createDropLogger(mode: HeaderDropLogging): (dropped: readonly string[]) => void {
+  if (mode === 'quiet') return () => {};
+  const seen = new Set<string>();
+  return (dropped) => {
+    for (const name of dropped) {
+      const key = name.toLowerCase();
+      if (mode === 'first-per-name') {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Drain-to-cap loop, not a single pre-insert evict, so a burst converges to the bound.
+        while (seen.size > MAX_LOGGED_DROP_NAMES) seen.delete(seen.values().next().value as string);
+      }
+      getGlobalLogger().debug('dropped request/response header', {header: key}); // name only, never the value
+    }
+  };
+}
+```
+
+```typescript
+// packages/transport-shared/src/abort-mapping.ts
+// SPDX-License-Identifier: MIT
+import {CancellationError, TransportFailureError, isTimeoutSignal, type DexpaceError} from '@dexpace/core';
+
+/**
+ * The single mapping from an aborted signal to a canonical SDK error. Never surface `signal.reason`
+ * raw: it is a DOMException (TimeoutError/AbortError), which is neither an IoError subtype (so
+ * TRANSPORT-20 and 5a's isRetryableFailure cause-walk both miss a timeout) nor the terminal
+ * CancellationError TRANSPORT-3 requires for a caller abort.
+ */
+export function abortToSdkError(signal: AbortSignal, cause: unknown): DexpaceError {
+  return isTimeoutSignal(signal)
+    ? new TransportFailureError('request timed out', {cause})
+    : new CancellationError('request cancelled', {cause});
+}
+```
 
 - [ ] **Step 5: Run and confirm it passes; Step 6: commit**
 
@@ -546,8 +657,13 @@ git commit -m "feat(transport-shared): add shared header outbound/inbound mappin
 ### Task 4b: `@dexpace/transport-conformance` — the shared suite (private, unpublished)
 
 **Files:**
-- Create: `packages/transport-conformance/package.json` (`"private": true`, no `main`/`types` published)
-- Create: `packages/transport-conformance/src/fixtures.ts`, `run-suite.ts`
+- Create: `packages/transport-conformance/package.json` — `"private": true`, no build/publish, but it **must**
+  still declare `"exports": {".": "./src/index.ts"}`, or `import {...} from '@dexpace/transport-conformance'` in
+  Tasks 6/9 will not resolve. Excluded from `lint:publish`/`api` by its `private` flag.
+- Create: `packages/transport-conformance/src/fixtures.ts`, `run-suite.ts`, `index.ts` (re-export barrel:
+  `export {runTransportConformanceSuite} from './run-suite.js'; export type {TransportCapabilities} …`)
+- Each transport lists it in `devDependencies` as `"@dexpace/transport-conformance": "workspace:*"`
+  (Tasks 5 and 7, Step 1)
 
 **Interfaces:**
 - Produces: `runTransportConformanceSuite(makeTransport, capabilities)` (registers `describe`/`test` blocks when
@@ -587,6 +703,11 @@ export function startFixtureServer(): Promise<TestServer> {
           res.socket?.end();
           return;
         }
+        case '/malformed-content-type':
+          // TRANSPORT-27: a syntactically invalid media type and a chunked (length-less) body.
+          res.writeHead(200, {'content-type': 'not-a-media-type', 'transfer-encoding': 'chunked'});
+          res.end('body');
+          return;
         case '/slow':
           setTimeout(() => {
             res.writeHead(200);
@@ -740,18 +861,52 @@ export function runTransportConformanceSuite(
     test('a single-use streaming body is not re-read by the transport itself', async () => {
       transport = makeTransport();
       let writeCount = 0;
-      const body = stringBody('payload'); // replayable in this port -- see TRANSPORT-17's note in the design;
-      // a true single-use case is exercised at the Body layer's own ConsumedBodyError test (Phase 3b), not
-      // reproduced here. This assertion is transport-scoped: writeTo is invoked exactly once per send().
-      const originalWriteTo = body.writeTo.bind(body);
-      body.writeTo = async (sink) => {
-        writeCount++;
-        return originalWriteTo(sink);
+      // A counting Body built from scratch, NOT a monkey-patched stringBody(): every core model is
+      // frozen (HTTP-1), so assigning `body.writeTo = ...` throws in strict mode. This is also a
+      // genuinely single-use body, which stringBody (replayable) would not have exercised.
+      const payload = new TextEncoder().encode('payload');
+      const body: Body = {
+        kind: 'stream',
+        mediaType: 'text/plain',
+        contentLength: payload.byteLength,
+        replayable: false,
+        async writeTo(sink) {
+          writeCount++;
+          const writer = sink.getWriter();
+          await writer.write(payload);
+          writer.releaseLock();
+        },
       };
       const request = Request.newBuilder().method('POST').url(`${server.url}/echo-headers`).body(body).build();
       const response = await transport.send(request);
       await response.close();
       expect(writeCount).toBe(1);
+    });
+  });
+
+  describe('TRANSPORT-22: an adaptation failure still closes the native response', () => {
+    test('a response whose adaptation throws leaves no connection pinned', async () => {
+      transport = makeTransport();
+      // /malformed-header is the fixture whose raw socket write reaches the header-degrade path; a
+      // transport that let a throw escape without cancelling the body would hang this close().
+      const request = Request.newBuilder().url(`${server.url}/malformed-header`).build();
+      const response = await transport.send(request);
+      expect(response.headers.get('x-good')).toBe('value');
+      expect(response.headers.get('x-bad')).toBeUndefined();
+      await response.close();
+      await expect(transport.close()).resolves.toBeUndefined(); // no dangling handle blocks close
+    });
+  });
+
+  describe('TRANSPORT-27: malformed inbound Content-Type/Length downgrade', () => {
+    test('an unparseable Content-Type becomes no-media-type and a missing Content-Length becomes -1', async () => {
+      transport = makeTransport();
+      const request = Request.newBuilder().url(`${server.url}/malformed-content-type`).build();
+      const response = await transport.send(request);
+      expect(response.status.code).toBe(200); // downgraded, not failed
+      expect(response.body?.mediaType).toBeNull();
+      expect(response.body?.contentLength).toBe(-1);
+      await response.close();
     });
   });
 
@@ -776,8 +931,20 @@ export function runTransportConformanceSuite(
       transport = makeTransport();
       const request = Request.newBuilder().url(`${server.url}/echo-headers`).build();
       const response = await transport.send(request);
-      expect(response.body).toBeInstanceOf(ReadableStream);
-      await response.close(); // idempotence exercised by TRANSPORT-15/16's own block
+      // A Body (Phase 3b's response-body wrapper), NOT a bare ReadableStream: Response.body is typed
+      // `Body`, which is what carries .text()/.close(). The laziness assertion is that nothing was
+      // read before we ask -- close() without reading must still release the connection (BODY-15).
+      expect(response.body?.kind).toBe('stream');
+      await response.close();
+      await expect(response.close()).resolves.toBeUndefined(); // idempotent (BODY-15)
+    });
+
+    test('closing without reading releases the connection (no hang on transport close)', async () => {
+      transport = makeTransport();
+      const request = Request.newBuilder().url(`${server.url}/vendor-status`).build();
+      const response = await transport.send(request);
+      await response.close(); // body never read
+      await expect(transport.close()).resolves.toBeUndefined();
     });
   });
 
@@ -814,16 +981,19 @@ export function runTransportConformanceSuite(
 
 | IDs | Disposition |
 |---|---|
-| 1, 2, 3, 4, 5, 6, 7, 9, 15, 16, 17, 20, 21, 23, 24, 25, 26, 29 | Asserted directly in this suite (above) |
-| 10, 11, 12, 13, 14 | Asserted in `@dexpace/transport-shared`'s own `header-mapping.test.ts` (Task 4a) — not duplicated here, since the algorithm is shared and tested once at its source |
+| 1, 3, 4, 5, 6, 7, 9, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26, 27, 29 | Asserted directly in this suite (above) |
+| 2 | Satisfied by construction, asserted per package, not here: `transport-fetch` never composes a retrying dispatcher; `transport-undici` never composes a `RetryAgent`. A `transport-undici` unit test asserts the constructed `Agent` carries no retry interceptor |
+| 10, 11, 12, 14 | Asserted in `@dexpace/transport-shared`'s own `header-mapping.test.ts` (Task 4a) — not duplicated here, since the algorithm is shared and tested once at its source |
+| 13 | Asserted in `@dexpace/transport-shared`'s `drop-log.test.ts` (Task 4a): all three modes, case-insensitive dedup, and the `MAX_LOGGED_DROP_NAMES` bound holding under a synthesised-name burst. **Not** in `header-mapping.test.ts` — that module is deliberately I/O-free and logs nothing |
 | 8 | `.todo` for `transport-fetch` (scoped out, no internal-cancel path); a real assertion for `transport-undici` is **still owed** — the one genuinely remaining gap this table flags rather than leaves implicit |
-| 18, 19 | Deviation Ledger: no re-subscribable-producer/streaming-abandonment machinery applies (design doc, "No re-subscribable-producer replay machinery") |
-| 22 | Owed — a response-adaptation-throws-after-live-socket test is not yet written; add alongside Task 10's gate run |
-| 27 | Owed — a malformed inbound Content-Type/Length downgrade test is not yet written |
+| 18 | Deviation Ledger: no re-subscribable-producer replay machinery applies (design doc, "No re-subscribable-producer replay machinery") |
+| 19 | **Built, not collapsed** (the ledger row covers 18 only): `transport-fetch`'s streaming branch aborts and awaits its abandoned `writeTo` pump on every non-delivering exit path. Asserted in `fetch-transport.test.ts` — a body whose `writeTo` blocks forever must see its sink aborted when the send fails |
 | 28 | Exercised in `@dexpace/body-file`'s own tests (Task 3) plus `transport-undici`'s file-body dispatch path; the zero-copy half is a Deviation Ledger row, not a test |
 | 30 | Full retry-and-stamp flow asserted in `challenge-handler.test.ts` (Task 8); this suite's own row only confirms wiring |
 
-Three genuinely open rows remain after this expansion (`8` for `transport-undici`, `22`, `27`) — small, well-scoped additions at Task 10, not an unbounded "expand later."
+Exactly one genuinely open row remains after this expansion — `TRANSPORT-8` for `transport-undici` (Task 9
+expands the `.todo`). `22` and `27`, previously "owed", are now assertions in this suite backed by the
+`/malformed-header` and `/malformed-content-type` fixtures.
 
 - [ ] **Step 3: Commit** (no independent pass/fail here — proven by Tasks 6/9)
 
@@ -846,9 +1016,10 @@ git commit -m "feat(transport-conformance): add shared TRANSPORT-N conformance s
 - Produces: `fetchTransport(options?: FetchTransportOptions): Transport`.
 
 - [ ] **Step 1: Scaffold** — `package.json` with `peerDependencies: {"@dexpace/core"}`, `dependencies:
-  {"@dexpace/transport-shared": "workspace:*"}` (zero *external* libs — an internal workspace package doesn't
+  {"@dexpace/transport-shared": "workspace:*"}`, `devDependencies: {"@dexpace/transport-conformance":
+  "workspace:*"}` (Task 6 imports it) — zero *external* libs; an internal workspace package doesn't
   count against `NFR-2`'s "at most one external lib," the same way 6a's design didn't count `@dexpace/core`
-  itself as codec-json's "external lib").
+  itself as codec-json's "external lib". Plus `api-extractor.json` and `etc/transport-fetch.api.md`.
 
 - [ ] **Step 2: Write the failing unit test (mapping logic only — Task 6 wires the conformance suite)**
 
@@ -903,70 +1074,165 @@ export interface FetchTransportOptions {
 
 const FORBIDDEN_OUTBOUND = ['content-length', 'host', 'transfer-encoding', 'connection'];
 
-export function fetchTransport(options: FetchTransportOptions = {}): Transport {
+/**
+ * Bodies at or below this declared length are materialized into one Blob instead of streamed, which
+ * sidesteps the streaming-request-body/`duplex: 'half'` corner cases some fetch implementations have.
+ * An explicit named bound, per the styleguide's "every buffer declares its bound" rule.
+ */
+const MAX_MATERIALIZED_BODY_BYTES = 1_000_000;
+
+/** One entry per VALUE, so a repeated name survives as repeated appends (HTTP-14). */
+function toNativeHeaders(headers: Headers): globalThis.Headers {
+  const native = new globalThis.Headers();
+  for (const [name, value] of headers.entries()) native.append(name, value);
+  return native;
+}
+
+interface PreparedBody {
+  readonly init: BodyInit | undefined;
+  readonly duplex: 'half' | undefined;
+  /** Resolves when the streaming producer finishes; undefined for the buffered/no-body cases. */
+  readonly pump: Promise<void> | undefined;
+  /** Idempotent teardown for an abandoned streaming producer (TRANSPORT-19). */
+  abandon(cause: unknown): Promise<void>;
+}
+
+async function prepareBody(body: Body | undefined): Promise<PreparedBody> {
+  const idle = {init: undefined, duplex: undefined, pump: undefined, abandon: async () => {}} as const;
+  if (body === undefined) return idle;
+
+  if (body.replayable && body.contentLength >= 0 && body.contentLength <= MAX_MATERIALIZED_BODY_BYTES) {
+    const chunks: Uint8Array[] = [];
+    await body.writeTo(new WritableStream({write: (c) => void chunks.push(c)}));
+    return {...idle, init: new Blob(chunks)};
+  }
+
+  const {readable, writable} = new TransformStream<Uint8Array, Uint8Array>();
+  // Retained, never floating: a writeTo rejection must fail the send rather than leave fetch waiting
+  // on a stream that never closes, and the transport (not the body) closes the writable it created.
+  const pump = (async () => {
+    await body.writeTo(writable);
+    await writable.close();
+  })();
   return {
-    async send(request: Request, callOptions?: RequestOptions, userSignal?: AbortSignal): Promise<Response> {
-      const signal = composeSignal(userSignal, callOptions?.timeoutMs ?? options.defaultTimeoutMs);
-      const {sent: outboundHeaders} = mapOutboundHeaders(request.headers, FORBIDDEN_OUTBOUND, {
-        bodyDerivedMediaType: request.body?.mediaType ?? undefined,
-      });
-
-      let body: BodyInit | undefined;
-      let duplex: 'half' | undefined;
-      if (request.body !== undefined) {
-        if (request.body.replayable && request.body.contentLength >= 0 && request.body.contentLength < 1_000_000) {
-          const chunks: Uint8Array[] = [];
-          await request.body.writeTo(new WritableStream({write: (c) => void chunks.push(c)}));
-          body = new Blob(chunks);
-        } else {
-          const {readable, writable} = new TransformStream<Uint8Array, Uint8Array>();
-          void request.body.writeTo(writable);
-          body = readable;
-          duplex = 'half';
-        }
-      }
-
-      let fetchResponse: globalThis.Response;
-      try {
-        fetchResponse = await fetch(request.url.href, {
-          method: request.method,
-          headers: Object.fromEntries(outboundHeaders.entries()),
-          body,
-          duplex,
-          redirect: 'manual', // TRANSPORT-1: the pipeline, not the native client, is the redirect authority
-          signal,
-        });
-      } catch (error) {
-        if (signal?.aborted && !isTimeoutSignal(signal)) {
-          throw new CancellationError('request cancelled', {cause: error});
-        }
-        throw new TransportFailureError('fetch failed', {cause: error});
-      }
-
-      if (signal?.aborted) {
-        void fetchResponse.body?.cancel().catch(() => {}); // TRANSPORT-9 / SEAM-30, fire-and-forget by design
-        throw signal.reason;
-      }
-
-      const {headers: inboundHeaders} = degradeInboundHeaders(fetchResponse.headers.entries());
-      return Response.newBuilder()
-        .request(request)
-        // Protocol.HTTP_1_1 is a documented best-effort default, not an observed value: the WHATWG fetch
-        // Response object exposes no negotiated-HTTP-version field for this transport to read (see the
-        // Deviation Ledger). transport-undici's equivalent has the identical limitation for the same reason.
-        .protocol(Protocol.HTTP_1_1)
-        .status(Status.of(fetchResponse.status))
-        .headers(inboundHeaders)
-        .body(fetchResponse.body)
-        .build();
-    },
-
-    async close(): Promise<void> {
-      // no-op: the global fetch owns no resource this package created (ASYNC-17, TRANSPORT-15/16 vacuously)
+    init: readable,
+    duplex: 'half',
+    pump,
+    // `abort` is idempotent, satisfying TRANSPORT-19's idempotent-teardown clause; awaiting the pump
+    // with its rejection swallowed guarantees the producer has actually unwound before send() returns.
+    abandon: async (cause) => {
+      await writable.abort(cause).catch(() => {});
+      await pump.catch(() => {});
     },
   };
 }
+
+export function fetchTransport(options: FetchTransportOptions = {}): Transport {
+  const logDrops = createDropLogger(options.headerDropLogging ?? 'first-per-name');
+
+  const send = async (
+    request: Request,
+    callOptions?: RequestOptions,
+    userSignal?: AbortSignal,
+  ): Promise<Response> => {
+    const signal = composeSignal(userSignal, callOptions?.timeoutMs ?? options.defaultTimeoutMs);
+    const {sent: outboundHeaders, dropped} = mapOutboundHeaders(request.headers, FORBIDDEN_OUTBOUND, {
+      bodyDerivedMediaType: request.body?.mediaType ?? undefined,
+    });
+    logDrops(dropped); // TRANSPORT-11's verbose drop log / TRANSPORT-13's policy
+
+    const prepared = await prepareBody(request.body);
+    let fetchResponse: globalThis.Response;
+    try {
+      // Raced, not sequenced: a producer failure must surface even while fetch is still pending.
+      fetchResponse = await Promise.race([
+        fetch(request.url.href, {
+          method: request.method,
+          headers: toNativeHeaders(outboundHeaders),
+          body: prepared.init,
+          duplex: prepared.duplex,
+          redirect: 'manual', // TRANSPORT-1: the pipeline, not the native client, is the redirect authority
+          signal,
+        }),
+        (prepared.pump ?? new Promise<never>(() => {})).then(() => new Promise<never>(() => {})),
+      ]);
+    } catch (error) {
+      await prepared.abandon(error);
+      if (signal?.aborted) throw abortToSdkError(signal, error);
+      throw new TransportFailureError('fetch failed', {cause: error});
+    }
+
+    if (signal?.aborted) {
+      // TRANSPORT-9 / SEAM-30: the response will never reach a caller, so this producer closes it.
+      await fetchResponse.body?.cancel().catch(() => {});
+      await prepared.abandon(signal.reason);
+      throw abortToSdkError(signal, signal.reason);
+    }
+
+    // TRANSPORT-22: everything from here on runs with a live socket in hand, so any throw must
+    // release it before propagating.
+    try {
+      return adaptResponse(request, fetchResponse, logDrops);
+    } catch (error) {
+      await fetchResponse.body?.cancel().catch(() => {});
+      throw error;
+    }
+  };
+
+  return {
+    send,
+    async close(): Promise<void> {
+      // no-op: the global fetch owns no resource this package created (ASYNC-17, TRANSPORT-15/16 vacuously)
+    },
+    async [Symbol.asyncDispose](): Promise<void> {
+      // Single teardown path -- resource-management.md requires asyncDispose over a bare close().
+      await this.close();
+    },
+  };
+}
+
+function adaptResponse(
+  request: Request,
+  fetchResponse: globalThis.Response,
+  logDrops: (dropped: readonly string[]) => void,
+): Response {
+  const raw: (readonly [string, string])[] = [];
+  for (const [name, value] of fetchResponse.headers.entries()) {
+    // Set-Cookie is the one name WHATWG keeps un-joined; every other name arrives comma-joined.
+    if (name.toLowerCase() !== 'set-cookie') raw.push([name, value]);
+  }
+  for (const cookie of fetchResponse.headers.getSetCookie()) raw.push(['set-cookie', cookie]);
+
+  const {headers: inboundHeaders, dropped} = degradeInboundHeaders(raw);
+  logDrops(dropped);
+
+  return Response.newBuilder()
+    .request(request)
+    // Protocol.HTTP_1_1 is a documented best-effort default, not an observed value: the WHATWG fetch
+    // Response object exposes no negotiated-HTTP-version field for this transport to read (see the
+    // Deviation Ledger). transport-undici's equivalent has the identical limitation for the same reason.
+    .protocol(Protocol.HTTP_1_1)
+    .status(Status.of(fetchResponse.status))
+    .headers(inboundHeaders)
+    // Phase 3b's response-body wrapper, not the raw stream: `Response.body` is a `Body`, and
+    // BODY-15's idempotent connection-releasing close lives on the wrapper. `close()` cascades to
+    // `stream.cancel()`, which is what returns the connection (TRANSPORT-25). TRANSPORT-27: an
+    // unparseable/absent Content-Type downgrades to null and an absent Content-Length to -1, inside
+    // the wrapper's own parse -- never a failed response.
+    .body(streamResponseBody(fetchResponse.body, inboundHeaders))
+    .build();
+}
 ```
+
+`streamResponseBody(stream, headers)` is the Phase 3b response-body constructor (`BODY-14`/`BODY-15`).
+**Confirm its exported name against Phase 3b's shipped `packages/core/src/body/` before writing Task 5** — the
+type exists (`Response.text()` and `Response.close()` both depend on it); only the factory's spelling is assumed
+here. It must not be given the raw `ReadableStream`: `Response.newBuilder().body()` takes a `Body`.
+
+`FetchTransportOptions` gains `readonly headerDropLogging?: HeaderDropLogging` (default `'first-per-name'`),
+and the import list gains `abortToSdkError`, `createDropLogger`, `type HeaderDropLogging` from
+`@dexpace/transport-shared` plus `type Body`, `type Headers`, `streamResponseBody` from `@dexpace/core`;
+`CancellationError`/`isTimeoutSignal` are no longer imported directly — `abortToSdkError` owns that branch.
 
 - [ ] **Step 5: Run and confirm it passes; Step 6: public barrel + commit**
 
@@ -1030,10 +1296,19 @@ git commit -m "test(transport-fetch): wire the shared TRANSPORT-N conformance su
 route to arbitrary hosts. A general-purpose `Transport` must send requests to any origin the caller's `Request`
 names, so the owned dispatcher here is `Agent` — undici's own multi-origin dispatcher, which is also what makes
 passing `origin: request.url.origin` per call (below) meaningful in the first place. A caller may still supply
-their own already-constructed `Agent` (or any `Dispatcher`) via the `pool` option to reuse across transports.
+their own already-constructed `Agent` (or any `Dispatcher`) via the **`dispatcher`** option to reuse across
+transports.
+
+**Note on dispatcher selection and ownership (design doc §4).** There is exactly one dispatcher binding and one
+`owned` flag, resolved once at construction — never a second agent constructed and then discarded:
+`dispatcher` supplied → use it, `owned = false`; `proxy` supplied → `new ProxyAgent(...)`, `owned = true`;
+neither → `new Agent(...)`, `owned = true`. Supplying **both** `dispatcher` and `proxy` is a construction-time
+`invariant` failure, not a silent win for one. A `ProxyAgent` the transport constructed is an SDK-created
+resource `close()` must release, exactly like an owned `Agent`.
 
 - [ ] **Step 1: Scaffold** — `dependencies: {"undici": "^6.0.0", "@dexpace/transport-shared": "workspace:*"}`,
-  `peerDependencies: {"@dexpace/core": "workspace:*"}`.
+  `peerDependencies: {"@dexpace/core": "workspace:*"}`,
+  `devDependencies: {"@dexpace/transport-conformance": "workspace:*"}` (Task 9 imports it).
 
 - [ ] **Step 2: Write the failing unit test (close/ownership only — Task 9 wires the conformance suite)**
 
@@ -1057,6 +1332,20 @@ describe('undiciTransport close ownership', () => {
     const transport = undiciTransport({agentOptions: {}, defaultTimeoutMs: 1000});
     await transport.close();
     await expect(transport.close()).resolves.toBeUndefined();
+  });
+
+  test('a transport-constructed ProxyAgent is owned and closed too', async () => {
+    // The ProxyAgent is SDK-created, so TRANSPORT-15 requires close() release it -- the bug this
+    // guards is closing only a separately-constructed Agent and leaking the ProxyAgent actually used.
+    const transport = undiciTransport({proxy: {protocol: 'HTTP', host: '127.0.0.1', port: 3128} as never});
+    await expect(transport.close()).resolves.toBeUndefined();
+    await expect(transport.close()).resolves.toBeUndefined();
+  });
+
+  test('supplying both a dispatcher and a proxy fails loudly at construction', () => {
+    const agent = new Agent();
+    expect(() => undiciTransport({dispatcher: agent, proxy: {} as never})).toThrow();
+    void agent.close();
   });
 });
 ```
@@ -1092,23 +1381,58 @@ export interface UndiciTransportOptions {
 
 const FORBIDDEN_OUTBOUND = ['content-length', 'host', 'transfer-encoding']; // NOT 'connection' -- TRANSPORT-11 note
 
-export function undiciTransport(options: UndiciTransportOptions = {}): Transport {
+/**
+ * One exclusive decision, made once, that fixes both the dispatcher and its ownership. Returns the
+ * dispatchers this transport OWNS (and must therefore close) alongside the routing pair.
+ *
+ * - `proxied` is the dispatcher for hosts that go through the proxy;
+ * - `direct` is the non-proxied fallback used when CFG-23/CFG-27's bypass decision says so. A ProxyAgent
+ *   installed as *the* dispatcher would otherwise tunnel every origin regardless of the caller's NO_PROXY.
+ */
+function selectDispatchers(options: UndiciTransportOptions): {
+  proxied: Dispatcher;
+  direct: Dispatcher;
+  owned: readonly Dispatcher[];
+} {
+  invariant(
+    options.dispatcher === undefined || options.proxy === undefined,
+    'supply either `dispatcher` or `proxy`, not both: a BYO dispatcher may already be a ProxyAgent, and ' +
+      'silently ignoring one of the two options hides which is in force',
+  );
+  if (options.dispatcher !== undefined) {
+    return {proxied: options.dispatcher, direct: options.dispatcher, owned: []}; // BYO: owned by the caller
+  }
   // Agent, not Pool: Pool is bound to one fixed origin at construction, but this Transport must reach
   // whatever origin each Request names -- Agent is undici's own general-purpose, multi-origin dispatcher,
   // which is also what makes passing `origin` per call below meaningful.
-  const ownedAgent = options.dispatcher === undefined ? new Agent(options.agentOptions) : undefined;
-  const dispatcher: Dispatcher =
-    options.proxy !== undefined
-      ? new ProxyAgent({uri: `${options.proxy.host}:${options.proxy.port}`})
-      : (options.dispatcher ?? ownedAgent!);
+  const direct = new Agent(options.agentOptions);
+  if (options.proxy === undefined) return {proxied: direct, direct, owned: [direct]};
+  const proxied = new ProxyAgent(toProxyAgentOptions(options.proxy));
+  return {proxied, direct, owned: [proxied, direct]};
+}
+
+/** The whole ProxyOptions, not just its address: a bare `host:port` is not a valid absolute URL. */
+function toProxyAgentOptions(proxy: ProxyOptions): ProxyAgent.Options {
+  const uri = `${proxy.protocol.toLowerCase()}://${proxy.host}:${proxy.port}`;
+  if (proxy.credentials === undefined) return {uri};
+  const token = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString('base64')}`;
+  return {uri, token}; // never logged -- redaction-and-security.md, TRANSPORT-30
+}
+
+export function undiciTransport(options: UndiciTransportOptions = {}): Transport {
+  const {proxied, direct, owned} = selectDispatchers(options);
+  const logDrops = createDropLogger(options.headerDropLogging ?? 'first-per-name');
   let closed = false;
 
   return {
     async send(request: Request, callOptions?: RequestOptions, userSignal?: AbortSignal): Promise<Response> {
       const signal = composeSignal(userSignal, callOptions?.timeoutMs ?? options.defaultTimeoutMs);
-      const {sent: outboundHeaders} = mapOutboundHeaders(request.headers, FORBIDDEN_OUTBOUND, {
+      // CFG-23/CFG-27: bypassAll short-circuits, otherwise a non-proxy glob match routes direct.
+      const dispatcher = shouldBypassProxy(options.proxy, request.url.hostname) ? direct : proxied;
+      const {sent: outboundHeaders, dropped} = mapOutboundHeaders(request.headers, FORBIDDEN_OUTBOUND, {
         bodyDerivedMediaType: request.body?.mediaType ?? undefined,
       });
+      logDrops(dropped);
 
       let bodyResult: Dispatcher.RequestOptions['body'];
       if (request.body?.kind === 'file') {
@@ -1126,9 +1450,14 @@ export function undiciTransport(options: UndiciTransportOptions = {}): Transport
       const dispatchOptions: Dispatcher.RequestOptions = {
         origin: request.url.origin,
         path: request.url.pathname + request.url.search,
+        // Request.method is the SDK's own uppercase-token union (HTTP-9); undici types the same
+        // tokens, so this narrows a value the compiler cannot follow across the two declarations.
         method: request.method as Dispatcher.HttpMethod,
-        headers: Object.fromEntries(outboundHeaders.entries()),
+        headers: toUndiciHeaders(outboundHeaders), // one entry per value -- HTTP-14, never fromEntries
         body: bodyResult,
+        // TRANSPORT-1: pinned explicitly rather than inherited. undici's default is already 0, but a
+        // BYO dispatcher may carry a redirect interceptor, and the pipeline is the single authority.
+        maxRedirections: 0,
         signal,
       };
 
@@ -1136,46 +1465,96 @@ export function undiciTransport(options: UndiciTransportOptions = {}): Transport
       try {
         result = await dispatcher.request(dispatchOptions);
       } catch (error) {
-        if (signal?.aborted && !isTimeoutSignal(signal)) {
-          throw new CancellationError('request cancelled', {cause: error});
-        }
+        if (signal?.aborted) throw abortToSdkError(signal, error);
         throw new TransportFailureError('undici request failed', {cause: error});
       }
 
       if (result.statusCode === 407 && options.proxy?.challengeHandler !== undefined) {
-        const retried = await resolveProxyChallenge(result, dispatcher, options.proxy, dispatchOptions);
+        const retried = await resolveProxyChallenge({
+          response: result,
+          dispatcher,
+          proxy: options.proxy,
+          originalRequest: dispatchOptions,
+        });
+        // The superseded 407's body is dumped inside resolveProxyChallenge on BOTH paths -- undici
+        // will not release the connection for an undrained body (PIPE-40's obligation, one layer down).
         if (retried !== undefined) result = retried;
       }
 
-      const {headers: inboundHeaders} = degradeInboundHeaders(
-        Object.entries(result.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : (v ?? '')]),
-      );
-      const bodyStream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          for await (const chunk of result.body) controller.enqueue(chunk as Uint8Array);
-          controller.close();
-        },
-      });
-      return Response.newBuilder()
-        .request(request)
-        // Protocol.HTTP_1_1: same documented best-effort default as transport-fetch -- undici's
-        // Dispatcher.ResponseData does not surface the negotiated HTTP version either. See the Deviation
-        // Ledger.
-        .protocol(Protocol.HTTP_1_1)
-        .status(Status.of(result.statusCode))
-        .headers(inboundHeaders)
-        .body(bodyStream)
-        .build();
+      if (signal?.aborted) {
+        // TRANSPORT-9 / SEAM-30: this response will never reach a caller, so this producer closes it.
+        await result.body.dump().catch(() => {});
+        throw abortToSdkError(signal, signal.reason);
+      }
+
+      // TRANSPORT-22: a live socket is in hand from here on, so any throw must release it first.
+      try {
+        return adaptResponse(request, result, logDrops);
+      } catch (error) {
+        await result.body.dump().catch(() => {});
+        throw error;
+      }
     },
 
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
-      await ownedAgent?.close(); // never touches options.dispatcher -- TRANSPORT-15/SEAM-14
+      // Reverse acquisition order; `owned` is empty for a BYO dispatcher, so options.dispatcher is
+      // never touched -- TRANSPORT-15/SEAM-14. Includes a ProxyAgent this transport constructed.
+      for (const dispatcherToClose of [...owned].reverse()) await dispatcherToClose.close();
+    },
+
+    async [Symbol.asyncDispose](): Promise<void> {
+      await this.close();
     },
   };
 }
+
+function toUndiciHeaders(headers: Headers): string[] {
+  // undici accepts a flat [name, value, name, value, ...] array, which is the only shape that keeps a
+  // repeated name repeated. An object collapses duplicates to the last value and breaks HTTP-14.
+  return [...headers.entries()].flat();
+}
+
+function adaptResponse(
+  request: Request,
+  result: Dispatcher.ResponseData,
+  logDrops: (dropped: readonly string[]) => void,
+): Response {
+  const raw: (readonly [string, string])[] = [];
+  for (const [name, value] of Object.entries(result.headers)) {
+    if (value === undefined) continue;
+    // An array means a genuinely repeated header (Set-Cookie); keep each value its own entry.
+    if (Array.isArray(value)) for (const each of value) raw.push([name, each]);
+    else raw.push([name, value]);
+  }
+  const {headers: inboundHeaders, dropped} = degradeInboundHeaders(raw);
+  logDrops(dropped);
+
+  return Response.newBuilder()
+    .request(request)
+    // Protocol.HTTP_1_1: same documented best-effort default as transport-fetch -- undici's
+    // Dispatcher.ResponseData does not surface the negotiated HTTP version either. See the Deviation
+    // Ledger.
+    .protocol(Protocol.HTTP_1_1)
+    .status(Status.of(result.statusCode))
+    .headers(inboundHeaders)
+    // Readable.toWeb, NOT a ReadableStream whose start() drains the body: draining in start() pulls
+    // the whole body into memory eagerly and defeats TRANSPORT-25's not-pre-buffered requirement.
+    // toWeb keeps reads demand-driven, and the wrapper's close() -> stream.cancel() -> body.destroy()
+    // is what returns the connection to the pool.
+    .body(streamResponseBody(Readable.toWeb(result.body) as ReadableStream<Uint8Array>, inboundHeaders))
+    .build();
+}
 ```
+
+`shouldBypassProxy(proxy, hostname)` is 7a's own bypass decision (`CFG-23`'s glob matcher plus `CFG-27`'s
+bypass-all flag) — **import it from `@dexpace/core`, do not re-derive the glob matching here**; if 7a exported
+it only as a method on `ProxyOptions`, call that instead. `UndiciTransportOptions` gains
+`readonly headerDropLogging?: HeaderDropLogging`. The import list gains `Readable` from `node:stream`,
+`abortToSdkError`/`createDropLogger` from `@dexpace/transport-shared`, and `streamResponseBody`/`Headers`/
+`shouldBypassProxy` from `@dexpace/core`; `CancellationError`/`isTimeoutSignal` drop out, as in Task 5.
+`invariant` is this package's local copy, same one-liner as Task 3.
 
 - [ ] **Step 5: Run and confirm it passes; Step 6: public barrel + commit**
 
@@ -1193,7 +1572,10 @@ git commit -m "feat(transport-undici): add @dexpace/transport-undici, a full-fea
 
 **Interfaces:**
 - Consumes: `ProxyOptions` (7a).
-- Produces: `resolveProxyChallenge(response, dispatcher, proxy, originalRequest): Promise<Dispatcher.ResponseData | undefined>`.
+- Produces: `resolveProxyChallenge(args: ProxyChallengeArgs): Promise<Dispatcher.ResponseData | undefined>`,
+  where `ProxyChallengeArgs = {response, dispatcher, proxy, originalRequest}`. **One options-object parameter,
+  not four positional ones** — `max-params: 3` is a hard ESLint limit (Global Constraints), and four positional
+  arguments of three near-identical shapes is exactly the call site that gets transposed silently.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1207,17 +1589,28 @@ import {resolveProxyChallenge} from './challenge-handler.js';
 
 const baseRequest = {origin: 'http://example.com', path: '/', method: 'GET', headers: {}};
 
+/** A stand-in for undici's BodyReadable that records whether the connection-releasing dump() ran. */
+function fakeBody(): {dump: () => Promise<void>; dumped: () => boolean} {
+  let dumped = false;
+  return {
+    dump: async () => void (dumped = true),
+    dumped: () => dumped,
+  };
+}
+
+const okResponse = () => ({statusCode: 200, headers: {}, body: fakeBody()}) as never;
+
 describe('resolveProxyChallenge', () => {
   test('does not invoke the challenge handler for a 401 (origin-server challenge)', async () => {
     const handler = () => {
       throw new Error('must not be called');
     };
-    const result = await resolveProxyChallenge(
-      {statusCode: 401, headers: {}} as never,
-      {request: async () => ({statusCode: 200, headers: {}, body: []}) as never} as never,
-      {challengeHandler: handler} as never,
-      baseRequest as never,
-    );
+    const result = await resolveProxyChallenge({
+      response: {statusCode: 401, headers: {}, body: fakeBody()} as never,
+      dispatcher: {request: async () => okResponse()} as never,
+      proxy: {challengeHandler: handler} as never,
+      originalRequest: baseRequest as never,
+    });
     expect(result).toBeUndefined();
   });
 
@@ -1226,33 +1619,36 @@ describe('resolveProxyChallenge', () => {
     const dispatcher = {
       request: async (opts: {headers: Record<string, string>}) => {
         dispatched.push(opts);
-        return {statusCode: 200, headers: {}, body: []} as never;
+        return okResponse();
       },
     };
     const handler = async () => 'Bearer proxy-token';
-    const result = await resolveProxyChallenge(
-      {statusCode: 407, headers: {}} as never,
-      dispatcher as never,
-      {challengeHandler: handler} as never,
-      baseRequest as never,
-    );
+    const challenge = fakeBody();
+    const result = await resolveProxyChallenge({
+      response: {statusCode: 407, headers: {}, body: challenge} as never,
+      dispatcher: dispatcher as never,
+      proxy: {challengeHandler: handler} as never,
+      originalRequest: baseRequest as never,
+    });
     expect(result?.statusCode).toBe(200);
     expect(dispatched).toHaveLength(1);
-    expect((dispatched[0] as {headers: Record<string, string>}).headers['Proxy-Authorization']).toBe(
+    expect((dispatched[0] as {headers: Record<string, string>}).headers['proxy-authorization']).toBe(
       'Bearer proxy-token',
     );
+    // The superseded 407's body must be drained before the retry, or undici never releases the connection.
+    expect(challenge.dumped()).toBe(true);
   });
 
   test('a failing handler falls back to Basic (leaves the 407 unretried) with a WARN, no credential logged', async () => {
     const handler = async () => {
       throw new Error('handler unavailable');
     };
-    const result = await resolveProxyChallenge(
-      {statusCode: 407, headers: {}} as never,
-      {request: async () => ({statusCode: 200, headers: {}, body: []}) as never} as never,
-      {challengeHandler: handler} as never,
-      baseRequest as never,
-    );
+    const result = await resolveProxyChallenge({
+      response: {statusCode: 407, headers: {}, body: fakeBody()} as never,
+      dispatcher: {request: async () => okResponse()} as never,
+      proxy: {challengeHandler: handler} as never,
+      originalRequest: baseRequest as never,
+    });
     expect(result).toBeUndefined(); // no retry issued -- caller's own Basic/authStep path takes over
   });
 });
@@ -1266,25 +1662,39 @@ describe('resolveProxyChallenge', () => {
 import type {Dispatcher} from 'undici';
 import {getGlobalLogger, type ProxyOptions} from '@dexpace/core';
 
+export interface ProxyChallengeArgs {
+  readonly response: Dispatcher.ResponseData;
+  readonly dispatcher: Dispatcher;
+  readonly proxy: ProxyOptions;
+  readonly originalRequest: Dispatcher.RequestOptions;
+}
+
+// One options object, not four positional parameters: `max-params: 3` is a hard limit, and three of the
+// four arguments are structurally similar enough that a transposed call site would type-check.
 export async function resolveProxyChallenge(
-  response: Dispatcher.ResponseData,
-  dispatcher: Dispatcher,
-  proxy: ProxyOptions,
-  originalRequest: Dispatcher.RequestOptions,
+  args: ProxyChallengeArgs,
 ): Promise<Dispatcher.ResponseData | undefined> {
+  const {response, dispatcher, proxy, originalRequest} = args;
   if (response.statusCode !== 407) return undefined; // never answer a 401 -- TRANSPORT-30
   if (proxy.challengeHandler === undefined) return undefined;
   try {
+    // `challengeHandler`'s parameter is the SDK-agnostic challenge slot CFG-22 declares; this narrows it
+    // to the undici response shape this transport actually hands it.
     const credentialValue = await (proxy.challengeHandler as (r: Dispatcher.ResponseData) => Promise<string>)(
       response,
     );
+    // Drain the superseded 407 BEFORE dispatching the retry: undici does not release a connection whose
+    // body was never consumed, so skipping this leaks one socket per challenge (PIPE-40, one layer down).
+    await response.body.dump();
     // Retry exactly once with the handler's value stamped as Proxy-Authorization. No credential value is ever
     // passed to getGlobalLogger() on this path -- only the caught-error branch below logs, and only the error.
     return await dispatcher.request({
       ...originalRequest,
-      headers: {...originalRequest.headers, 'Proxy-Authorization': credentialValue},
+      headers: {...originalRequest.headers, 'proxy-authorization': credentialValue},
     });
   } catch (error) {
+    await response.body.dump().catch(() => {}); // same obligation on the failure path
+
     // TRANSPORT-30 SHOULD: surfaced with a WARN, falls back to Basic -- i.e. this function returns undefined
     // and the unhandled 407 flows back to the caller's own auth layer, which may itself have a Basic
     // fallback configured. This function's job ends at "the custom handler didn't work," not at retrying
@@ -1351,17 +1761,25 @@ export type {FileBodyDescriptor} from './body/body.js';
 
 - [ ] **Step 2: `NFR-15` wiring test** — confirm, don't assume (segmentation design §7)
 
+This block goes **inside `runTransportConformanceSuite` in `run-suite.ts`**, not into a separate file: it reads
+the suite's own `server` and `transport` closure variables, which no sibling file can see. Adding it to the one
+suite is also what makes it run against both transports rather than one.
+
 ```typescript
-// packages/transport-conformance/src/user-agent.conformance.test.ts (added to run-suite.ts)
-test('a clientIdentityStep-stamped User-Agent survives the transport header-drop pass unmangled', async () => {
-  const request = Request.newBuilder()
-    .url(`${server.url}/echo-headers`)
-    .headers(Headers.newBuilder().set('User-Agent', getBuildInfo().identityTokens.join(' ')).build())
-    .build();
-  const response = await transport.send(request);
-  const echoed = JSON.parse(await response.text()) as Record<string, string>;
-  expect(echoed['user-agent']).toBe(getBuildInfo().identityTokens.join(' '));
-  await response.close();
+// packages/transport-conformance/src/run-suite.ts -- one more describe inside runTransportConformanceSuite
+describe('NFR-15: the stamped identity survives the header-drop pass', () => {
+  test('a clientIdentityStep-stamped User-Agent arrives unmangled', async () => {
+    transport = makeTransport();
+    const identity = getBuildInfo().identityTokens.join(' ');
+    const request = Request.newBuilder()
+      .url(`${server.url}/echo-headers`)
+      .headers(Headers.newBuilder().set('User-Agent', identity).build())
+      .build();
+    const response = await transport.send(request);
+    const echoed = JSON.parse(await response.text()) as Record<string, string>;
+    expect(echoed['user-agent']).toBe(identity);
+    await response.close();
+  });
 });
 ```
 
@@ -1377,15 +1795,19 @@ Expected: all green across `packages/core`, `packages/body-file`, `packages/tran
 `packages/transport-conformance` (excluded from `lint:publish`/`api` — `private: true`),
 `packages/transport-fetch`, `packages/transport-undici`.
 
-- [ ] **Step 4: Close the three remaining rows Task 4b's disposition table names**
+- [ ] **Step 4: Close the one remaining row Task 4b's disposition table names**
 
-Task 4b's suite plus `transport-shared`'s own tests now cover `TRANSPORT-1`–`TRANSPORT-30` except three rows its
-own disposition table names explicitly: `TRANSPORT-8` for `transport-undici` specifically (a native-internal-cancel
-assertion, not just the `.todo` `transport-fetch` correctly leaves scoped out), `TRANSPORT-22` (response-adaptation
-throws after a live socket — assert the native response still closes), and `TRANSPORT-27` (malformed inbound
-Content-Type/Length downgrades rather than failing the response). Add these three to Task 4b's suite (or, if a
-row turns out to need a package-specific fixture only `transport-undici` can trigger, to that package's own
-`undici-transport.test.ts` instead) before this task closes — a small, bounded addition, not an open-ended sweep.
+Task 4b's suite plus `transport-shared`'s own tests now cover `TRANSPORT-1`–`TRANSPORT-30` except one row its
+disposition table names explicitly: `TRANSPORT-8` for `transport-undici` specifically — a native-internal-cancel
+assertion (undici's `Dispatcher.destroy()` mid-flight must complete the send with `CancellationError`, while a
+timeout on the same path still completes with the retryable `TransportFailureError`), not just the `.todo`
+`transport-fetch` correctly leaves scoped out. Task 9 expands it; if it turns out to need a fixture only
+`transport-undici` can trigger, put it in that package's own `undici-transport.test.ts` instead.
+
+Re-verify at this point, because they are the assertions most likely to have been written to pass rather than to
+bite: `TRANSPORT-22` closes the socket on an adaptation throw, `TRANSPORT-25`'s close-without-reading releases
+the connection, and `TRANSPORT-19`'s abandoned-pump teardown actually unblocks a producer that would otherwise
+hang. Each of the three fails silently if the implementation regresses — the process simply does not exit.
 
 - [ ] **Step 5: Commit**
 
@@ -1409,3 +1831,15 @@ Before marking this plan complete, confirm against the design doc and segmentati
 - [ ] `@dexpace/transport-fetch`'s `package.json` `dependencies` contains no external library.
 - [ ] Zero-copy dispatch is documented as a Deviation Ledger row (design doc §5), not silently unimplemented.
 - [ ] `transport-fetch`'s proxy scope-out is documented in its own package README/TSDoc, not just this plan.
+- [ ] No abort is ever surfaced as a raw `signal.reason`: every abort path in both transports routes through
+  `abortToSdkError`, so a timeout is a `TransportFailureError` (retryable, `IoError` subtype) and a caller abort
+  is a `CancellationError` (terminal).
+- [ ] Every dispatcher the transport constructed — including a `ProxyAgent` — is released by `close()`, and a
+  caller-supplied `dispatcher` is never touched.
+- [ ] No outbound or inbound header set is round-tripped through a plain object: a repeated name survives as a
+  repeated name (`HTTP-14`).
+- [ ] `degradeInboundHeaders` writes through the lenient inbound header path, so obs-text values survive.
+- [ ] All four published packages (`transport-fetch`, `transport-undici`, `body-file`, `transport-shared`) have
+  an `api-extractor.json` and a committed `etc/<name>.api.md` (`NFR-4`).
+- [ ] The roadmap's Phase 8a row and `package-and-dependency-layout.md` list all four published packages, not
+  just the two transports.

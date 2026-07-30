@@ -189,6 +189,7 @@ permanent simplification, not a postponement.
 | Redirect structured logging (`SHOULD`-level hop/loop/downgrade events) | Phase 5b brainstorm | **Partially resolved in Phase 7b (plan, 2026-07-28)** | Same disposition as 5a's equivalent gap for retry. 7b's amendment to 5b's `redirect-step.ts` ships the hop event and a rejection event (distinguishing `SchemeDowngradeError`) via `getGlobalLogger()`, no change to `StepContext`'s shape. **Not fully closed:** `decide()`'s `Decision` type carries no reason discriminant on `'return-current'`, so a genuine loop-vs-hop-cap-vs-normal-termination distinction is out of scope for this retrofit — would need `Decision` reshaped, touching every assertion in `decide.test.ts`. 5a's equivalent (attempt-failed, retries-exhausted) closes cleanly with no such gap, since `Outcome.kind` already discriminates success/failure. Both land when their respective plans execute |
 | 5a's `RetryConfig.clock`/`random` retyped against 7a's real `Clock` seam, replacing its ad hoc injection point | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | Single-sources the injectable-determinism seam 5a's own design already noted it was pre-empting ("the same injectable-determinism seam `CFG-15` wants for the clock") |
 | 5a's private RFC 1123 parser in `pacing.ts` re-sourced from 7a's shared `config/http-date.ts` | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | 7a's module is a superset (adds the formatter 5a never needed); 5a's parser becomes an import, not a second implementation |
+| 5a's private `RETRYABLE_STATUSES`/`isRetryableStatus` in `classify.ts` re-sourced from 7a's `config/retryable.ts` | Phase 7a brainstorm | 7a (doc amendment to 5a's design/plan) | `CFG-35` mandates one shared retryability definition; 7a Task 3 ships the identical set (408, 429, 5xx except 501/505) and 5a's `classify.ts` re-exports it unchanged, so `RETRY-1` and `CFG-35` cannot drift apart |
 | `challengeHandler` slot on `ProxyOptions` has no protocol behind it | Phase 7a brainstorm | **Resolved in Phase 8a (design)** | The type carries the slot per `CFG-22`'s field list. Resolved as `transport-undici`-only: undici ships `ProxyAgent`/proxy-407 dispatch; `transport-fetch` ships no `proxy` option on `FetchTransportOptions` at all (an absent option, not a silently-ignored one) and documents no proxy support, since honoring `TRANSPORT-30` there would require depending on `undici` internally anyway, undercutting `transport-fetch`'s zero-added-dependency purpose. `§17`'s own preamble licenses this single-transport scoping. See [Phase 8a design](./2026-07-28-phase8a-transport-design.md) §6 |
 | Whether `clientIdentityStep` should be added to `standardResilience()`'s default install list | Phase 7a brainstorm | **Resolved in Phase 10 — 2026-07-28** | Not installed by default — no requirement mandates it (`RECOV-33` governs the step's own internal composition, not whether a preset installs it; `NFR-15` only requires that *when* a `User-Agent` is emitted it's real, not that every call carry one), and 5c's preset already closed its own scope for the pillars that exist. **Resolved:** stays out, permanently — adding it would be unrequested preset scope creep; a caller who wants it installs it explicitly, already possible via the public authoring surface |
 | Retry/redirect structured-logging event names/fields | Phase 7b brainstorm | Phase 7b plan time | No spec-fixed vocabulary exists for these `SHOULD`-level events; naming is a plan-time detail, not a design-level decision |
@@ -203,11 +204,22 @@ split has one real (if soft) cross-segment dependency — `OBS-35`'s log-level r
 — so 7a leads and 7b trails deliberately, rather than "order is convenience only." Both sub-phases got full
 designs in this same session (not just a segmentation note): [7a](./2026-07-28-phase7a-configuration-design.md)
 and [7b](./2026-07-28-phase7b-observability-design.md). All six Deferred Items Log rows that previously targeted
-bare "Phase 7" are updated above to point at 7a or 7b specifically, each marked resolved-at-design-level. Two new
-retrofits to 5a's already-written (still unexecuted) design/plan came out of 7a's brainstorm (`Clock` and RFC 1123
-parser single-sourcing); two more amendments — to 5a's and 5b's steps for structured logging, and to 5c's preset
-for the `LOGGING` slot — came out of 7b's. No executed code exists yet for any phase, so every change listed here
-is a document edit, not a retrofit to shipped code.
+bare "Phase 7" are updated above to point at 7a or 7b specifically, each marked resolved-at-design-level. Three
+new retrofits to 5a's already-written (still unexecuted) design/plan came out of 7a's brainstorm (`Clock`, RFC
+1123 parser, and `RETRY-1`/`CFG-35` retryable-status single-sourcing); two more amendments — to 5a's and 5b's
+steps for structured logging, and to 5c's preset for the `LOGGING` slot — came out of 7b's. No executed code
+exists yet for any phase, so every change listed here is a document edit, not a retrofit to shipped code.
+
+**Execution order is no longer the numeric order for Phase 5.** These five retrofits do not merely annotate 5a/5b/5c
+— they make Phase 7 a *prerequisite* of Phase 5's execution, in both directions the amendment banners record:
+7a's `config/{clock,http-date,retryable}.ts` must exist before 5a's plan runs (its Task 8 consumes `Clock`), and
+7b's `observability/{logger,redaction,logging-step}.ts` must exist before 5b's Task 6 and 5c's Task 16 run. The
+**Ordering rationale** above ("resilience layer... instrumentation as the outer layers consuming everything
+underneath") describes the dependency direction as originally designed; it holds for everything except these
+named modules, which invert it. Anyone executing plans in roadmap order must run 7a (and, for 5b/5c, 7b) first,
+or execute 5a/5b/5c against the pre-amendment text and accept a duplicate-implementation deviation. Each affected
+plan's own **Prerequisite** section states this; this note exists so the roadmap does not read as contradicting
+them.
 
 **Status note (2026-07-28, Phase 8).** Phase 8 was brainstormed solo (user away from keyboard, `docs/knowledge/`
 as standing tie-breaker per standing instruction) and split into 8a (Transport Adapters, `§17`) / 8b
