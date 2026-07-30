@@ -4,9 +4,254 @@
 
 ```ts
 
-// @public (undocumented)
-export function ping(): 'pong';
+// @public
+export interface Builder<T> {
+    build(): T;
+}
 
-// (No @packageDocumentation comment for this package)
+// @public
+export class DomainModelError extends Error {
+    constructor(message: string, options?: ErrorOptions);
+}
+
+// @public
+export class ETag {
+    static readonly ANY: ETag;
+    get isAny(): boolean;
+    get isWeak(): boolean;
+    get opaque(): string | undefined;
+    static parse(raw: string): ETag | undefined;
+    get raw(): string;
+}
+
+// @public
+export class EtagParseError extends DomainModelError {
+}
+
+// @public
+export class HeaderName {
+    equals(other: HeaderName): boolean;
+    get lowerCased(): string;
+    static of(raw: string): HeaderName;
+    get raw(): string;
+}
+
+// @public
+class Headers_2 {
+    entries(): readonly (readonly [string, string])[];
+    equals(other: Headers_2): boolean;
+    get(name: string | HeaderName): string | undefined;
+    getAll(name: string | HeaderName): readonly string[];
+    has(name: string | HeaderName): boolean;
+    names(): readonly string[];
+    static newBuilder(): HeadersBuilder;
+    newBuilder(): HeadersBuilder;
+}
+export { Headers_2 as Headers }
+
+// @public
+export class HeadersBuilder implements Builder<Headers_2> {
+    add(name: string | HeaderName, value: string): this;
+    addInbound(name: string | HeaderName, value: string): this;
+    build(): Headers_2;
+    set(name: string | HeaderName, value: string | null): this;
+    setInbound(name: string | HeaderName, value: string | null): this;
+}
+
+// @public
+export class HeaderValidationError extends DomainModelError {
+    constructor(kind: 'name' | 'value', offendingName: string, _offendingValue: string | undefined);
+    readonly escapedName: string;
+    readonly kind: 'name' | 'value';
+}
+
+// @public
+export class HttpRange {
+    static bounded(start: number, length: number): HttpRange;
+    get kind(): RangeKind;
+    get length(): number | undefined;
+    static open(start: number): HttpRange;
+    static parse(raw: string): HttpRange;
+    get raw(): string;
+    get start(): number | undefined;
+    static suffix(suffixLength: number): HttpRange;
+    get suffixLength(): number | undefined;
+}
+
+// @public
+export class HttpRangeValidationError extends DomainModelError {
+}
+
+// @public
+export class MediaType {
+    get charset(): string | undefined;
+    equals(other: MediaType): boolean;
+    matches(pattern: MediaType): boolean;
+    static of(type: string, subtype: string, parameters?: ReadonlyMap<string, string>): MediaType;
+    parameter(key: string): string | undefined;
+    static parse(raw: string): MediaType;
+    render(): string;
+    get subtype(): string;
+    get type(): string;
+}
+
+// @public
+export class MediaTypeParseError extends DomainModelError {
+}
+
+// @public
+export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH';
+
+// @public
+export class Protocol {
+    equals(other: Protocol): boolean;
+    static readonly HTTP_1_1: Protocol;
+    static readonly HTTP_2: Protocol;
+    static parse(raw: string): Protocol;
+    get token(): string;
+}
+
+// @public
+export class ProtocolParseError extends DomainModelError {
+}
+
+// @public
+export class QueryParams {
+    encode(): string;
+    equals(other: QueryParams): boolean;
+    get(name: string): string | undefined;
+    getAll(name: string): readonly string[];
+    has(name: string): boolean;
+    static newBuilder(): QueryParamsBuilder;
+    newBuilder(): QueryParamsBuilder;
+    static parse(raw: string | null | undefined): QueryParams;
+}
+
+// @public
+export class QueryParamsBuilder implements Builder<QueryParams> {
+    add(name: string, value: string | null): this;
+    build(): QueryParams;
+}
+
+// @public
+export type RangeKind = 'bounded' | 'suffix' | 'open';
+
+// @public
+class Request_2 {
+    get body(): unknown;
+    equals(other: Request_2): boolean;
+    get headers(): Headers_2;
+    get method(): Method;
+    static newBuilder(): RequestBuilder;
+    newBuilder(): RequestBuilder;
+    get url(): URL;
+}
+export { Request_2 as Request }
+
+// @public
+export class RequestBodyNotAllowedError extends DomainModelError {
+    constructor(method: string);
+}
+
+// @public
+export class RequestBuilder implements Builder<Request_2> {
+    body(body: unknown): this;
+    build(): Request_2;
+    headers(headers: Headers_2): this;
+    method(method: Method): this;
+    url(url: string | URL): this;
+}
+
+// @public
+export class RequestConditions {
+    applyTo(headers: Headers_2): Headers_2;
+    static newBuilder(): RequestConditionsBuilder;
+    newBuilder(): RequestConditionsBuilder;
+}
+
+// @public
+export class RequestConditionsBuilder implements Builder<RequestConditions> {
+    build(): RequestConditions;
+    ifMatch(etag: ETag): this;
+    ifModifiedSince(date: Date): this;
+    ifNoneMatch(etag: ETag): this;
+    ifUnmodifiedSince(date: Date): this;
+}
+
+// @public
+export class RequestConditionsValidationError extends DomainModelError {
+}
+
+// @public
+export class RequestOptions {
+    static readonly EMPTY: RequestOptions;
+    get maxRetries(): number | undefined;
+    static newBuilder(): RequestOptionsBuilder;
+    newBuilder(): RequestOptionsBuilder;
+    tag(key: string): string | undefined;
+    get timeoutMs(): number | undefined;
+}
+
+// @public
+export class RequestOptionsBuilder implements Builder<RequestOptions> {
+    build(): RequestOptions;
+    maxRetries(value: number | undefined): this;
+    tags(entries: ReadonlyMap<string, string>): this;
+    timeoutMs(value: number | undefined): this;
+}
+
+// @public
+export class RequestOptionsValidationError extends DomainModelError {
+}
+
+// @public
+export class RequiredFieldError extends DomainModelError {
+    constructor(fieldName: string);
+    readonly fieldName: string;
+}
+
+// @public
+class Response_2 {
+    get body(): unknown;
+    get headers(): Headers_2;
+    static newBuilder(): ResponseBuilder;
+    newBuilder(): ResponseBuilder;
+    get protocol(): Protocol;
+    get reasonPhrase(): string | undefined;
+    get request(): Request_2;
+    get status(): Status;
+}
+export { Response_2 as Response }
+
+// @public
+export class ResponseBuilder implements Builder<Response_2> {
+    body(body: unknown): this;
+    build(): Response_2;
+    headers(headers: Headers_2): this;
+    protocol(protocol: Protocol): this;
+    reasonPhrase(reasonPhrase: string | undefined): this;
+    request(request: Request_2): this;
+    status(status: Status): this;
+}
+
+// @public
+export class Status {
+    get code(): number;
+    equals(other: Status): boolean;
+    get isClientError(): boolean;
+    get isError(): boolean;
+    get isInformational(): boolean;
+    get isRecognized(): boolean;
+    get isRedirect(): boolean;
+    get isServerError(): boolean;
+    get isSuccess(): boolean;
+    get name(): string | undefined;
+    static of(code: number): Status;
+    static recognized(code: number): Status | undefined;
+}
+
+// @public
+export class UrlConstructionError extends DomainModelError {
+}
 
 ```
