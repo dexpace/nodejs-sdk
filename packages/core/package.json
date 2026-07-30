@@ -1,0 +1,30 @@
+{
+  "name": "@dexpace/core",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "dependencies": {},
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "api:local": "api-extractor run --local",
+    "api:ci": "api-extractor run",
+    "prepublishOnly": "bun run build && bun run api:ci && publint . && attw --pack . --ignore-rules cjs-resolves-to-esm"
+  }
+}
