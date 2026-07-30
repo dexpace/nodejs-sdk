@@ -8,6 +8,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18",
     "@changesets/cli": "^2",
+    "@dexpace/core": "workspace:*",
     "@eslint-community/eslint-plugin-eslint-comments": "^4",
     "@microsoft/api-extractor": "^7",
     "@types/bun": "latest",
