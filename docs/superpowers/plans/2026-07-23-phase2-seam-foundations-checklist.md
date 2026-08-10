@@ -33,7 +33,7 @@ phase — ⏳ Deferred (named reason) — N/A.
 | ID | Level | Requirement gist | Status | Where |
 |---|---|---|---|---|
 | SEAM-26 | MUST | `OperationDescriptor`: method + path required, four projections default to empty | ✅ | Task 6, direct conformance test (parameterless GET) |
-| SEAM-27 | MUST | `buildRequest()` encoding + base-URL composition rules | ✅ | Task 6 — worked example, trailing-slash normalization, empty-path no-op, base-query preservation, fragment/malformed rejection, missing-placeholder error, and the path-param `/`-encoding property test, one test per conformance note |
+| SEAM-27 | MUST | `buildRequest()` encoding + base-URL composition rules | ✅ | Task 6 — worked example, trailing-slash normalization, empty-path no-op, base-query preservation, fragment/malformed rejection, missing-placeholder error, and the path-param `/`-encoding property test, one test per conformance note. **One deviation, stricter than the requirement's letter:** a `.`/`..` path-param value is rejected rather than encoded, because no encoding survives the WHATWG URL parser's dot-segment normalization — recorded in the design doc's `## Deviation Ledger (for Phase 10)` section, which Phase 10 folds into `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` |
 
 ## Cross-cutting
 

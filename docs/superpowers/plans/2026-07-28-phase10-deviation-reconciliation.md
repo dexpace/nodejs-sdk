@@ -21,7 +21,7 @@ landed intact, plus a manual completeness cross-check against every phase's own 
 **Prerequisite:** Phases 0 through 8b's specs and plans exist exactly as committed on `main` as of this plan's
 writing (`2026-07-28`). This plan does not require any phase's *code* to exist — Phase 10 audits documents, not a
 running SDK (see the design doc's "Why This Phase Doesn't Need Phase 9 to Run First" section). It reads, but does
-not modify, every Phase 3a-8b spec and the 5c/6a/6b/6c plans' Deviation Ledger sections.
+not modify, every Phase 2 and 3a-8b spec and the 5c/6a/6b/6c plans' Deviation Ledger sections.
 
 ## Global Constraints
 
@@ -56,9 +56,9 @@ No new files. Two existing files modified.
 - (staging only — no file written this task; Task 2 applies this text)
 
 **Interfaces:**
-- Consumes: every Phase 3a-8b spec's `## Deviation Ledger (for Phase 10)` section; 5c/6a/6b/6c plans' `##
+- Consumes: every Phase 2 and 3a-8b spec's `## Deviation Ledger (for Phase 10)` section; 5c/6a/6b/6c plans' `##
   Deviation Ledger Additions (for Phase 10)` sections; Phase 1's plan (`RequestConditions.applyTo` ETag note);
-  Phase 2's design (`SEAM-5`-`10`/`SEAM-18` naming); the current 12-item text of
+  the current 12-item text of
   `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`.
 - Produces: the exact Markdown body Task 2 writes into that file.
 
@@ -400,16 +400,24 @@ silently skips them and under-verifies.
 - (read-only verification pass, no modifications)
 
 **Interfaces:**
-- Consumes: every Phase 3a-8b spec's Deviation Ledger section, the 5c/6a/6b/6c plans' Deviation Ledger Additions,
-  Task 2's rewritten §10.
+- Consumes: every Phase 2 and 3a-8b spec's Deviation Ledger section, the 5c/6a/6b/6c plans' Deviation Ledger
+  Additions, Task 2's rewritten §10.
 - Produces: a pass/fail judgment — if this fails, return to Task 1 and add the missing material before considering
   the phase done.
 
-- [ ] **Step 1: Re-open every one of these 15 files and confirm each phase named below has at least one
-  corresponding sentence in the rewritten §10** (this list is exhaustive — every phase from 3a through 8b that has
-  a Deviation Ledger section):
+- [ ] **Step 1: Re-open every one of these 17 files and confirm every *row* of each one's ledger table has a
+  corresponding sentence in the rewritten §10** (this list is exhaustive — every phase from 2 through 9 that has
+  a Deviation Ledger section; regenerate it with
+  `grep -rln '^## Deviation Ledger (for Phase 10)' docs/superpowers/specs/` rather than trusting this transcription):
+
+  Check rows, not phases. A phase-label grep is not sufficient evidence here: several phases are cited by many
+  items, so `Phase 2` (or `Phase 5a`, or `Phase 8a`) appearing in §10 proves only that *something* from that
+  phase survived — it cannot detect one dropped row from a phase that is already cited elsewhere. That is exactly
+  how Phase 2's dot-segment `SEAM-27` rejection went unrecorded until it was caught by hand during Phase 2's own
+  validation. Walk each table row by row.
 
 ```
+2   docs/superpowers/specs/2026-07-23-phase2-seam-foundations-design.md
 3a  docs/superpowers/specs/2026-07-24-phase3a-io-contracts-design.md
 3b  docs/superpowers/specs/2026-07-25-phase3b-body-lifecycle-design.md
 4a  docs/superpowers/specs/2026-07-25-phase4a-execution-context-design.md
@@ -425,17 +433,24 @@ silently skips them and under-verifies.
 7b  docs/superpowers/specs/2026-07-28-phase7b-observability-design.md
 8a  docs/superpowers/specs/2026-07-28-phase8a-transport-design.md
 8b  docs/superpowers/specs/2026-07-28-phase8b-async-runtime-design.md
+9   docs/superpowers/specs/2026-07-28-phase9-cross-cutting-conformance-design.md
 ```
 
-  Expected: every phase's citation `(Phase Xy)` appears at least once in
+  Expected, primary: every ledger table row across those 16 files is either represented by a sentence in the
+  rewritten §10 or explicitly listed as legitimately excluded (see the note below on 4a's and 7b's
+  implementation-detail entries). A row that is neither is a dropped deviation — return to Task 1.
+
+  Expected, secondary (necessary, not sufficient): every phase's citation `(Phase Xy)` appears at least once in
   `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` — spot-check with
   `grep -o 'Phase [0-9][a-z]\?' docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md | sort -u`
   and confirm the output set is `{Phase 0, Phase 1, Phase 2, Phase 3a, Phase 3b, Phase 4a, Phase 4b, Phase 4c,
   Phase 5a, Phase 5b, Phase 5c, Phase 6a, Phase 6b, Phase 6c, Phase 7a, Phase 7b, Phase 8a, Phase 8b, Phase 9}` —
-  every phase from 3a through 8b now cited at least once, including 4a (execution-context store/key collapse,
+  every phase from 2 through 8b now cited at least once, including 4a (execution-context store/key collapse,
   folded into Item 1) and 7b (`AsyncLocalStorage` propagation, also folded into Item 1), which an earlier draft
-  of this plan wrongly left uncited. `Phase 9` appears only as the unblock trigger for Item 12's two open
-  questions and Item 10's shrink-test origin note, not as a phase with its own deviation entry. Note: 4a's and
+  of this plan wrongly left uncited. `Phase 9` is cited both as the unblock trigger for Item 12's two open
+  questions and Item 10's shrink-test origin note **and** as a phase with its own two-row ledger (`XCUT-23`
+  satisfied vacuously; `NFR-8` shipping nothing) — an earlier draft of this plan asserted it had no deviation
+  entry of its own, which its design doc contradicts. Note: 4a's and
   7b's *other* ledger entries (Symbol() call-key ergonomics, `ContextInit` options-object shape, `contextsEqual()`
   omission, the retry/redirect logging vocabulary gap, the `Tracer`/`Span` structural-subset choice) are
   legitimately excluded from §10 — they're implementation-detail choices made where the spec was silent, not

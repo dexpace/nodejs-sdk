@@ -280,6 +280,18 @@ Since `DomainModelError` lives in `http/errors.ts` (Phase 1) and is already expo
 `DexpaceError` goes in the same file and joins the barrel alongside it — an additive API change, so it needs a
 changeset but not a major bump.
 
+## Deviation Ledger (for Phase 10)
+
+Phase 2 predates the per-phase ledger convention that specs 3a-8b follow; this section is the retrofit, so Phase
+10's reconciliation reads Phase 2 the same way it reads every other phase instead of pulling two items out of the
+prose above by name.
+
+| Deviation | Against | Reason |
+|---|---|---|
+| A `.`/`..` path-parameter value is rejected (`OperationAssemblyError`), not encoded | `SEAM-27` ("percent-encoded as single path segments") | Both are RFC 3986 *unreserved*, so encoding leaves them untouched, and the WHATWG URL parser folds `%2E` back to `.` during dot-segment normalization — no encoding keeps them as one literal segment. Forwarding `..` lets a path value rewrite the path (`/things/..` resolves to `/`), the injection class the requirement's own parenthetical exists to stop. Stricter than the requirement's letter, in service of its intent; no other value is affected |
+| Discovery / registration / conflict-resolution machinery is never built | `SEAM-5`-`SEAM-10` | Nothing in this port is pluggable enough to need discovering: one `Transport` shape, one async primitive, and Web Streams as the platform's own byte-stream answer rather than a third-party library to keep out of core (`sdk-design/03` §3.1, §3.5) |
+| The sync↔async bridge is never built; only its options-threading clause survives | `SEAM-18` | A bridge connects two transport seams; `SEAM-11`/`SEAM-16` collapse to one here, so there is nothing on either bank. Every bridge-specific obligation presupposes a blocking transport Node cannot idiomatically have. The one non-bridge clause — per-call options threaded through, never dropped — survives as an ordinary `Transport.send()` obligation, not a deviation |
+
 ## Testing
 
 Phase 2 ships interfaces plus three pure functions. Only the pure functions are behaviorally testable; every
