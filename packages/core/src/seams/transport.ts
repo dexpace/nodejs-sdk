@@ -120,4 +120,23 @@ export function isTimeoutSignal(signal: AbortSignal): boolean {
  *
  * @public
  */
-export class CancellationError extends DexpaceError {}
+export class CancellationError extends DexpaceError {
+  /**
+   * Forwards to {@link DexpaceError} unchanged.
+   *
+   * This constructor is deliberately explicit rather than inherited. An empty-bodied derived class
+   * (`extends DexpaceError {}`) gets a synthesized constructor that Bun's coverage counts as a
+   * function but never marks hit, even though the tests below construct this class — no test can
+   * cover it. `bunfig.toml`'s `coverageThreshold = 0.8` is per-file and applies to function coverage
+   * as well as lines, so in a three-function module that single artifact is 66% and fails the gate.
+   * Do not "simplify" this away; `coverageThreshold`'s object form (`{line = 0.8}`) is silently
+   * ignored on Bun 1.3.x, so narrowing the threshold to lines only is not an alternative.
+   *
+   * @param message - the human-readable failure description.
+   * @param options - standard error options; pass `{cause}` when wrapping a caught error.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor -- load-bearing for coverage, not for behavior: the synthesized constructor of an empty-bodied subclass is uncoverable and fails bunfig's per-file 0.8 function threshold. Remove when Bun honors `coverageThreshold = {line = 0.8}`.
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
+}

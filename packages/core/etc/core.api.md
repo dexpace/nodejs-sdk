@@ -14,6 +14,7 @@ export function buildRequest(baseUrl: string | URL, operation: OperationDescript
 
 // @public
 export class CancellationError extends DexpaceError {
+    constructor(message: string, options?: ErrorOptions);
 }
 
 // @public
