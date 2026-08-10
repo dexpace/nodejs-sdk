@@ -13,9 +13,9 @@ roadmap's Deferred Items Log already targets at Phase 10 by name, and settles on
 tension a Phase 1 plan explicitly deferred here.
 
 **Scope is documents, not code.** Phase 10 ships no package — the roadmap table lists it as `— (review only)`.
-Every phase spec from 3a through 8b already carries its own `## Deviation Ledger (for Phase 10)` section (Phases
-1 and 2 predate that convention but each has an equivalent flagged item, see below); those sections are complete,
-already-reasoned raw material. Phase 10's job is consolidation and cross-referencing, not new investigation —
+Every phase spec from 3a through 8b already carries its own `## Deviation Ledger (for Phase 10)` section, and
+Phase 2's design carries a retrofitted one (Phase 1 still predates the convention but has an equivalent flagged
+item, see below); those sections are complete, already-reasoned raw material. Phase 10's job is consolidation and cross-referencing, not new investigation —
 with two exceptions. First, two items (`NFR-12`, `NFR-16`) are soft gaps that need a real build/publish artifact
 to verify, which doesn't exist in this docs-only repository state yet; Phase 10 cannot close those, and records
 them as open with an explicit unblock trigger rather than papering over them. Second, four items (two redirect/
@@ -26,9 +26,9 @@ conformance only, and will never produce that evidence. Phase 10 decides those f
 nothing in this phase's own scope is left waiting on Phase 9.
 
 **Governing documents:** `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (the
-document this phase rewrites), the roadmap's own Deferred Items Log, and every Phase 3a–8b spec's Deviation
-Ledger section plus the handful of plan-level "Deviation Ledger Additions" sections (5c, 6a, 6b, 6c) that amend
-their design doc's ledger with plan-time corrections.
+document this phase rewrites), the roadmap's own Deferred Items Log, and every Phase 2, 3a–8b, and 9 spec's
+Deviation Ledger section plus the handful of plan-level "Deviation Ledger Additions" sections (5c, 6a, 6b, 6c)
+that amend their design doc's ledger with plan-time corrections.
 
 ## Why This Phase Doesn't Need Phase 9 to Run First
 
@@ -63,10 +63,13 @@ rather keep the original alongside the reconciled version.
 
 ## Reconciliation Process
 
-1. **Collect.** Pull every phase's `## Deviation Ledger (for Phase 10)` section (specs 3a-8b) plus every plan's
-   `## Deviation Ledger Additions (for Phase 10)` section (5c, 6a, 6b, 6c) verbatim. Phases 1 and 2 predate the
-   convention: Phase 1's plan flags the HTTP-18/HTTP-50 ETag tension inline (not in a named section); Phase 2's
-   design names `SEAM-5`-`SEAM-10` and `SEAM-18` directly. Both are pulled in by name.
+1. **Collect.** Pull every phase's `## Deviation Ledger (for Phase 10)` section (specs 2, 3a-8b, and 9) plus every
+   plan's `## Deviation Ledger Additions (for Phase 10)` section (5c, 6a, 6b, 6c) verbatim. Phase 2 originally
+   predated the convention and was pulled in by name for `SEAM-5`-`SEAM-10` and `SEAM-18` only; its design now
+   carries a retrofitted ledger section covering those two plus the dot-segment path-parameter rejection
+   (`SEAM-27`) that the by-name pull would have missed, so Phase 2 is collected like any other phase and needs no
+   special case. **Phase 1 still does:** its plan flags the HTTP-18/HTTP-50 ETag tension inline, not in a named
+   section, and is pulled in by name.
 2. **Cross-reference against the original 12.** Each of the 12 items in the current §10 either: (a) is confirmed
    as-built with no change, (b) is confirmed but needs expansion because later phases added detail the
    prediction didn't anticipate, or (c) needs correction because a later phase's actual mechanism diverged from
@@ -219,12 +222,14 @@ passing it through.
 ## Verification / Completeness Check
 
 Before the rewritten §10 is considered done, confirm every source is accounted for:
-- Every phase spec 3a-8b's `## Deviation Ledger (for Phase 10)` section has at least one entry represented in
-  the reconciled ledger (cross-check against the extraction performed for this design — 15 of 15 sections
-  present and non-empty).
+- Every phase spec 2, 3a-8b, and 9's `## Deviation Ledger (for Phase 10)` section has **every row** represented in
+  the reconciled ledger, or explicitly listed as legitimately excluded (cross-check against the extraction
+  performed for this design — 17 of 17 sections present and non-empty). Row-level, not section-level: a phase
+  cited by several items can still have one row silently dropped, which is how Phase 2's dot-segment `SEAM-27`
+  rejection was missed until Phase 2's own validation caught it by hand.
 - Every plan-level `## Deviation Ledger Additions (for Phase 10)` section (5c, 6a, 6b, 6c) is folded in.
-- Phase 1's ETag flag and Phase 2's `SEAM-5`-`10`/`SEAM-18` naming (pre-dating the ledger-section convention) are
-  represented.
+- Phase 1's ETag flag (still pre-dating the ledger-section convention, still pulled in by name) is represented.
+  Phase 2 no longer needs a by-name pull — its design carries a retrofitted ledger section.
 - Every roadmap Deferred Items Log row naming "Phase 10" (`NFR-8`, `NFR-12`, `NFR-16`, the `SEAM-5`-`10` and
   `SEAM-18` rows, plus the four rows the 2026-07-28 update retargeted here from a Phase 9 sweep that turned out
   never to run them — redirect-predicate scope, Basic/Digest preemptive-stamp reading,

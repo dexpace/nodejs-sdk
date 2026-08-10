@@ -60,6 +60,36 @@ export default tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       // Every `eslint-disable` must carry a `-- reason` (NFR-7's documented-exception clause).
       '@eslint-community/eslint-comments/require-description': 'error',
+      // lib.dom (added for the seam surface's AbortSignal/AbortController/DOMException) declares
+      // global Request/Response/Headers/window/document. A core file that forgets its own import no
+      // longer fails to compile — it silently type-checks against the DOM global instead. An
+      // imported binding shadows the global, so correctly-importing files are unaffected.
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'Request',
+          message:
+            'lib.dom global — import Request from src/http/request.js instead.',
+        },
+        {
+          name: 'Response',
+          message:
+            'lib.dom global — import Response from src/http/response.js instead.',
+        },
+        {
+          name: 'Headers',
+          message:
+            'lib.dom global — import Headers from src/http/headers.js instead.',
+        },
+        {
+          name: 'window',
+          message: 'Browser-only global; @dexpace/core is runtime-agnostic.',
+        },
+        {
+          name: 'document',
+          message: 'Browser-only global; @dexpace/core is runtime-agnostic.',
+        },
+      ],
     },
   },
 );

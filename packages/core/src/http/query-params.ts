@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/query-params.ts
 import type {Builder} from './builder.js';
-
-function percentEncodeComponent(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!*'()]/g,
-    c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
+import {encodeRfc3986Component} from './rfc3986.js';
 
 function safeDecodeComponent(value: string): string {
   try {
@@ -152,9 +146,9 @@ export class QueryParams {
   encode(): string {
     const parts: string[] = [];
     for (const name of this.#insertionOrder) {
-      const encodedName = percentEncodeComponent(name);
+      const encodedName = encodeRfc3986Component(name);
       for (const value of this.#valuesByName.get(name) ?? []) {
-        parts.push(`${encodedName}=${percentEncodeComponent(value)}`);
+        parts.push(`${encodedName}=${encodeRfc3986Component(value)}`);
       }
     }
     return parts.join('&');

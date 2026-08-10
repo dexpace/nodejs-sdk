@@ -10,8 +10,22 @@ export interface Builder<T> {
 }
 
 // @public
-export class DomainModelError extends Error {
+export function buildRequest(baseUrl: string | URL, operation: OperationDescriptor): Request_2;
+
+// @public
+export class CancellationError extends DexpaceError {
+}
+
+// @public
+export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined;
+
+// @public
+export class DexpaceError extends Error {
     constructor(message: string, options?: ErrorOptions);
+}
+
+// @public
+export class DomainModelError extends DexpaceError {
 }
 
 // @public
@@ -83,6 +97,9 @@ export class HttpRangeValidationError extends DomainModelError {
 }
 
 // @public
+export function isTimeoutSignal(signal: AbortSignal): boolean;
+
+// @public
 export class MediaType {
     get charset(): string | undefined;
     equals(other: MediaType): boolean;
@@ -101,6 +118,22 @@ export class MediaTypeParseError extends DomainModelError {
 
 // @public
 export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH';
+
+// @public
+export class OperationAssemblyError extends DexpaceError {
+    constructor(message: string, parameterName: string);
+    readonly parameterName: string;
+}
+
+// @public
+export interface OperationDescriptor {
+    readonly body?: unknown;
+    readonly headers?: Headers_2 | undefined;
+    readonly method: Method;
+    readonly pathParams?: Readonly<Record<string, string>> | undefined;
+    readonly pathTemplate: string;
+    readonly query?: QueryParams | undefined;
+}
 
 // @public
 export class Protocol {
@@ -248,6 +281,12 @@ export class Status {
     get name(): string | undefined;
     static of(code: number): Status;
     static recognized(code: number): Status | undefined;
+}
+
+// @public
+export interface Transport {
+    close(): Promise<void>;
+    send(request: Request_2, options?: RequestOptions, signal?: AbortSignal): Promise<Response_2>;
 }
 
 // @public

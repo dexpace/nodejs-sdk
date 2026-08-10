@@ -55,3 +55,26 @@ jobs:
 
       - name: Dependency audit
         run: bun run audit
+
+  node-floor-conformance:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18.17.0
+
+      - name: Verify the built artifact against the declared minimum Node version (NFR-10/NFR-17)
+        run: node scripts/verify-node-floor.mjs

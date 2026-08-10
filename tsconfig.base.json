@@ -5,7 +5,8 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "lib": [
-      "ES2022"
+      "ES2022",
+      "DOM"
     ],
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

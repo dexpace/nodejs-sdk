@@ -6,6 +6,7 @@
 // caller yet (api-design ch10: helpers stay unexported until an outside caller genuinely needs them).
 export type {Builder} from './builder.js';
 export {
+  DexpaceError,
   DomainModelError,
   RequiredFieldError,
   HeaderValidationError,

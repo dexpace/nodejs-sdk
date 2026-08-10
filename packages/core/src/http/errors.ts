@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/errors.ts
 /**
- * The root of every error the HTTP domain model throws.
- *
- * Catch this to handle any construction, validation, or parse failure from the model uniformly;
- * catch a leaf subclass to distinguish a specific failure. Every subclass sets `name` to its own
- * class name, and wrap-and-rethrow always passes `{cause}`.
+ * The root of the SDK's entire error taxonomy — the "anything this SDK threw" catch-all. Every
+ * error the SDK raises, domain-model or otherwise, extends this class. Every subclass sets `name`
+ * to its own class name, and wrap-and-rethrow always passes `{cause}`.
  *
  * @public
  */
-export class DomainModelError extends Error {
+export class DexpaceError extends Error {
   /**
    * @param message - the human-readable failure description.
    * @param options - standard error options; pass `{cause}` when wrapping a caught error.
@@ -19,6 +17,18 @@ export class DomainModelError extends Error {
     this.name = new.target.name;
   }
 }
+
+/**
+ * The root of every error the HTTP domain model throws.
+ *
+ * Catch this to handle any construction, validation, or parse failure from the model uniformly;
+ * catch a leaf subclass to distinguish a specific failure. A sibling of the seam layer's
+ * {@link DexpaceError}-rooted errors (`CancellationError`, `OperationAssemblyError`) — a cancelled
+ * transport call or an unassembled operation is not itself a domain-model construction failure.
+ *
+ * @public
+ */
+export class DomainModelError extends DexpaceError {}
 
 // Narrows a caught `unknown` into an Error (styleguide 8.4). Defined once, imported everywhere a caught
 // value becomes a `cause`. Must never itself throw from inside a catch — String() can throw on a

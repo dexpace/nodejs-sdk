@@ -3,6 +3,8 @@
 // Exercises: HTTP-4 (field-named errors), HTTP-20 (no value echo, escaped name)
 import {describe, expect, test} from 'bun:test';
 import {
+  DexpaceError,
+  DomainModelError,
   RequiredFieldError,
   HeaderValidationError,
   toError,
@@ -50,5 +52,19 @@ describe('RequestBodyNotAllowedError', () => {
   test('names the offending method', () => {
     const error = new RequestBodyNotAllowedError('GET');
     expect(error.message).toContain('GET');
+  });
+});
+
+// Exercises: the Phase 2 retrofit — DexpaceError as the taxonomy root above DomainModelError
+describe('DexpaceError', () => {
+  test('sets name to the concrete subclass name', () => {
+    const error = new DexpaceError('boom');
+    expect(error.name).toBe('DexpaceError');
+  });
+
+  test('DomainModelError is a DexpaceError, and every existing leaf still narrows by DomainModelError', () => {
+    const error = new RequiredFieldError('url');
+    expect(error).toBeInstanceOf(DomainModelError);
+    expect(error).toBeInstanceOf(DexpaceError);
   });
 });
