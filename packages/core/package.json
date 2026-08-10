@@ -26,5 +26,8 @@
     "api:local": "api-extractor run --local",
     "api:ci": "api-extractor run",
     "prepublishOnly": "bun run build && bun run api:ci && publint . && attw --pack . --ignore-rules cjs-resolves-to-esm"
+  },
+  "devDependencies": {
+    "expect-type": "^1.4.0"
   }
 }

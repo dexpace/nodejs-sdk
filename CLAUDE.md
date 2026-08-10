@@ -1,0 +1,141 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A Node.js/TypeScript HTTP SDK platform, built as a **port of a language-agnostic product specification**. The
+spec in `docs/product-spec/` is normative and numbered; the code exists to satisfy it. Work here is
+spec-driven, not feature-driven: before implementing anything, find the requirement IDs it must satisfy.
+
+Bun workspace. One published package today — `@dexpace/core` (`packages/core`) — with more planned per
+`docs/sdk-design-nodejs/02-package-and-workspace-layout.md`.
+
+## Commands
+
+All run from the repo root unless noted.
+
+```bash
+bun install --frozen-lockfile
+
+bun run typecheck        # tsc --noEmit against packages/core/tsconfig.json
+bun run lint             # gts lint . — formatting AND type-aware rules; fatal
+bun run fix              # gts fix . — autofixes formatting/lint
+bun run build            # tsc -p packages/core/tsconfig.build.json → dist/
+bun test                 # coverage is on by default (bunfig.toml), 80% line floor
+```
+
+Single test file or single test:
+
+```bash
+bun test packages/core/src/http/media-type.test.ts
+bun test -t 'rejects blank input'          # filter by test name
+```
+
+API surface (report is committed at `packages/core/etc/core.api.md`):
+
+```bash
+cd packages/core && bun run api:local     # regenerate the report after changing exports
+cd packages/core && bun run api:ci        # verify it matches — this is what CI runs
+```
+
+Release-shape and invariant gates:
+
+```bash
+bun run lint:publish              # publint + attw against the built package
+bun run verify:dual-consumption   # plain `node` imports the built package and runs it
+bun run verify:seam-1             # asserts @dexpace/core has zero runtime dependencies
+bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
+bun run audit                     # bun audit --audit-level=high --prod
+```
+
+**Every one of these is a blocking CI step** (`.github/workflows/ci.yml`). Run the full set before claiming
+work is done — `bun test` passing is not sufficient evidence.
+
+## Documentation hierarchy
+
+Four distinct trees, easy to confuse:
+
+| Path | Role |
+|---|---|
+| `docs/product-spec/` | **Normative.** Numbered requirements (`HTTP-7`, `SEAM-1`, `RETRY-13`, `NFR-5`, …). The source of truth. |
+| `docs/sdk-design-nodejs/` | How each spec area maps to idiomatic TypeScript. Non-normative but binding by convention. |
+| `docs/knowledge/` | Harvested styleguide + spec knowledge, topic-indexed (`INDEX.md`). Cited as "styleguide 6.7", "ch08". |
+| `docs/superpowers/specs/` + `plans/` | Per-phase design doc, task-by-task implementation plan, and a requirement-coverage checklist. |
+
+`docs/product-spec/appendix-c-consolidated-normative-requirement-index.md` is the fastest way to locate a
+requirement ID.
+
+## Requirement-ID conventions (enforced by review, not tooling)
+
+- Every source file opens with `// SPDX-License-Identifier: MIT` on **line 1** (NFR-13).
+- Every test file's header comment cites the `HTTP-N` / `SEAM-N` IDs it exercises. Phase 9's conformance pass
+  depends on this traceability existing already.
+- When a requirement is deliberately not satisfied, record it — as a deferral in the phase plan naming the
+  owning phase, or in `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`. Silent
+  gaps are the failure mode this project is structured to prevent.
+
+## Domain model construction pattern
+
+Every model in `packages/core/src/http/` follows one shape. Deviating breaks invariants that tooling does not
+catch:
+
+- **`#private` fields only.** Not TS `private`. Styleguide 6.7 carves this out for libraries whose internals
+  must stay unreachable reflectively.
+- **TS `private` constructor**, so no public field-wise constructor appears in the emitted `.d.ts` — a
+  consumer cannot construct around `build()`'s validation (HTTP-2).
+- **The `createX` friend-class hook.** TypeScript has no friend classes, so a builder (a *different* class)
+  reaches its model's private constructor through a module-scoped `let createX` assigned exactly once inside
+  the class's `static {}` block. That `let` is init-once wiring, not mutable state. Every builder-based model
+  repeats it: `createHeaders`, `createQueryParams`, `createRequest`, `createResponse`, `createRequestOptions`,
+  `createRequestConditions`.
+- **`Object.freeze(this)` once, at the end of the constructor.** Freeze is shallow and is never relied on to
+  cascade — nested arrays and `Map`s are frozen independently at build time.
+- **`newBuilder()` returns a pre-filled builder that deep-copies every collection**, never aliases the source
+  (HTTP-3). Value types with no builder (`Status`, `Protocol`, `MediaType`, `ETag`, `HttpRange`) use static
+  factories instead.
+- **Required fields go through `requireField()`** from `builder.ts` — never a bespoke `if (!x) throw`. It
+  single-sources HTTP-4's `` `${name} is required` `` message.
+- **Typed errors only.** Everything descends from `DomainModelError`; no bare `throw new Error(...)`. Each
+  subclass sets `this.name = new.target.name`, and wrap-and-rethrow always passes `{cause}`.
+- **Getters return frozen or freshly-copied values.** `Request.url` clones on every access because the native
+  `URL` is mutable — the one place a frozen class still leaks mutability (HTTP-5).
+
+Validation uses explicit predicate functions, not zod. Zod targets untrusted boundary parsing; these modules
+validate already-typed values against character-class and grammar rules (styleguide 6.8 permits this).
+
+## Constraints that will bite
+
+- **Zero runtime dependencies in `@dexpace/core`** (SEAM-1), gate-enforced. Reaching for a small date or URL
+  utility is exactly the reflex `verify:seam-1` exists to catch. Dev dependencies are fine.
+- **ESM-only, NodeNext.** Relative imports carry the `.js` extension even in `.ts` source.
+  `verbatimModuleSyntax` is on, so type-only imports need `import type`.
+- **`erasableSyntaxOnly`** — no enums, no namespaces, no constructor parameter properties.
+- **Lint is type-aware and strict** (`strictTypeChecked` + `stylisticTypeChecked` over gts): 70-line function
+  cap, `max-depth` 3, `max-params` 3, explicit return types on exported functions and methods.
+  `max-params` counts constructor parameters, which is why several private model constructors carry a
+  documented `eslint-disable-next-line max-params`.
+- **Every `eslint-disable` must carry a `-- reason`** (`eslint-comments/require-description`, wired for
+  NFR-7). Suppressing a rule without a stated reason and re-enable condition fails lint.
+- **Prettier config is deliberately absent at the root.** `eslint.config.js` sources `gts/.prettierrc.json`
+  explicitly; see the comment there before adding any Prettier file.
+- **Formatting is a lint error**, not a warning. Run `bun run fix` before `bun run lint` if the diff is large.
+
+## Public API surface
+
+`packages/core/src/http/index.ts` is the single front door; `packages/core/src/index.ts` re-exports it. Internal
+helpers (`requireField`, `toError`, the `ascii-validation` predicates, the `method.ts` classifiers) are
+deliberately **not** re-exported — in-package consumers import the module directly.
+
+Anything the barrel exports needs a TSDoc block with `@public`, plus `@throws` naming each catchable error
+class on operations that throw. `api-extractor` will otherwise flag it, and the committed report records it as
+`(undocumented)`. After changing exports: rebuild, run `api:local`, and commit the regenerated report.
+
+Consumer-facing changes need a changeset (`bunx changeset`).
+
+## Phase workflow
+
+Work proceeds phase by phase against `docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`. Each
+phase has a design spec, an implementation plan with numbered tasks (TDD: write the failing test, confirm it
+fails, implement, confirm it passes, commit), and a checklist mapping every requirement ID to the task that
+satisfies it. When asked to implement or validate a phase, read all three before touching code.
