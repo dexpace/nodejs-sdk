@@ -59,4 +59,20 @@ describe('IoError tree', () => {
     const cause = new RangeError('array too large');
     expect(new AllocationLimitError(5, 4, {cause}).cause).toBe(cause);
   });
+
+  test('EndOfStreamError chains a cause', () => {
+    const cause = new Error('underlying read failure');
+    expect(new EndOfStreamError(1, 2, {cause}).cause).toBe(cause);
+  });
+
+  test('ClosedResourceError chains a cause', () => {
+    const cause = new Error('already closed');
+    expect(new ClosedResourceError('ByteQueue', {cause}).cause).toBe(cause);
+  });
+
+  test('SourceContractViolationError carries its message and descends from IoError', () => {
+    const error = new SourceContractViolationError('returned zero bytes');
+    expect(error.message).toBe('returned zero bytes');
+    expect(error.name).toBe('SourceContractViolationError');
+  });
 });

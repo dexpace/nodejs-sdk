@@ -10,7 +10,10 @@
  * @internal
  */
 export class InvariantViolation extends Error {
-  override readonly name = 'InvariantViolation';
+  constructor(msg: string) {
+    super(msg);
+    this.name = 'InvariantViolation';
+  }
 }
 
 /**

@@ -10,7 +10,15 @@ import {DexpaceError} from '../http/errors.js';
  *
  * @internal
  */
-export class IoError extends DexpaceError {}
+export class IoError extends DexpaceError {
+  // bun's coverage tool never marks a bodiless subclass's implicit constructor as covered
+  // (undercounts function coverage); an explicit forwarding constructor is instrumented
+  // correctly and keeps the file above the 80% function-coverage floor without changing behavior.
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor -- see comment above
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
+}
 
 /**
  * A source ended before delivering the requested number of bytes (IO-11, IO-12, IO-15), or a sink write
@@ -38,7 +46,14 @@ export class EndOfStreamError extends IoError {
  *
  * @internal
  */
-export class SourceContractViolationError extends IoError {}
+export class SourceContractViolationError extends IoError {
+  // See IoError's constructor above: keeps this bodiless subclass registered for bun's
+  // function coverage.
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor -- see comment above
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
+}
 
 /**
  * A closed source, sink, buffer, or view was used (IO-42), or a view outlived the parent that invalidated
