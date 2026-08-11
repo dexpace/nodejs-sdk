@@ -5,6 +5,21 @@
 ```ts
 
 // @public
+interface Body_2 {
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
+    // (undocumented)
+    readonly mediaType: string | undefined;
+    // (undocumented)
+    readonly replayable: boolean;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+export { Body_2 as Body }
+
+// @public
 export interface Builder<T> {
     build(): T;
 }
@@ -13,12 +28,37 @@ export interface Builder<T> {
 export function buildRequest(baseUrl: string | URL, operation: OperationDescriptor): Request_2;
 
 // @public
+export class ByteArrayBody implements Body_2 {
+    constructor(bytes: Uint8Array, mediaType?: string);
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: "byte-array";
+    // (undocumented)
+    readonly mediaType: string | undefined;
+    // (undocumented)
+    readonly replayable = true;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+// @public
+export function byteArrayBody(bytes: Uint8Array, mediaType?: string): ByteArrayBody;
+
+// @public
 export class CancellationError extends DexpaceError {
     constructor(message: string, options?: ErrorOptions);
 }
 
 // @public
 export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined;
+
+// @public
+export class ConsumedBodyError extends DexpaceError {
+    constructor(bodyKind: string, options?: ErrorOptions);
+    // (undocumented)
+    readonly bodyKind: string;
+}
 
 // @public
 export class DexpaceError extends Error {
@@ -42,6 +82,29 @@ export class ETag {
 // @public
 export class EtagParseError extends DomainModelError {
 }
+
+// @public
+export class FormUrlEncodedBody implements Body_2 {
+    constructor(input: FormUrlEncodedInput);
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: "form-urlencoded";
+    // (undocumented)
+    readonly mediaType = "application/x-www-form-urlencoded";
+    // (undocumented)
+    readonly params: QueryParams;
+    // (undocumented)
+    readonly replayable = true;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+// @public
+export function formUrlEncodedBody(input: FormUrlEncodedInput): FormUrlEncodedBody;
+
+// @public
+export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, string | readonly string[]> | Record<string, string | readonly string[]> | readonly (readonly [string, string])[];
 
 // @public
 export class HeaderName {
@@ -98,7 +161,22 @@ export class HttpRangeValidationError extends DomainModelError {
 }
 
 // @public
+export class HttpStatusError extends DexpaceError {
+    constructor(status: number, bodyBytes: Uint8Array | undefined, mediaType: string | undefined, options?: ErrorOptions);
+    body(): Body_2 | undefined;
+    preview(charset?: string): string | null;
+    // (undocumented)
+    readonly status: number;
+}
+
+// @public
+export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError;
+
+// @public
 export function isTimeoutSignal(signal: AbortSignal): boolean;
+
+// @public
+export function materialize(body: Body_2): Promise<Body_2>;
 
 // @public
 export class MediaType {
@@ -121,6 +199,56 @@ export class MediaTypeParseError extends DomainModelError {
 export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH';
 
 // @public
+export class MultipartBody implements Body_2 {
+    constructor(parts: readonly MultipartPart[], boundary?: string);
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: "multipart";
+    // (undocumented)
+    readonly mediaType: string;
+    // (undocumented)
+    static newBuilder(): MultipartBodyBuilder;
+    newBuilder(): MultipartBodyBuilder;
+    // (undocumented)
+    readonly replayable: boolean;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+// @public
+export function multipartBody(parts: readonly MultipartPart[], boundary?: string): MultipartBody;
+
+// @public
+export class MultipartBodyBuilder implements Builder<MultipartBody> {
+    // (undocumented)
+    addPart(part: MultipartPart): this;
+    // (undocumented)
+    boundary(boundary: string | undefined): this;
+    // (undocumented)
+    build(): MultipartBody;
+    // (undocumented)
+    parts(parts: readonly MultipartPart[]): this;
+}
+
+// @public
+export class MultipartBoundaryError extends DexpaceError {
+    constructor(boundary: string, options?: ErrorOptions);
+    // (undocumented)
+    readonly boundary: string;
+}
+
+// @public
+export interface MultipartPart {
+    // (undocumented)
+    readonly body: Body_2;
+    // (undocumented)
+    readonly filename?: string | undefined;
+    // (undocumented)
+    readonly name: string;
+}
+
+// @public
 export class OperationAssemblyError extends DexpaceError {
     constructor(message: string, parameterName: string);
     readonly parameterName: string;
@@ -128,7 +256,7 @@ export class OperationAssemblyError extends DexpaceError {
 
 // @public
 export interface OperationDescriptor {
-    readonly body?: unknown;
+    readonly body?: Body_2 | undefined;
     readonly headers?: Headers_2 | undefined;
     readonly method: Method;
     readonly pathParams?: Readonly<Record<string, string>> | undefined;
@@ -172,7 +300,7 @@ export type RangeKind = 'bounded' | 'suffix' | 'open';
 
 // @public
 class Request_2 {
-    get body(): unknown;
+    get body(): Body_2 | undefined;
     equals(other: Request_2): boolean;
     get headers(): Headers_2;
     get method(): Method;
@@ -189,7 +317,7 @@ export class RequestBodyNotAllowedError extends DomainModelError {
 
 // @public
 export class RequestBuilder implements Builder<Request_2> {
-    body(body: unknown): this;
+    body(body: Body_2 | undefined): this;
     build(): Request_2;
     headers(headers: Headers_2): this;
     method(method: Method): this;
@@ -246,25 +374,45 @@ export class RequiredFieldError extends DomainModelError {
 
 // @public
 class Response_2 {
-    get body(): unknown;
+    // (undocumented)
+    [Symbol.asyncDispose](): Promise<void>;
+    constructor(request: Request_2, protocol: Protocol, status: Status, reasonPhrase: string | undefined, headers: Headers_2, body: ReadableStream<Uint8Array> | null);
+    get body(): ReadableStream<Uint8Array> | null;
+    bytes(): Promise<Uint8Array>;
+    close(): Promise<void>;
+    // (undocumented)
     get headers(): Headers_2;
+    // (undocumented)
     static newBuilder(): ResponseBuilder;
+    // (undocumented)
     newBuilder(): ResponseBuilder;
+    // (undocumented)
     get protocol(): Protocol;
+    // (undocumented)
     get reasonPhrase(): string | undefined;
+    // (undocumented)
     get request(): Request_2;
+    // (undocumented)
     get status(): Status;
+    text(): Promise<string>;
 }
 export { Response_2 as Response }
 
 // @public
 export class ResponseBuilder implements Builder<Response_2> {
-    body(body: unknown): this;
+    // (undocumented)
+    body(body: ReadableStream<Uint8Array> | null): this;
+    // (undocumented)
     build(): Response_2;
+    // (undocumented)
     headers(headers: Headers_2): this;
+    // (undocumented)
     protocol(protocol: Protocol): this;
+    // (undocumented)
     reasonPhrase(reasonPhrase: string | undefined): this;
+    // (undocumented)
     request(request: Request_2): this;
+    // (undocumented)
     status(status: Status): this;
 }
 
@@ -285,9 +433,65 @@ export class Status {
 }
 
 // @public
+export class StreamBody implements Body_2 {
+    constructor(stream: ReadableStream<Uint8Array>, mediaType?: string, contentLength?: number);
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: "stream";
+    // (undocumented)
+    readonly mediaType: string | undefined;
+    // (undocumented)
+    readonly replayable = false;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+// @public
+export function streamBody(stream: ReadableStream<Uint8Array>, mediaType?: string, contentLength?: number): StreamBody;
+
+// @public
+export class StringBody implements Body_2 {
+    constructor(text: string, mediaType?: string);
+    // (undocumented)
+    readonly contentLength: number;
+    // (undocumented)
+    readonly kind: "string";
+    // (undocumented)
+    readonly mediaType: string;
+    // (undocumented)
+    readonly replayable = true;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+// @public
+export function stringBody(text: string, mediaType?: string): StringBody;
+
+// @public
+export function toHttpError(response: Response_2): Promise<HttpStatusError | null>;
+
+// @public
 export interface Transport {
     close(): Promise<void>;
     send(request: Request_2, options?: RequestOptions, signal?: AbortSignal): Promise<Response_2>;
+}
+
+// @public
+export class TypedResponse<T> {
+    constructor(response: Response_2, parse: (response: Response_2) => Promise<T>);
+    // (undocumented)
+    get headers(): Response_2['headers'];
+    // (undocumented)
+    get protocol(): string;
+    // (undocumented)
+    get reason(): string | undefined;
+    get request(): Request_2;
+    // (undocumented)
+    get status(): Response_2['status'];
+    value(): Promise<T>;
 }
 
 // @public

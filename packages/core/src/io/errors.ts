@@ -26,7 +26,7 @@ export class IoError extends DexpaceError {
  *
  * @internal
  */
-export class EndOfStreamError extends IoError {
+export class EndOfStreamError extends DexpaceError {
   readonly delivered: number;
   readonly requested: number;
 
@@ -46,7 +46,7 @@ export class EndOfStreamError extends IoError {
  *
  * @internal
  */
-export class SourceContractViolationError extends IoError {
+export class SourceContractViolationError extends DexpaceError {
   // See IoError's constructor above: keeps this bodiless subclass registered for bun's
   // function coverage.
   // eslint-disable-next-line @typescript-eslint/no-useless-constructor -- see comment above
@@ -62,7 +62,7 @@ export class SourceContractViolationError extends IoError {
  *
  * @internal
  */
-export class ClosedResourceError extends IoError {
+export class ClosedResourceError extends DexpaceError {
   readonly resource: string;
 
   constructor(resource: string, options?: ErrorOptions) {
@@ -77,7 +77,7 @@ export class ClosedResourceError extends IoError {
  *
  * @internal
  */
-export class AllocationLimitError extends IoError {
+export class AllocationLimitError extends DexpaceError {
   readonly requested: number;
   readonly limit: number;
 
@@ -89,4 +89,29 @@ export class AllocationLimitError extends IoError {
     this.requested = requested;
     this.limit = limit;
   }
+}
+
+/**
+ * Groups every leaf in this file, including bare `IoError`, without reintroducing a class tier between
+ * them and `DexpaceError` — the corpus caps custom error hierarchies at two levels. Retrofits Phase 3a's
+ * shape, where the four leaves extended `IoError` (a 3-tier chain the checkpoint's `DomainModelError` fix
+ * should also have caught and didn't).
+ *
+ * @internal
+ */
+export function isIoError(
+  error: unknown,
+): error is
+  | IoError
+  | EndOfStreamError
+  | SourceContractViolationError
+  | ClosedResourceError
+  | AllocationLimitError {
+  return (
+    error instanceof IoError ||
+    error instanceof EndOfStreamError ||
+    error instanceof SourceContractViolationError ||
+    error instanceof ClosedResourceError ||
+    error instanceof AllocationLimitError
+  );
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/seams/operation.ts
+import type {Body} from '../body/body.js';
 import {Request} from '../http/request.js';
 import type {Headers} from '../http/headers.js';
 import type {QueryParams} from '../http/query-params.js';
@@ -68,7 +69,7 @@ export interface OperationDescriptor {
    * The operation's body. Carried, not encoded — serialization is a separate seam's concern
    * (SEAM-26). Defaults to absent.
    */
-  readonly body?: unknown;
+  readonly body?: Body | undefined;
 }
 
 const PATH_PARAM_RE = /\{([^{}]+)\}/g;

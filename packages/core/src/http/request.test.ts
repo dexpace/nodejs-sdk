@@ -5,6 +5,7 @@
 // immutability)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
+import {stringBody} from '../body/simple-bodies.js';
 import {Request} from './request.js';
 import {Headers} from './headers.js';
 import {
@@ -31,7 +32,7 @@ describe('method/body legality (HTTP-7)', () => {
         Request.newBuilder()
           .method(method)
           .url('https://example.com')
-          .body('x')
+          .body(stringBody('x'))
           .build(),
       ).toThrow(RequestBodyNotAllowedError);
     }
@@ -42,7 +43,7 @@ describe('method/body legality (HTTP-7)', () => {
       Request.newBuilder()
         .method('POST')
         .url('https://example.com')
-        .body('x')
+        .body(stringBody('x'))
         .build(),
     ).not.toThrow();
   });
@@ -51,18 +52,8 @@ describe('method/body legality (HTTP-7)', () => {
     const request = Request.newBuilder()
       .method('GET')
       .url('https://example.com')
-      .body('x')
+      .body(stringBody('x'))
       .body(undefined)
-      .build();
-    expect(request.body).toBeUndefined();
-  });
-
-  test('a null body clears like undefined — HTTP-7 rejects only a non-null body', () => {
-    const request = Request.newBuilder()
-      .method('GET')
-      .url('https://example.com')
-      .body('x')
-      .body(null)
       .build();
     expect(request.body).toBeUndefined();
   });
@@ -76,7 +67,10 @@ describe('method defaulting (HTTP-8)', () => {
 
   test('fails naming the missing method when a body is set with no method', () => {
     expect(() =>
-      Request.newBuilder().url('https://example.com').body('x').build(),
+      Request.newBuilder()
+        .url('https://example.com')
+        .body(stringBody('x'))
+        .build(),
     ).toThrow('method is required');
   });
 });

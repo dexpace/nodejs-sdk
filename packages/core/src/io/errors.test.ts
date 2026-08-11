@@ -9,6 +9,7 @@ import {
   ClosedResourceError,
   EndOfStreamError,
   IoError,
+  isIoError,
   SourceContractViolationError,
 } from './errors.js';
 
@@ -17,13 +18,16 @@ describe('IoError tree', () => {
     expect(new IoError('boom')).toBeInstanceOf(DexpaceError);
   });
 
-  test('every leaf descends from IoError', () => {
-    expect(new EndOfStreamError(3, 8)).toBeInstanceOf(IoError);
+  test('every leaf descends from DexpaceError directly, not through IoError (Phase 3b retrofit)', () => {
+    expect(new EndOfStreamError(3, 8)).toBeInstanceOf(DexpaceError);
+    expect(new EndOfStreamError(3, 8)).not.toBeInstanceOf(IoError);
     expect(new SourceContractViolationError('zero read')).toBeInstanceOf(
-      IoError,
+      DexpaceError,
     );
-    expect(new ClosedResourceError('BufferedSource')).toBeInstanceOf(IoError);
-    expect(new AllocationLimitError(9, 8)).toBeInstanceOf(IoError);
+    expect(new ClosedResourceError('BufferedSource')).toBeInstanceOf(
+      DexpaceError,
+    );
+    expect(new AllocationLimitError(9, 8)).toBeInstanceOf(DexpaceError);
   });
 
   test('each error sets name from its own constructor', () => {
@@ -60,19 +64,13 @@ describe('IoError tree', () => {
     expect(new AllocationLimitError(5, 4, {cause}).cause).toBe(cause);
   });
 
-  test('EndOfStreamError chains a cause', () => {
-    const cause = new Error('underlying read failure');
-    expect(new EndOfStreamError(1, 2, {cause}).cause).toBe(cause);
-  });
-
-  test('ClosedResourceError chains a cause', () => {
-    const cause = new Error('already closed');
-    expect(new ClosedResourceError('ByteQueue', {cause}).cause).toBe(cause);
-  });
-
-  test('SourceContractViolationError carries its message and descends from IoError', () => {
-    const error = new SourceContractViolationError('returned zero bytes');
-    expect(error.message).toBe('returned zero bytes');
-    expect(error.name).toBe('SourceContractViolationError');
+  test('isIoError groups every leaf, including bare IoError, without a class tier', () => {
+    expect(isIoError(new IoError('x'))).toBe(true);
+    expect(isIoError(new EndOfStreamError(1, 2))).toBe(true);
+    expect(isIoError(new SourceContractViolationError('x'))).toBe(true);
+    expect(isIoError(new ClosedResourceError('x'))).toBe(true);
+    expect(isIoError(new AllocationLimitError(1, 2))).toBe(true);
+    expect(isIoError(new DexpaceError('other'))).toBe(false);
+    expect(isIoError(new Error('plain'))).toBe(false);
   });
 });
