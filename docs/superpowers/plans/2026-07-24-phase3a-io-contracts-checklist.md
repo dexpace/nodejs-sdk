@@ -35,7 +35,7 @@ requirement ID in `docs/product-spec/05-i-o-contracts.md`, as dispositioned by
 |---|---|---|---|---|
 | IO-11 | MUST | `exhausted()`, single-byte read, count-less read of all remaining (empty when exhausted) | ✅ | Task 6 |
 | IO-12 | MUST | Exact-count read returns exactly N or fails; never short | ✅ | Task 6, asserted across chunk boundaries and on the short path |
-| IO-13 | MUST | UTF-8 and explicit-charset reads, with symmetric write-side encodings | ✅ (read) / ⚠️ (write, bounded) | Task 7 (read: any `TextDecoder` label, ISO-8859-1 round-trip per the requirement's own conformance note), Task 9 (write: **UTF-8 and ISO-8859-1 only**). `TextEncoder` is UTF-8-only and `SEAM-1` forbids an encoding dependency, so full symmetry is unreachable; any other label throws rather than silently re-encoding. Ledgered deviation |
+| IO-13 | MUST | UTF-8 and explicit-charset reads, with symmetric write-side encodings | ✅ (read) / ⚠️ (write, bounded) | Task 7 (read: any `TextDecoder` label), Task 9 (write: **UTF-8 and ISO-8859-1 only**), plus two `fast-check` round-trip property tests in `buffered-sink.test.ts` — sink-out/source-back through UTF-8, and through ISO-8859-1 asserting one byte per code point, which is what distinguishes an honored charset from a silent UTF-8 re-encoding. `TeeSink`'s own `writeUtf8`/`writeString` are asserted to mirror the primary's exact encoded bytes and to refuse an unsupported label identically. `TextEncoder` is UTF-8-only and `SEAM-1` forbids an encoding dependency, so full symmetry is unreachable; any other label throws rather than silently re-encoding. Ledgered deviation |
 | IO-14 | MUST | Line read consumes the terminator; `\n` and `\r\n` both terminate; lone `\r` is content; final unterminated line as-is; absent when exhausted first | ✅ | Task 7, including a `fast-check` property test with **adversarially generated chunk boundaries**, so a terminator straddling two stream chunks is covered — the case the requirement's rationale names and hand-picked examples miss |
 | IO-15 | MUST | Skip advances exactly N, fails if fewer remain; `skip(0)` a no-op even at/after EOF | ✅ | Task 6 |
 | IO-16 | SHOULD | Read-only host-native byte-stream bridge; symmetric writable bridge; closing the bridge closes the owner | ✅ | Task 12. Host-native means `ReadableStream`/`WritableStream` for this port, per `sdk-design/03` §3.1 — no `node:` import; Task 13 Step 9 greps to enforce that |
@@ -61,7 +61,7 @@ requirement ID in `docs/product-spec/05-i-o-contracts.md`, as dispositioned by
 | IO-26 | MUST | Tap capacity limit; default effectively unbounded; a limit of 0 mirrors nothing while forwarding everything | ✅ | Task 10 (`Number.POSITIVE_INFINITY` default, spelled as a value rather than a magic number); all three cases asserted |
 | IO-27 | MUST | Mirror BEFORE forwarding; clear staging even on a failed write so no stale bytes prepend | ✅ | Task 10, both clauses asserted; staging cleared in a `finally` so it holds on the throwing path |
 | IO-28 | MUST | No direct backing-buffer handle; attempting it fails, directing callers at the typed writes | ✅ | Task 10 (`get buffer(): never`) |
-| IO-29 | MUST | Tee's own flush/close/emit forward to the PRIMARY only, leaving the tap intact | ✅ | Task 10, with snapshot-after-close asserted |
+| IO-29 | MUST | Tee's own flush/close/emit forward to the PRIMARY only, leaving the tap intact | ✅ | Task 10. All three asserted: `close` with snapshot-after-close, and `flush`/`emit` both by returning the tee with the tap intact and — the observable proof they are not swallowed by the decorator — by rejecting with `ClosedResourceError` once the primary is closed, which only the primary can raise |
 
 ## 5.6 Provider factories, timeouts, and thread-safety
 
@@ -80,10 +80,11 @@ requirement ID in `docs/product-spec/05-i-o-contracts.md`, as dispositioned by
 | Nothing enters the published API surface | Design decision (styleguide 10.3, Phase 2's `Serde<T>` precedent) | ✅ | Task 13 Step 8 — `git diff --exit-code packages/core/etc/core.api.md` must produce no output. Mechanical proof, not a review promise |
 | No runtime dependency added | `SEAM-1` | ✅ | Task 13 Step 7 runs `verify:seam-1`; `mitata` is a root devDependency only |
 | No `node:` import in core | `sdk-design/03` §3.1, runtime-agnosticism | ✅ | Task 13 Step 9 greps `packages/core/src/` and fails on any match |
-| Property tests where invariants exist | styleguide 11.5 | ✅ | Task 4 (`ByteQueue` ×4), Task 7 (`readUtf8Line`), Task 8 (views ×2), Task 10 (`TeeSink` wire payload) |
+| Property tests where invariants exist | styleguide 11.5 | ✅ | Task 4 (`ByteQueue` ×4), Task 7 (`readUtf8Line`), Task 8 (views ×2), Task 9 (charset round-trips ×2), Task 10 (`TeeSink` wire payload) |
+| Rejection assertions are awaited and attributable | styleguide 11.9 | ✅ | `test-support/rejection.ts`. bun types `.rejects.toThrow()` as `void`, so the plan's `await expect(…).rejects` form fails `@typescript-eslint/await-thenable`; the helper awaits the promise and returns the reason instead, with no `eslint-disable`. Ledgered |
 | Negative-space and cleanup assertions | styleguide 11.9, 13.9 | ✅ | Idempotent close (Tasks 4, 5, 6, 9), both IO-42 directions (Tasks 4, 6), parent-close invalidation (Task 8), failed-write tap capture (Task 10) |
 | Determinism — no fake clocks needed | styleguide 11.8 | ✅ | IO-40 means this layer owns no timer; every stream under test is built from an in-memory array |
-| Fakes over `mock.module` | styleguide 11.3 | ✅ | Task 5's `test-support/fake-stream.ts`, excluded from the build via `tsconfig.build.json` |
+| Fakes over `mock.module` | styleguide 11.3 | ✅ | Task 5's `test-support/fake-stream.ts` and `test-support/rejection.ts`, both excluded from the build via `tsconfig.build.json`'s `src/io/test-support/**` |
 | No type-level tests | styleguide 11.6 | ✅ (correctly absent) | 11.6 requires them for public generics and conditional types; this phase publishes neither. Stated rather than manufactured |
 | Committed baseline bench | styleguide 15.6 | ✅ | Task 13, `byte-queue.bench.ts`. Baseline only — no optimization applied, no 15.10 ledger notes, per 15.1/15.6's "do not tune ahead of a profile" |
 | 80% aggregate coverage floor | `NFR-5` | ✅ | Task 13 Step 7 |

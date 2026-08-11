@@ -6,7 +6,8 @@
     "moduleResolution": "nodenext",
     "lib": [
       "ES2022",
-      "DOM"
+      "DOM",
+      "DOM.AsyncIterable"
     ],
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
