@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/multipart-body.test.ts
 // Exercises: BODY-2 (composite replayability, unknown-length collapse), HTTP-51 (shared framing routine,
-// boundary generation/validation, header quoting)
+// boundary generation/validation, header quoting, and a part media type that cannot break the framing),
+// HTTP-26 (a media type is header-safe), RECOV-12 (a close failure never masks the primary failure)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
+import {MediaTypeParseError} from '../http/errors.js';
+import type {Body} from './body.js';
 import {MultipartBoundaryError} from './errors.js';
 import {
   MultipartBody,
@@ -212,5 +215,57 @@ describe('MultipartBody property tests (HTTP-51)', () => {
       }),
       {seed: 0x3b},
     );
+  });
+});
+
+// A hand-rolled Body bypassing the bundled factories' construction-time validation -- MultipartPart
+// accepts any Body, so the framing routine cannot assume the media type was already checked.
+function forgedBody(mediaType: string): Body {
+  return {
+    kind: 'byte-array',
+    mediaType,
+    contentLength: 1,
+    replayable: true,
+    writeTo: async sink => {
+      const writer = sink.getWriter();
+      await writer.write(Uint8Array.from([120]));
+      await writer.close();
+    },
+  };
+}
+
+describe('a part media type cannot break the framing (HTTP-51)', () => {
+  test('a media type carrying CR/LF is refused, not interpolated', () => {
+    const part = {
+      name: 'f',
+      body: forgedBody('text/plain\r\nX-Injected: pwned'),
+    };
+    expect(() => multipartBody([part], 'BOUNDARY')).toThrow(
+      MediaTypeParseError,
+    );
+  });
+
+  test('a media type that would forge a closing boundary is refused', () => {
+    const part = {
+      name: 'f',
+      body: forgedBody('text/plain\r\n\r\nSMUGGLED\r\n--BOUNDARY--'),
+    };
+    // Without this the declared contentLength still matches the written bytes -- the shared framing
+    // routine counts the forged bytes too, so the wire is consistently, silently wrong.
+    expect(() => multipartBody([part], 'BOUNDARY')).toThrow(
+      MediaTypeParseError,
+    );
+  });
+});
+
+describe('MultipartBody failure propagation (RECOV-12)', () => {
+  test('surfaces the sink failure, not a close TypeError', () => {
+    const body = multipartBody([{name: 'a', body: stringBody('x')}], 'B');
+    const sink = new WritableStream<Uint8Array>({
+      write: () => {
+        throw new Error('SOCKET GONE');
+      },
+    });
+    expect(body.writeTo(sink)).rejects.toThrow('SOCKET GONE');
   });
 });

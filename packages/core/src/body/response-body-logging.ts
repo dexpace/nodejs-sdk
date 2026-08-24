@@ -2,6 +2,7 @@
 // packages/core/src/body/response-body-logging.ts
 import {invariant} from '../invariant.js';
 import {ByteQueue} from '../io/byte-queue.js';
+import {SourceContractViolationError} from '../io/errors.js';
 import {MAX_BYTE_ARRAY_LENGTH} from '../io/limits.js';
 import {ConsumedBodyError} from './errors.js';
 
@@ -57,9 +58,12 @@ async function closeDelegate(state: DrainState): Promise<void> {
  * Reads until EOF (fits regime) or until the cap is reached (exceeds regime, leaving the delegate open
  * and the overflow chunk staged). BODY-26: a failure is cached, never allowed to truncate silently.
  *
- * BODY-25 note: the requirement's "zero bytes returned for a positive requested count" has no analog
- * here -- `ReadableStreamDefaultReader.read()` takes no count, and a zero-length chunk is a legal
- * no-op, not an EOF signal. EOF is signalled only by `{done: true}`, which is what the loop keys on.
+ * BODY-25: a delegate chunk of zero bytes is a stream-contract violation, not a no-op and never EOF --
+ * EOF is signalled only by `{done: true}`. `ReadableStreamDefaultReader.read()` carries no requested
+ * count, so the requirement's "for a positive requested count" has no literal analog, but the tolerant
+ * reading is the wrong one to pick: `RetentionWindow` raises on the same input under IO-17's identical
+ * rule, and a response body reaches both this tee and `BufferedSource`, so a divergence would make one
+ * upstream fail or succeed depending only on which wrapper it passed through.
  */
 async function drainOnce(state: DrainState): Promise<void> {
   try {
@@ -70,6 +74,11 @@ async function drainOnce(state: DrainState): Promise<void> {
         state.regime = 'fits';
         await closeDelegate(state);
         return;
+      }
+      if (value.length === 0) {
+        throw new SourceContractViolationError(
+          'source delivered 0 bytes without signalling end of stream',
+        ); // BODY-25
       }
       if (state.captured.size + value.length <= state.cap) {
         state.captured.writeBytes(value);
@@ -90,6 +99,19 @@ async function drainOnce(state: DrainState): Promise<void> {
     state.failure = error instanceof Error ? error : new Error(String(error));
     throw state.failure;
   }
+}
+
+/**
+ * BODY-22's once-only, lazily-started drain. Concurrent first accesses share the one in-flight promise.
+ *
+ * The detached `.catch` matters: a snapshot-triggered drain has no awaiter, so without it a drain failure
+ * becomes an unhandled rejection. Attaching a handler to a *copy* leaves the stored promise rejected, so
+ * `read()` still re-throws the cached failure on every call (BODY-26).
+ */
+function startDrain(state: DrainState): Promise<void> {
+  state.started ??= drainOnce(state);
+  void state.started.catch(() => undefined);
+  return state.started;
 }
 
 /** A fresh, non-consuming view over the fully-captured bytes. Repeatable (BODY-23). */
@@ -170,8 +192,7 @@ export function withResponseLogging(
 
   return {
     async read(): Promise<ReadableStream<Uint8Array>> {
-      state.started ??= drainOnce(state);
-      await state.started; // a cached failure re-throws here on every call (BODY-26)
+      await startDrain(state); // a cached failure re-throws here on every call (BODY-26)
       if (state.regime === 'fits') return capturedStream(state);
       if (state.tailConsumed) {
         throw new ConsumedBodyError('logged-response');
@@ -179,7 +200,14 @@ export function withResponseLogging(
       state.tailConsumed = true;
       return tailStream(state);
     },
-    snapshot: () => state.captured.snapshot(),
+    snapshot(): Uint8Array {
+      // BODY-22 lists snapshot in the drain's trigger set alongside read. The accessor is synchronous,
+      // so it starts the drain and returns what has been captured so far rather than awaiting it; a
+      // later read() awaits the very same in-flight promise, so the delegate is still read exactly once.
+      // (BODY-26's "snapshot returns the partial bytes without throwing" is why it cannot await here.)
+      void startDrain(state);
+      return state.captured.snapshot();
+    },
     error: () => state.failure, // deliberately does not drain (BODY-26)
     get contentLength(): number {
       // BODY-29: the capture is the true length only when the whole body fit within the cap.

@@ -4,6 +4,8 @@ import type {Builder} from '../http/builder.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {MultipartBoundaryError} from './errors.js';
+import {assertHeaderSafeMediaType} from './media-type-safety.js';
+import {withBodyWriter} from './write-body.js';
 
 /**
  * A part inside a {@link MultipartBody}.
@@ -58,8 +60,14 @@ function renderPartHeader(part: MultipartPart, boundary: string): Uint8Array {
   if (part.filename !== undefined)
     header += `; filename="${quoteParam(part.filename)}"`;
   header += '\r\n';
-  if (part.body.mediaType !== undefined)
+  if (part.body.mediaType !== undefined) {
+    // Defence in depth: the bundled Body implementations validate at construction, but `MultipartPart`
+    // accepts any `Body`, and this value is interpolated raw. A CR/LF here would append arbitrary
+    // headers, close the header block, or forge a closing boundary -- and because this routine is shared
+    // with computeContentLength, the declared length would agree with the corrupted bytes (HTTP-51).
+    assertHeaderSafeMediaType(part.body.mediaType);
     header += `Content-Type: ${part.body.mediaType}\r\n`;
+  }
   header += '\r\n';
   return new TextEncoder().encode(header);
 }
@@ -135,23 +143,23 @@ export class MultipartBody implements Body {
   }
 
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
-    const writer = sink.getWriter();
-    try {
+    await withBodyWriter(sink, async writer => {
       for (const part of this.#parts) {
         await writer.write(renderPartHeader(part, this.#boundary));
         await part.body.writeTo(nonClosingSink(writer));
         await writer.write(CRLF);
       }
       await writer.write(trailerBytes(this.#boundary));
-    } finally {
-      await writer.close();
-    }
+    });
   }
 }
 
 /**
  * Creates a MultipartBody (BODY-2, HTTP-51).
  *
+ * @throws MultipartBoundaryError when `boundary` violates RFC 2046's bchars grammar (HTTP-51).
+ * @throws MediaTypeParseError when a part's media type contains a control character or non-ASCII byte,
+ * which would let it break out of the part header it is rendered into (HTTP-26/HTTP-51).
  * @public
  */
 export function multipartBody(
@@ -185,6 +193,12 @@ export class MultipartBodyBuilder implements Builder<MultipartBody> {
     return this;
   }
 
+  /**
+   * @throws MultipartBoundaryError when the configured boundary violates RFC 2046's bchars grammar
+   * (HTTP-51).
+   * @throws MediaTypeParseError when a part's media type contains a control character or non-ASCII byte
+   * (HTTP-26/HTTP-51).
+   */
   build(): MultipartBody {
     return new MultipartBody(this.#parts, this.#boundary);
   }

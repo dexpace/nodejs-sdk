@@ -6,6 +6,7 @@
 export type {Body} from './body.js';
 export {
   ConsumedBodyError,
+  FormBodyValidationError,
   isBodyError,
   MultipartBoundaryError,
 } from './errors.js';
@@ -28,6 +29,7 @@ export {
   formUrlEncodedBody,
   FormUrlEncodedBody,
   type FormUrlEncodedInput,
+  type FormUrlEncodedValue,
   stringBody,
   StringBody,
 } from './simple-bodies.js';

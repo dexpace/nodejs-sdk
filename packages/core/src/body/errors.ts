@@ -44,15 +44,36 @@ export class MultipartBoundaryError extends DexpaceError {
 }
 
 /**
+ * A form field that cannot be rendered into an `x-www-form-urlencoded` body (HTTP-38/BODY-35) -- a
+ * non-string field name, or a value that is neither a primitive nor `null`. Raised rather than dropping
+ * the field, which would put a silently incomplete body on the wire.
+ *
+ * @public
+ */
+export class FormBodyValidationError extends DexpaceError {
+  readonly field: string;
+
+  constructor(field: string, value: unknown, options?: ErrorOptions) {
+    super(
+      `form field ${JSON.stringify(field)} has an unsupported value of type ${typeof value} -- use a string, number, boolean, bigint, or null`,
+      options,
+    );
+    this.field = field;
+  }
+}
+
+/**
  * Type guard for body errors.
  *
  * @public
  */
 export function isBodyError(
   error: unknown,
-): error is ConsumedBodyError | MultipartBoundaryError {
+): error is
+  ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError {
   return (
     error instanceof ConsumedBodyError ||
-    error instanceof MultipartBoundaryError
+    error instanceof MultipartBoundaryError ||
+    error instanceof FormBodyValidationError
   );
 }

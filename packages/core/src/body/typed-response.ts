@@ -48,9 +48,16 @@ export class TypedResponse<T> {
    * Lazily parses and returns the typed value. Memoized: the parser function runs at most once, and
    * subsequent calls return the same parsed value (or re-throw the same error) without re-parsing or
    * re-reading the body (HTTP-44). Concurrent first callers share the single in-flight parse (HTTP-45).
+   *
+   * @throws Whatever the parser raises -- rethrown identically on every later call, never re-parsed.
    */
   value(): Promise<T> {
-    this.#memoized ??= this.#parse(this.#response);
+    // The `async` wrapper is load-bearing: a parser is typed `=> Promise<T>` but may still be a plain
+    // function that throws synchronously (validating an argument before the first await is ordinary).
+    // A bare `this.#memoized ??= this.#parse(...)` never completes the assignment in that case, so the
+    // handler re-runs on the next call and re-reads a single-use body whose bytes are already gone --
+    // exactly what HTTP-44's "without re-running the handler or re-reading the body" forbids.
+    this.#memoized ??= (async () => this.#parse(this.#response))();
     return this.#memoized;
   }
 }

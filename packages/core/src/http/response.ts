@@ -2,8 +2,8 @@
 // packages/core/src/http/response.ts
 import type {Builder} from './builder.js';
 import {requireField} from './builder.js';
+import {decodeText, resolveCharset} from './charset.js';
 import {Headers} from './headers.js';
-import {MediaType} from './media-type.js';
 import type {Protocol} from './protocol.js';
 import type {Request} from './request.js';
 import type {Status} from './status.js';
@@ -22,7 +22,7 @@ export class Response {
   readonly #body: ReadableStream<Uint8Array> | null;
   // Not `readonly` -- Object.freeze(this) below only freezes normal properties, never #private fields,
   // so this can still track close state after construction (BODY-15, HTTP-43).
-  #closed = false;
+  #closing: Promise<void> | undefined;
 
   // eslint-disable-next-line max-params -- private, builder-internal; field count fixed by the wire model (HTTP-6)
   constructor(
@@ -117,27 +117,20 @@ export class Response {
   /** Reads the whole body as text, defaulting to the media type's charset then UTF-8 (HTTP-42). */
   async text(): Promise<string> {
     const bytes = await this.bytes();
-    try {
-      return new TextDecoder(this.#charset()).decode(bytes);
-    } catch {
-      return new TextDecoder('utf-8').decode(bytes); // HTTP-42: unrecognized charset also falls back
-    }
-  }
-
-  #charset(): string {
-    const contentType = this.#headers.get('content-type');
-    if (contentType === undefined) return 'utf-8';
-    try {
-      return MediaType.parse(contentType).charset ?? 'utf-8';
-    } catch {
-      return 'utf-8';
-    }
+    return decodeText(bytes, resolveCharset(this.#headers.get('content-type')));
   }
 
   /** Idempotent; releases the underlying connection whether or not the body was read (BODY-15, HTTP-43). */
   async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
+    // Memoized rather than flag-guarded, the same shape BufferedSink.close settled on for IO-5/IO-41:
+    // a `#closed = true` set before the await reports a FAILED release as success to every later caller,
+    // over a connection that was never released. Handing every caller the same promise propagates the
+    // failure on every path while still cancelling at most once.
+    this.#closing ??= this.#release();
+    return this.#closing;
+  }
+
+  async #release(): Promise<void> {
     if (this.#body === null) return;
     // BODY-15 forbids assuming the body was read, so an external consumer may still hold the reader
     // lock -- cancel() rejects with TypeError in that case. Swallow only that: the caller asked to

@@ -3,8 +3,11 @@
 // Exercises: BODY-9 (always single-use -- no generic mark/reset on Node's ReadableStream), BODY-3
 // (second write fails loudly and is race-safe), BODY-8 (caller's stream is not force-closed -- read to
 // natural exhaustion), HTTP-39/BODY-10 (declared length verified, short stream raises
-// delivered-of-declared), IO-3 (a contentLength below the -1 sentinel is rejected)
+// delivered-of-declared, and an overrunning stream is stopped BEFORE the extra bytes reach the sink),
+// IO-3 (a contentLength below the -1 sentinel is rejected), HTTP-26/HTTP-51 (a media type is
+// header-safe), RECOV-12 (a close failure never masks the primary write failure)
 import {describe, expect, test} from 'bun:test';
+import {MediaTypeParseError} from '../http/errors.js';
 import {InvariantViolation} from '../invariant.js';
 import {EndOfStreamError} from '../io/errors.js';
 import {ConsumedBodyError} from './errors.js';
@@ -114,5 +117,80 @@ describe('StreamBody declared length verification (HTTP-39, BODY-10, IO-3)', () 
     ]);
     expect(results.filter(r => r.status === 'fulfilled').length).toBe(1);
     expect(results.filter(r => r.status === 'rejected').length).toBe(1);
+  });
+});
+
+interface SinkState {
+  written: number[];
+  closed: boolean;
+  aborted: boolean;
+}
+
+function probeSink(): {state: SinkState; sink: WritableStream<Uint8Array>} {
+  const state: SinkState = {written: [], closed: false, aborted: false};
+  const sink = new WritableStream<Uint8Array>({
+    write: chunk => void state.written.push(...chunk),
+    close: () => void (state.closed = true),
+    abort: () => void (state.aborted = true),
+  });
+  return {state, sink};
+}
+
+describe('a mis-framed body never reaches the wire (HTTP-39/BODY-10)', () => {
+  test('an overrunning chunk is refused before any of it is written', () => {
+    const {state, sink} = probeSink();
+    expect(
+      streamBody(readableOf([1, 2, 3, 4, 5, 6, 7, 8]), undefined, 3).writeTo(
+        sink,
+      ),
+    ).rejects.toThrow(EndOfStreamError);
+    // Not [1,2,3,4,5,6,7,8]: once a transport has stamped Content-Length: 3, the surplus sits on the
+    // socket where the peer reads it as the start of the next message.
+    expect(state.written).toEqual([]);
+    expect(state.aborted).toBe(true);
+  });
+
+  test('bytes written before the overrun stay written, the straddling chunk does not', () => {
+    const {state, sink} = probeSink();
+    expect(
+      streamBody(readableOf([1, 2], [3, 4]), undefined, 3).writeTo(sink),
+    ).rejects.toThrow(EndOfStreamError);
+    expect(state.written).toEqual([1, 2]);
+  });
+
+  test('a short stream aborts the sink rather than closing it cleanly', () => {
+    const {state, sink} = probeSink();
+    expect(
+      streamBody(readableOf([1]), undefined, 5).writeTo(sink),
+    ).rejects.toThrow(EndOfStreamError);
+    expect(state.aborted).toBe(true);
+    expect(state.closed).toBe(false); // a truncated body is never signalled as complete
+  });
+
+  test('an exact-length stream closes the sink cleanly', async () => {
+    const {state, sink} = probeSink();
+    await streamBody(readableOf([1, 2, 3]), undefined, 3).writeTo(sink);
+    expect(state.written).toEqual([1, 2, 3]);
+    expect(state.closed).toBe(true);
+    expect(state.aborted).toBe(false);
+  });
+});
+
+describe('StreamBody media type and failure propagation', () => {
+  test('rejects a media type carrying CR/LF (HTTP-26/HTTP-51)', () => {
+    expect(() =>
+      streamBody(readableOf([1]), 'text/plain\r\nX-Injected: pwned'),
+    ).toThrow(MediaTypeParseError);
+  });
+
+  test('surfaces the sink failure, not a close TypeError (RECOV-12)', () => {
+    const sink = new WritableStream<Uint8Array>({
+      write: () => {
+        throw new Error('SOCKET GONE');
+      },
+    });
+    expect(
+      streamBody(readableOf([1, 2]), undefined, 2).writeTo(sink),
+    ).rejects.toThrow('SOCKET GONE');
   });
 });

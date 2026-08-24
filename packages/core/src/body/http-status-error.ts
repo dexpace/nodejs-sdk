@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/http-status-error.ts
+import {decodeText, resolveCharset} from '../http/charset.js';
 import {DexpaceError} from '../http/errors.js';
 import type {Response} from '../http/response.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
+import {headerSafeMediaType} from './media-type-safety.js';
 import {byteArrayBody} from './simple-bodies.js';
 
 // Fixed by HTTP-52. Deliberately NOT BODY-34's shared preview cap, which is configurable and covers the
@@ -40,13 +42,25 @@ export class HttpStatusError extends DexpaceError {
   body(): Body | undefined {
     return this.#bodyBytes === undefined
       ? undefined
-      : byteArrayBody(this.#bodyBytes, this.#mediaType);
+      : // Dropped rather than raised when the received content-type is not outbound-safe: an inbound
+        // value may legally carry obs-text (HTTP-19) that an outbound body may not (HTTP-18).
+        byteArrayBody(this.#bodyBytes, headerSafeMediaType(this.#mediaType));
   }
 
-  /** Non-consuming preview from the buffered copy (BODY-33). Null for no body. */
-  preview(charset = 'utf-8'): string | null {
+  /**
+   * Non-consuming preview from the buffered copy (BODY-33). Null for no body.
+   *
+   * Decodes with `charset` when given, otherwise with the charset declared by the response's media type,
+   * falling back to UTF-8 when that is absent or unknown -- the same resolution `Response.text()` uses
+   * (HTTP-42). Never throws: an unrecognized label falls back rather than raising a RangeError out of a
+   * method on an error object, where a caller is least able to handle another exception.
+   */
+  preview(charset?: string): string | null {
     if (this.#bodyBytes === undefined) return null;
-    return new TextDecoder(charset).decode(this.#bodyBytes);
+    return decodeText(
+      this.#bodyBytes,
+      charset ?? resolveCharset(this.#mediaType),
+    );
   }
 }
 
@@ -55,6 +69,7 @@ export class HttpStatusError extends DexpaceError {
  * response's own close-guaranteeing scope (HTTP-52/BODY-30). Returns null for a non-error response
  * (BODY-31) -- the caller keeps the response, body intact.
  *
+ * @throws Whatever reading the response body raises; the response is closed either way (BODY-16).
  * @public
  */
 export async function toHttpError(

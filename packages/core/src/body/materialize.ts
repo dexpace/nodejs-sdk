@@ -8,6 +8,9 @@ import {byteArrayBody} from './simple-bodies.js';
  * Returns `body` unchanged if already replayable; otherwise drains its single write into a fresh
  * replayable ByteArrayBody, after which the original is treated as consumed (BODY-3/HTTP-37).
  *
+ * @throws ConsumedBodyError when `body` is single-use and has already been written (BODY-3).
+ * @throws Whatever the delegate's `writeTo` raises -- an EndOfStreamError from a stream body whose
+ * byte count disagrees with its declared length, for instance (HTTP-39/BODY-10).
  * @public
  */
 export async function materialize(body: Body): Promise<Body> {

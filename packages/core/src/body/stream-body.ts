@@ -4,6 +4,8 @@ import {EndOfStreamError} from '../io/errors.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {ConsumedBodyError} from './errors.js';
+import {assertHeaderSafeMediaType} from './media-type-safety.js';
+import {withBodyWriter} from './write-body.js';
 
 /**
  * A single-use body backed by a caller-supplied stream.
@@ -23,6 +25,7 @@ export class StreamBody implements Body {
     mediaType?: string,
     contentLength = -1,
   ) {
+    assertHeaderSafeMediaType(mediaType); // HTTP-26/HTTP-51
     invariant(
       contentLength >= -1,
       `contentLength must be >= -1 (-1 = unknown), got ${String(contentLength)}`,
@@ -49,23 +52,30 @@ export class StreamBody implements Body {
     declared: number,
   ): Promise<void> {
     const reader = this.#stream.getReader();
-    const writer = sink.getWriter();
-    let delivered = 0;
     try {
-      for (;;) {
-        // Serial by necessity: each read depends on the previous one advancing the cursor.
-        const {done, value} = await reader.read();
-        if (done) break;
-        delivered += value.length;
-        await writer.write(value);
-      }
+      await withBodyWriter(sink, async writer => {
+        let delivered = 0;
+        for (;;) {
+          // Serial by necessity: each read depends on the previous one advancing the cursor.
+          const {done, value} = await reader.read();
+          if (done) break;
+          // Checked BEFORE the write, not after the loop: once a transport has stamped the declared
+          // Content-Length, an overrun byte sits on the socket where the peer reads it as the start of
+          // the next message, and a thrown error cannot recall bytes already written (HTTP-39/BODY-10).
+          if (delivered + value.length > declared) {
+            throw new EndOfStreamError(delivered + value.length, declared);
+          }
+          delivered += value.length;
+          await writer.write(value);
+        }
+        // Raised inside the writer scope so withBodyWriter aborts: a truncated body must never be
+        // signalled to the sink as a clean close.
+        if (delivered !== declared) {
+          throw new EndOfStreamError(delivered, declared);
+        }
+      });
     } finally {
       reader.releaseLock(); // BODY-8: release our handle, never cancel the caller's stream
-      await writer.close();
-    }
-
-    if (delivered !== declared) {
-      throw new EndOfStreamError(delivered, declared);
     }
   }
 }
@@ -73,6 +83,11 @@ export class StreamBody implements Body {
 /**
  * Creates a single-use StreamBody (BODY-9).
  *
+ * @throws MediaTypeParseError when `mediaType` contains a control character or non-ASCII byte, which
+ * would let it break out of the header it is rendered into (HTTP-26/HTTP-51).
+ * @throws ConsumedBodyError from `writeTo` when the body has already been written once (BODY-3).
+ * @throws EndOfStreamError from `writeTo` when the stream yields a byte count other than the declared
+ * `contentLength` (HTTP-39/BODY-10).
  * @public
  */
 export function streamBody(

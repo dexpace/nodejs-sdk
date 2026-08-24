@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/simple-bodies.test.ts
 // Exercises: HTTP-36/BODY-1 (mediaType, contentLength, replayable, writeTo), HTTP-38/BODY-35 (replayable
-// by source; form-urlencoded uses "+" for space, distinct from RFC 3986 query encoding)
+// by source; form-urlencoded uses "+" for space, distinct from RFC 3986 query encoding; a field value
+// that cannot be rendered is raised, never dropped), HTTP-26/HTTP-51 (a media type is header-safe),
+// RECOV-12 (a close failure never masks the primary write failure)
 import {describe, expect, test} from 'bun:test';
+import {MediaTypeParseError} from '../http/errors.js';
+import {FormBodyValidationError} from './errors.js';
 import {
   byteArrayBody,
   formUrlEncodedBody,
@@ -93,5 +97,92 @@ describe('FormUrlEncodedBody (HTTP-38/BODY-35)', () => {
   test('percent-encodes reserved characters in keys and values', async () => {
     const body = formUrlEncodedBody(new Map([['a&b', 'c=d']]));
     expect(new TextDecoder().decode(await drain(body))).toBe('a%26b=c%3Dd');
+  });
+});
+
+function failingSink(): WritableStream<Uint8Array> {
+  return new WritableStream<Uint8Array>({
+    write: () => {
+      throw new Error('SOCKET GONE');
+    },
+  });
+}
+
+function decode(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+describe('media types are header-safe (HTTP-26/HTTP-51)', () => {
+  test('byteArrayBody rejects a media type carrying CR/LF', () => {
+    expect(() =>
+      byteArrayBody(Uint8Array.from([1]), 'text/plain\r\nX-Injected: pwned'),
+    ).toThrow(MediaTypeParseError);
+  });
+
+  test('stringBody rejects a media type carrying a control character', () => {
+    expect(() => stringBody('x', 'text/plain\u0007')).toThrow(
+      MediaTypeParseError,
+    );
+  });
+
+  test('a parameterised media type is still accepted', () => {
+    expect(
+      byteArrayBody(Uint8Array.from([1]), 'text/plain; charset=utf-8')
+        .mediaType,
+    ).toBe('text/plain; charset=utf-8');
+  });
+});
+
+describe('a write failure is never masked by the close (RECOV-12, RETRY-2)', () => {
+  test('ByteArrayBody surfaces the sink failure', () => {
+    expect(
+      byteArrayBody(Uint8Array.from([1, 2])).writeTo(failingSink()),
+    ).rejects.toThrow('SOCKET GONE');
+  });
+
+  test('StringBody surfaces the sink failure', () => {
+    expect(stringBody('hi').writeTo(failingSink())).rejects.toThrow(
+      'SOCKET GONE',
+    );
+  });
+
+  test('FormUrlEncodedBody surfaces the sink failure', () => {
+    expect(formUrlEncodedBody({a: 'b'}).writeTo(failingSink())).rejects.toThrow(
+      'SOCKET GONE',
+    );
+  });
+});
+
+describe('form field values (HTTP-38/BODY-35)', () => {
+  test('primitives are rendered rather than dropped', async () => {
+    const body = formUrlEncodedBody({count: 5, flag: true, big: 9n});
+    expect(decode(await drain(body))).toBe('count=5&flag=true&big=9');
+  });
+
+  test('null renders as a valueless parameter', async () => {
+    expect(decode(await drain(formUrlEncodedBody({empty: null})))).toBe(
+      'empty=',
+    );
+  });
+
+  test('array values render element-wise', async () => {
+    expect(decode(await drain(formUrlEncodedBody({tag: ['a', 2]})))).toBe(
+      'tag=a&tag=2',
+    );
+  });
+
+  test('a value that cannot be rendered throws naming the field', () => {
+    expect(() => formUrlEncodedBody({profile: {a: 1}} as never)).toThrow(
+      FormBodyValidationError,
+    );
+    expect(() => formUrlEncodedBody({profile: {a: 1}} as never)).toThrow(
+      /"profile"/,
+    );
+  });
+
+  test('undefined is rejected too -- an absent field is never guessed at', () => {
+    expect(() => formUrlEncodedBody({missing: undefined} as never)).toThrow(
+      FormBodyValidationError,
+    );
   });
 });

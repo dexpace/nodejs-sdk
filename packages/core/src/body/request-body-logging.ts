@@ -31,9 +31,13 @@ export function withRequestLogging(
     `tapCapBytes must be non-negative, got ${String(tapCapBytes)}`,
   );
   const cap = Math.min(tapCapBytes, MAX_BYTE_ARRAY_LENGTH);
-  const tap = new ByteQueue();
 
   function wrap(inner: Body): LoggedBody {
+    // Per-wrapper, never hoisted to the factory scope. BODY-21 asks materialize() to preserve the tap
+    // *cap*, not to share the buffer: two live wrappers over one ByteQueue means BODY-18's clear-on-write
+    // in the materialized wrapper silently rewrites the preview the pre-materialization wrapper is still
+    // holding -- which is precisely what a Phase 7 retry loop does between attempts.
+    const tap = new ByteQueue();
     return {
       kind: inner.kind,
       mediaType: inner.mediaType,

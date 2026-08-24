@@ -2,7 +2,8 @@
 // packages/core/src/body/request-body-logging.test.ts
 // Exercises: BODY-17 (mirror + forward the full untruncated payload), BODY-18 (tap clears at the start
 // of every write), BODY-19 (tap cap, full payload unaffected), BODY-20 (partial-failure snapshot), BODY-21
-// (replayable/materialize pass through, preserving the tap), BODY-37 (no backing-buffer escape hatch)
+// (replayable/materialize pass through, preserving the tap CAP without sharing its buffer), BODY-37 (no
+// backing-buffer escape hatch)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {InvariantViolation} from '../invariant.js';
@@ -149,5 +150,43 @@ describe('withRequestLogging replayability, materialize, and protection (BODY-21
     expect(() =>
       withRequestLogging(byteArrayBody(Uint8Array.from([1])), -1),
     ).toThrow(InvariantViolation);
+  });
+});
+
+function bytesStream(...values: number[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.from(values));
+      controller.close();
+    },
+  });
+}
+
+describe('materialize does not alias the tap (BODY-21)', () => {
+  test('each wrapper keeps its own buffer, so one write cannot rewrite the other preview', async () => {
+    const logged = withRequestLogging(
+      streamBody(bytesStream(1, 2, 3), undefined, 3),
+      100,
+    );
+    const materialized = await logged.materialize();
+
+    const {sink} = collectingSink();
+    await materialized.writeTo(sink);
+
+    expect([...materialized.snapshot()]).toEqual([1, 2, 3]);
+    // BODY-18 clears the tap at the start of every write. With one shared ByteQueue, a Phase 7 retry
+    // loop's second attempt silently rewrites the preview the first-attempt wrapper is still holding.
+    expect([...logged.snapshot()]).toEqual([]);
+  });
+
+  test('the materialized wrapper still honours the configured cap', async () => {
+    const logged = withRequestLogging(
+      streamBody(bytesStream(1, 2, 3), undefined, 3),
+      2,
+    );
+    const materialized = await logged.materialize();
+    const {sink} = collectingSink();
+    await materialized.writeTo(sink);
+    expect([...materialized.snapshot()]).toEqual([1, 2]);
   });
 });

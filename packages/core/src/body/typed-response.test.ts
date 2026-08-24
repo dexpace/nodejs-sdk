@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/typed-response.test.ts
-// Exercises: HTTP-44 (raw fields without touching the body, parse-once memoized including failure),
-// HTTP-45 (concurrent first callers serialized to one parse run)
+// Exercises: HTTP-44 (raw fields without touching the body, parse-once memoized including failure --
+// a synchronous throw included), HTTP-45 (concurrent first callers serialized to one parse run)
 import {describe, expect, test} from 'bun:test';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
@@ -76,5 +76,36 @@ describe('TypedResponse', () => {
     expect(a).toBe('value');
     expect(b).toBe('value');
     expect(calls).toBe(1);
+  });
+});
+
+describe('memoization covers a synchronously-throwing parser (HTTP-44)', () => {
+  test('the handler runs once even when it throws before returning a promise', () => {
+    let calls = 0;
+    // Typed `=> Promise<T>` but not `async`: validating an argument before the first await is ordinary,
+    // and a bare `??=` never completes the assignment when the right-hand side throws.
+    const typed = new TypedResponse<string>(
+      baseResponse(readableOf('x')),
+      () => {
+        calls += 1;
+        throw new Error('sync boom');
+      },
+    );
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(typed.value()).rejects.toThrow('sync boom');
+    }
+    expect(calls).toBe(1);
+  });
+
+  test('the same rejected promise is handed back, never a second body read', () => {
+    const typed = new TypedResponse<string>(
+      baseResponse(readableOf('x')),
+      () => {
+        throw new Error('sync boom');
+      },
+    );
+    const first = typed.value();
+    expect(typed.value()).toBe(first);
+    expect(first).rejects.toThrow('sync boom');
   });
 });

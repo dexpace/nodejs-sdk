@@ -3,6 +3,9 @@
 import {QueryParams, type QueryParamsBuilder} from '../http/query-params.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
+import {FormBodyValidationError} from './errors.js';
+import {assertHeaderSafeMediaType} from './media-type-safety.js';
+import {withBodyWriter} from './write-body.js';
 
 /**
  * A body backed by an in-memory byte array (BODY-1). Always replayable.
@@ -17,6 +20,7 @@ export class ByteArrayBody implements Body {
   readonly #bytes: Uint8Array;
 
   constructor(bytes: Uint8Array, mediaType?: string) {
+    assertHeaderSafeMediaType(mediaType); // HTTP-26/HTTP-51
     // Defensive copy: `bytes` caller passed might be mutated later (HTTP-1). Kept `#private` --
     // exposing this publicly would let a caller mutate a "replayable" body's contents after
     // construction, silently breaking the byte-for-byte-identical guarantee BODY-1 requires.
@@ -26,18 +30,17 @@ export class ByteArrayBody implements Body {
   }
 
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
-    const writer = sink.getWriter();
-    try {
+    await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);
-    } finally {
-      await writer.close();
-    }
+    });
   }
 }
 
 /**
  * Creates a replayable ByteArrayBody (BODY-1).
  *
+ * @throws MediaTypeParseError when `mediaType` contains a control character or non-ASCII byte, which
+ * would let it break out of the header it is rendered into (HTTP-26/HTTP-51).
  * @public
  */
 export function byteArrayBody(
@@ -61,6 +64,7 @@ export class StringBody implements Body {
   readonly #bytes: Uint8Array;
 
   constructor(text: string, mediaType = 'text/plain; charset=utf-8') {
+    assertHeaderSafeMediaType(mediaType); // HTTP-26/HTTP-51
     this.text = text;
     this.mediaType = mediaType;
     this.#bytes = new TextEncoder().encode(text);
@@ -68,18 +72,17 @@ export class StringBody implements Body {
   }
 
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
-    const writer = sink.getWriter();
-    try {
+    await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);
-    } finally {
-      await writer.close();
-    }
+    });
   }
 }
 
 /**
  * Creates a replayable StringBody (BODY-1).
  *
+ * @throws MediaTypeParseError when `mediaType` contains a control character or non-ASCII byte, which
+ * would let it break out of the header it is rendered into (HTTP-26/HTTP-51).
  * @public
  */
 export function stringBody(
@@ -90,15 +93,37 @@ export function stringBody(
 }
 
 /**
+ * A form field value. Primitives are rendered with their standard string form; `null` produces a
+ * valueless parameter. Anything else is rejected rather than silently dropped.
+ *
+ * @public
+ */
+export type FormUrlEncodedValue = string | number | boolean | bigint | null;
+
+/**
  * Accepted input shapes for {@link formUrlEncodedBody}.
  *
  * @public
  */
 export type FormUrlEncodedInput =
   | QueryParams
-  | ReadonlyMap<string, string | readonly string[]>
-  | Record<string, string | readonly string[]>
-  | readonly (readonly [string, string])[];
+  | ReadonlyMap<string, FormUrlEncodedValue | readonly FormUrlEncodedValue[]>
+  | Record<string, FormUrlEncodedValue | readonly FormUrlEncodedValue[]>
+  | readonly (readonly [string, FormUrlEncodedValue])[];
+
+// BODY-35: a form field that is neither a primitive nor null cannot be rendered, and dropping it would
+// put a silently incomplete body on the wire. Fail naming the key instead.
+function toFieldValue(key: string, value: unknown): string | null {
+  if (typeof value === 'string' || value === null) return value;
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  throw new FormBodyValidationError(key, value);
+}
 
 function addParamValue(
   builder: QueryParamsBuilder,
@@ -106,40 +131,33 @@ function addParamValue(
   value: unknown,
 ): void {
   if (Array.isArray(value)) {
-    for (const v of value) {
-      if (typeof v === 'string') builder.add(key, v);
+    for (const element of value as readonly unknown[]) {
+      builder.add(key, toFieldValue(key, element));
     }
-  } else if (typeof value === 'string' || value === null) {
-    builder.add(key, value);
+    return;
   }
+  builder.add(key, toFieldValue(key, value));
 }
 
 function toQueryParams(input: FormUrlEncodedInput): QueryParams {
   if (input instanceof QueryParams) return input;
   const builder = QueryParams.newBuilder();
-  if (input instanceof Map) {
-    for (const [key, value] of input.entries()) {
-      if (typeof key === 'string') addParamValue(builder, key, value);
-    }
-  } else if (Array.isArray(input)) {
-    for (const [key, value] of input as readonly (readonly [
-      unknown,
-      unknown,
-    ])[]) {
-      if (typeof key === 'string' && typeof value === 'string') {
-        builder.add(key, value);
-      }
-    }
-  } else {
-    for (const [key, value] of Object.entries(input)) {
-      addParamValue(builder, key, value);
-    }
+  const entries: readonly (readonly [unknown, unknown])[] =
+    input instanceof Map
+      ? [...input.entries()]
+      : Array.isArray(input)
+        ? (input as readonly (readonly [unknown, unknown])[])
+        : Object.entries(input);
+  for (const [key, value] of entries) {
+    if (typeof key !== 'string')
+      throw new FormBodyValidationError(String(key), key);
+    addParamValue(builder, key, value);
   }
   return builder.build();
 }
 
 /**
- * A body backed by URL-encoded form data (BODY-1, HTTP-50). Always replayable.
+ * A body backed by URL-encoded form data (BODY-1, HTTP-38/BODY-35). Always replayable.
  *
  * @public
  */
@@ -153,7 +171,8 @@ export class FormUrlEncodedBody implements Body {
 
   constructor(input: FormUrlEncodedInput) {
     this.params = toQueryParams(input);
-    const encoded = this.params.encode().replace(/%20/g, '+'); // HTTP-50: space encoded as '+'
+    // HTTP-38/BODY-35: x-www-form-urlencoded uses '+' for space, distinct from RFC 3986 query encoding.
+    const encoded = this.params.encode().replace(/%20/g, '+');
     invariant(
       !encoded.includes(' '),
       'form-urlencoded encoding produced illegal space',
@@ -163,18 +182,17 @@ export class FormUrlEncodedBody implements Body {
   }
 
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
-    const writer = sink.getWriter();
-    try {
+    await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);
-    } finally {
-      await writer.close();
-    }
+    });
   }
 }
 
 /**
- * Creates a replayable FormUrlEncodedBody (BODY-1, HTTP-50).
+ * Creates a replayable FormUrlEncodedBody (BODY-1, HTTP-38/BODY-35).
  *
+ * @throws FormBodyValidationError when a field name is not a string, or a field value is neither a
+ * primitive nor `null` -- such a field cannot be rendered and is never dropped silently.
  * @public
  */
 export function formUrlEncodedBody(

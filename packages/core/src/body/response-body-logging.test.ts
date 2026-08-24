@@ -3,10 +3,12 @@
 // Exercises: BODY-22 (lazy, drain-once), BODY-23 (fits-cap: full capture, repeatable non-consuming
 // reads), BODY-24 (exceeds-cap: prefix+tail once, second read fails), BODY-26 (drain failure cached,
 // partial bytes retained, error() does not drain), BODY-27 (close-once shared guard), BODY-28 (captured
-// buffer survives close), BODY-29 (reported length), BODY-32 (negative cap rejected)
+// buffer survives close), BODY-29 (reported length), BODY-32 (negative cap rejected), BODY-25 (a
+// zero-length delegate chunk is a stream-contract violation, never end-of-stream)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {InvariantViolation} from '../invariant.js';
+import {SourceContractViolationError} from '../io/errors.js';
 import {withResponseLogging} from './response-body-logging.js';
 
 function readableOf(...chunks: number[][]): ReadableStream<Uint8Array> {
@@ -67,11 +69,26 @@ describe('withResponseLogging regimes (BODY-22..24)', () => {
 });
 
 describe('withResponseLogging lifecycle (BODY-27, 28)', () => {
-  test('close is idempotent and shared across the wrapper close and tail completion (BODY-27)', async () => {
-    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
-    await readAll(await logged.read());
+  test('the delegate is cancelled at most once however often close is called (BODY-27)', async () => {
+    // The exceeds-cap regime deliberately: on the fits path the delegate is already closed by the time
+    // the guard runs, so cancel() is a spec no-op and a counter there proves nothing -- and BODY-27
+    // exists for the transports that are less forgiving than a spec-compliant ReadableStream.
+    const {stream, cancels} = countingStream([1, 2], [3, 4]);
+    const logged = withResponseLogging(stream, 1);
+    await logged.read();
     await logged.close();
     await logged.close();
+    await logged.close();
+    expect(cancels()).toBe(1);
+  });
+
+  test('the wrapper close and the tail stream share one guard (BODY-27)', async () => {
+    const {stream, cancels} = countingStream([1, 2], [3, 4]);
+    const logged = withResponseLogging(stream, 1);
+    const tail = await logged.read();
+    await tail.cancel(); // tail path
+    await logged.close(); // wrapper path
+    expect(cancels()).toBe(1);
   });
 
   test('the captured buffer survives close -- snapshot still works after (BODY-28)', async () => {
@@ -153,5 +170,101 @@ describe('withResponseLogging properties and lengths (BODY-29..34)', () => {
       ),
       {seed: 0x3b},
     );
+  });
+});
+
+/**
+ * A delegate that counts calls to `cancel()` and throws on the second, standing in for the transports
+ * BODY-27 names -- the ones that do not tolerate a double close. Counting the underlying source's
+ * `cancel` callback instead would prove nothing: the Streams spec makes a second `cancel()` on an
+ * already-cancelled stream a resolved no-op that never reaches the source.
+ */
+function countingStream(...chunks: number[][]): {
+  stream: ReadableStream<Uint8Array>;
+  cancels: () => number;
+} {
+  let cancels = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(Uint8Array.from(chunk));
+      controller.close();
+    },
+  });
+  const delegate = stream.cancel.bind(stream);
+  stream.cancel = async (reason?: unknown): Promise<void> => {
+    cancels += 1;
+    if (cancels > 1)
+      throw new Error('transport does not tolerate a double close');
+    return delegate(reason);
+  };
+  return {stream, cancels: () => cancels};
+}
+
+describe('close failures (BODY-28)', () => {
+  test('a non-TypeError from cancel() propagates rather than being swallowed', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+      },
+    });
+    stream.cancel = (): Promise<void> =>
+      Promise.reject(new Error('CONNECTION STUCK'));
+    const logged = withResponseLogging(stream, 1);
+    await logged.read(); // exceeds-cap regime leaves the delegate live, so close() really cancels
+    expect(logged.close()).rejects.toThrow('CONNECTION STUCK');
+  });
+});
+
+describe('delegate stream contract (BODY-25)', () => {
+  function emptyThenData(): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(0));
+        controller.enqueue(Uint8Array.from([7]));
+        controller.close();
+      },
+    });
+  }
+
+  test('a zero-length chunk is raised, never tolerated as a no-op', () => {
+    // Matches RetentionWindow under IO-17's identical rule: a response body reaches both this tee and
+    // BufferedSource, so the two layers must not disagree about the same upstream.
+    const logged = withResponseLogging(emptyThenData(), 100);
+    expect(logged.read()).rejects.toThrow(SourceContractViolationError);
+  });
+
+  test('the violation is cached like any other drain failure (BODY-26)', () => {
+    const logged = withResponseLogging(emptyThenData(), 100);
+    expect(logged.read()).rejects.toThrow(SourceContractViolationError);
+    expect(logged.error()).toBeInstanceOf(SourceContractViolationError);
+    expect(logged.read()).rejects.toThrow(SourceContractViolationError);
+  });
+});
+
+describe('snapshot is a drain trigger (BODY-22)', () => {
+  test('calling snapshot starts the drain, without a read()', async () => {
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    expect([...logged.snapshot()]).toEqual([]); // synchronous: the drain has only just been started
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect([...logged.snapshot()]).toEqual([1, 2, 3]);
+  });
+
+  test('the drain still happens exactly once (BODY-22)', async () => {
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    logged.snapshot();
+    logged.snapshot();
+    expect([...(await readAll(await logged.read()))]).toEqual([1, 2, 3]);
+  });
+
+  test('a snapshot-triggered drain failure still reaches read(), and does not go unhandled', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('UPSTREAM GONE'));
+      },
+    });
+    const logged = withResponseLogging(stream, 100);
+    expect([...logged.snapshot()]).toEqual([]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(logged.read()).rejects.toThrow('UPSTREAM GONE');
   });
 });

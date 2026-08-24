@@ -35,6 +35,7 @@ export {buildRequest, OperationAssemblyError} from './seams/operation.js';
 export type {Body} from './body/body.js';
 export {
   ConsumedBodyError,
+  FormBodyValidationError,
   isBodyError,
   MultipartBoundaryError,
 } from './body/errors.js';
@@ -52,6 +53,7 @@ export {
   formUrlEncodedBody,
   type FormUrlEncodedBody,
   type FormUrlEncodedInput,
+  type FormUrlEncodedValue,
   stringBody,
   type StringBody,
 } from './body/simple-bodies.js';

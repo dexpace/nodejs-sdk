@@ -14,7 +14,6 @@ interface Body_2 {
     readonly mediaType: string | undefined;
     // (undocumented)
     readonly replayable: boolean;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 export { Body_2 as Body }
@@ -84,6 +83,13 @@ export class EtagParseError extends DomainModelError {
 }
 
 // @public
+export class FormBodyValidationError extends DexpaceError {
+    constructor(field: string, value: unknown, options?: ErrorOptions);
+    // (undocumented)
+    readonly field: string;
+}
+
+// @public
 export class FormUrlEncodedBody implements Body_2 {
     constructor(input: FormUrlEncodedInput);
     // (undocumented)
@@ -104,7 +110,10 @@ export class FormUrlEncodedBody implements Body_2 {
 export function formUrlEncodedBody(input: FormUrlEncodedInput): FormUrlEncodedBody;
 
 // @public
-export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, string | readonly string[]> | Record<string, string | readonly string[]> | readonly (readonly [string, string])[];
+export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, FormUrlEncodedValue | readonly FormUrlEncodedValue[]> | Record<string, FormUrlEncodedValue | readonly FormUrlEncodedValue[]> | readonly (readonly [string, FormUrlEncodedValue])[];
+
+// @public
+export type FormUrlEncodedValue = string | number | boolean | bigint | null;
 
 // @public
 export class HeaderName {
@@ -170,7 +179,7 @@ export class HttpStatusError extends DexpaceError {
 }
 
 // @public
-export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError;
+export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError;
 
 // @public
 export function isTimeoutSignal(signal: AbortSignal): boolean;

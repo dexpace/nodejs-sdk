@@ -152,10 +152,48 @@ describe('bytes/text (BODY-16, HTTP-42)', () => {
 });
 
 describe('close (HTTP-41/BODY-15, HTTP-43)', () => {
-  test('is idempotent', async () => {
-    const response = baseResponse(readableOf('x'));
+  test('cancels the body at most once however often close is called (BODY-15, HTTP-43)', async () => {
+    let cancels = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1]));
+      },
+    });
+    // Counting calls to cancel(), not the source's cancel callback: the Streams spec makes a second
+    // cancel() on an already-cancelled stream a resolved no-op that never reaches the source, so only
+    // the call count can show the guard working -- and the throw stands in for a transport whose
+    // cancel is not re-entrant, which is why HTTP-43 asks for at-most-once in the first place.
+    const delegate = stream.cancel.bind(stream);
+    stream.cancel = async (reason?: unknown): Promise<void> => {
+      cancels += 1;
+      if (cancels > 1)
+        throw new Error('transport does not tolerate a double close');
+      return delegate(reason);
+    };
+    const response = baseResponse(stream);
     await response.close();
     await response.close();
+    await response.close();
+    // Counted, not merely "did not throw": cancel() on an already-cancelled ReadableStream resolves
+    // quietly, so idempotence observed only as the absence of a throw tests nothing. The guard exists
+    // for transports whose cancel is not re-entrant.
+    expect(cancels).toBe(1);
+  });
+
+  test('a failed release is not remembered as a successful close', () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1]));
+      },
+      cancel() {
+        throw new Error('CONNECTION STUCK');
+      },
+    });
+    const response = baseResponse(stream);
+    // Every caller sees the failure -- marking the response closed before awaiting would report a
+    // connection that was never released as released.
+    expect(response.close()).rejects.toThrow('CONNECTION STUCK');
+    expect(response.close()).rejects.toThrow('CONNECTION STUCK');
   });
 
   test('releases the connection even when the body was never read', async () => {
