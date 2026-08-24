@@ -13,6 +13,7 @@ import {
   bufferedSourceOverStream,
   newByteQueue,
 } from './factories.js';
+import {END_OF_STREAM} from './limits.js';
 import {
   collectingWritableStream,
   fakeReadableStream,
@@ -83,5 +84,52 @@ describe('IO-30 factories', () => {
     await sink.writeUtf8('hi');
     await sink.close();
     expect(new TextDecoder().decode(collected.snapshot())).toBe('hi');
+  });
+});
+
+describe('bufferedSourceOverPrimitive residue handling (IO-1, IO-17)', () => {
+  test('a primitive that appends more than it reports fails loudly instead of losing bytes', async () => {
+    // A staging queue hoisted into the closure and drained by `read` rather than by its size leaves the
+    // excess at the head, where it is both dropped from its own pull and re-emitted out of order on the
+    // next one — 8 bytes in, 4 out, no error at all.
+    let call = 0;
+    const source = bufferedSourceOverPrimitive({
+      read(dest): number {
+        call += 1;
+        if (call > 2) return END_OF_STREAM;
+        const base = call === 1 ? 10 : 20;
+        dest.writeBytes(Uint8Array.from([base, base + 1, base + 2, base + 3]));
+        return 2;
+      },
+    });
+    expect(await rejection(source.readBytes())).toBeInstanceOf(
+      SourceContractViolationError,
+    );
+  });
+
+  test('a primitive that appends bytes at end of stream fails loudly', async () => {
+    const source = bufferedSourceOverPrimitive({
+      read(dest): number {
+        dest.writeBytes(Uint8Array.from([1, 2]));
+        return END_OF_STREAM;
+      },
+    });
+    expect(await rejection(source.readBytes())).toBeInstanceOf(
+      SourceContractViolationError,
+    );
+  });
+
+  test('each pull gets a fresh staging queue, so nothing carries between them', async () => {
+    let call = 0;
+    const source = bufferedSourceOverPrimitive({
+      read(dest): number {
+        call += 1;
+        if (call > 2) return END_OF_STREAM;
+        const base = call === 1 ? 10 : 20;
+        dest.writeBytes(Uint8Array.from([base, base + 1]));
+        return 2;
+      },
+    });
+    expect([...(await source.readBytes())]).toEqual([10, 11, 20, 21]);
   });
 });

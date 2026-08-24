@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/pump.ts
-import type {BufferedSink} from './buffered-sink.js';
 import type {BufferedSource} from './buffered-source.js';
 import {ByteQueue} from './byte-queue.js';
+import type {Sink} from './sink.js';
 import {END_OF_STREAM} from './limits.js';
 
 /** How much the pump asks for per iteration. */
@@ -19,7 +19,7 @@ const PUMP_CHUNK = 16 * 1024;
  */
 export async function writeAll(
   source: BufferedSource,
-  sink: BufferedSink,
+  sink: Sink,
 ): Promise<number> {
   const staging = new ByteQueue();
   let total = 0;

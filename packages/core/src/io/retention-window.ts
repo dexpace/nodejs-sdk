@@ -35,6 +35,7 @@ export class RetentionWindow {
   #pulledThrough = 0;
   #exhausted = false;
   #closed = false;
+  #closing: Promise<void> | undefined;
 
   constructor(reader: ReadableStreamDefaultReader<Uint8Array> | undefined) {
     this.#reader = reader;
@@ -95,14 +96,19 @@ export class RetentionWindow {
     return take;
   }
 
-  /** Materialize up to `count` already-pulled bytes without advancing `cursor` (IO-19, IO-20). */
-  peekBytes(cursor: Cursor, count: number): Uint8Array {
+  /**
+   * Materialize up to `count` already-pulled bytes starting `offset` ahead of `cursor`, without
+   * advancing it (IO-19, IO-20).
+   *
+   * The offset exists so an incremental scanner can re-peek only the tail it has not seen. Without it
+   * every caller re-materializes the whole scanned prefix on each pull, which is quadratic.
+   */
+  peekBytes(cursor: Cursor, offset: number, count: number): Uint8Array {
     this.assertUsable();
-    const take = Math.min(count, this.#pulledThrough - cursor.at);
+    const from = cursor.at + offset;
+    const take = Math.min(count, this.#pulledThrough - from);
     if (take <= 0) return new Uint8Array(0);
-    const staging = new ByteQueue();
-    this.#queue.copyTo(staging, cursor.at - this.#retainedFrom, take);
-    return staging.snapshot();
+    return this.#queue.copyOut(from - this.#retainedFrom, take);
   }
 
   /** How many pulled bytes sit at or ahead of `cursor`. Does not pull and does not advance. */
@@ -119,16 +125,36 @@ export class RetentionWindow {
   /**
    * IO-41: idempotent. IO-22: invalidates every outstanding view, so a later read from one fails loudly
    * rather than returning stale bytes.
+   *
+   * The returned promise settles only once the underlying reader has actually been cancelled and its
+   * lock released, and it REJECTS when that teardown fails. Detaching the cancel (`void reader.cancel()`)
+   * would let `await source.close()` resolve ahead of the real release — racing anything a caller
+   * sequences on it, such as connection reuse — and would swallow a teardown failure entirely.
+   *
+   * Memoized rather than early-returned on a flag: two overlapping `close()` calls must await the SAME
+   * teardown and observe the SAME outcome, instead of the second resolving while the first is still in
+   * flight or has already failed.
    */
-  close(): void {
-    if (this.#closed) return;
+  close(): Promise<void> {
+    this.#closing ??= this.#teardown();
+    return this.#closing;
+  }
+
+  async #teardown(): Promise<void> {
     this.#closed = true;
     this.#cursors.clear();
     this.#queue.clear();
     this.#queue.close();
-    // The reader lock must be released even if the stream already errored; a rejection here would
-    // otherwise become an unhandled rejection on a teardown path.
-    void this.#reader?.cancel().catch(() => undefined);
+    const reader = this.#reader;
+    if (reader === undefined) return;
+    try {
+      await reader.cancel();
+    } finally {
+      // `cancel()` cancels the STREAM; it never releases the reader's lock — only `releaseLock()` does,
+      // and without it the caller's ReadableStream stays locked forever. Runs even when the cancel
+      // rejects, because a stream that failed to cancel is exactly the one whose lock must not leak.
+      reader.releaseLock();
+    }
   }
 
   async #pullOnce(): Promise<void> {
@@ -138,8 +164,16 @@ export class RetentionWindow {
       this.#exhausted = true;
       return;
     }
-    // `done: false` narrows `value` to a defined `Uint8Array` per the Streams spec's discriminated
-    // union — no runtime check needed on top of what the type already guarantees.
+    // IO-17: the `done: false` narrowing is a COMPILE-time guarantee about a value that arrives from a
+    // caller-supplied stream, so it guarantees nothing at runtime. Without this check `undefined`
+    // escapes as a raw `TypeError` outside the IoError tree, and a string chunk — what
+    // `Readable.toWeb()` yields when the Node stream has an encoding set — passes the length test and
+    // corrupts the queue, detonating much later and far from its cause.
+    if (!(value instanceof Uint8Array)) {
+      throw new SourceContractViolationError(
+        `source delivered a non-Uint8Array chunk (${typeof value})`,
+      );
+    }
     if (value.length === 0) {
       // IO-17: a zero-length delivery for an outstanding read is a source-contract violation, never
       // end-of-stream and never something to spin on.

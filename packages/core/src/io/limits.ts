@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/limits.ts
+import {AllocationLimitError} from './errors.js';
 
 /**
  * End-of-stream sentinel returned by every read (IO-1).
@@ -24,3 +25,17 @@ export const END_OF_STREAM = -1;
  * @internal
  */
 export const MAX_BYTE_ARRAY_LENGTH = 2 ** 31 - 1;
+
+/**
+ * IO-9's eager guard: refuse a materialization that would exceed the ceiling, with an actionable error
+ * that points at streaming alternatives, BEFORE any allocation is attempted.
+ *
+ * A named function rather than an inlined `if` at each site because the count-less read path has to
+ * apply it incrementally — it cannot know the total up front — and a rule applied in two shapes is a
+ * rule that drifts.
+ */
+export function assertAllocatable(count: number): void {
+  if (count > MAX_BYTE_ARRAY_LENGTH) {
+    throw new AllocationLimitError(count, MAX_BYTE_ARRAY_LENGTH);
+  }
+}

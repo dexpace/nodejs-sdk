@@ -63,12 +63,19 @@ const PRIMITIVE_CHUNK = 16 * 1024;
 export function bufferedSourceOverPrimitive(
   source: PrimitiveSource,
 ): BufferedSource {
-  const staging = new ByteQueue();
   return BufferedSource.overStream(
     new ReadableStream<Uint8Array>({
       async pull(controller): Promise<void> {
+        // A FRESH queue per pull, matching `bufferedSinkOverPrimitive`. Hoisting one into the closure
+        // and draining only `read` of it leaves any excess the primitive appended sitting at the head,
+        // where it is both lost from its own pull and re-emitted out of order on the next one.
+        const staging = new ByteQueue();
         const read = await source.read(staging, PRIMITIVE_CHUNK);
         if (read === END_OF_STREAM) {
+          assertDrained(
+            staging,
+            'foreign source appended bytes at end of stream',
+          );
           controller.close();
           return;
         }
@@ -79,10 +86,21 @@ export function bufferedSourceOverPrimitive(
             'foreign source returned 0 bytes for a positive request',
           );
         }
-        controller.enqueue(staging.takeBytes(read));
+        const chunk = staging.takeBytes(read);
+        // IO-17: appending more than it reported is a contract violation too. Silently dropping the
+        // excess is how bytes go missing with no error at all.
+        assertDrained(
+          staging,
+          `foreign source reported ${String(read)} bytes but appended more`,
+        );
+        controller.enqueue(chunk);
       },
     }),
   );
+}
+
+function assertDrained(staging: ByteQueue, message: string): void {
+  if (staging.size > 0) throw new SourceContractViolationError(message);
 }
 
 /** Wrap a foreign primitive sink with the typed buffered surface (IO-30). */

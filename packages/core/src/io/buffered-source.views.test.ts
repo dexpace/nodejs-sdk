@@ -3,12 +3,13 @@
 // Exercises: IO-19 (peek is non-consuming over the whole remaining source), IO-20 (bounded slice),
 // IO-21 (lazy offset overflow, eager negative rejection), IO-22 (closing a slice does not close the
 // parent; closing the parent invalidates slices), IO-23 (independence, additive composition),
-// IO-24 (reading a closed slice is a state error, distinct from EOF)
+// IO-24 (reading a closed slice is a state error, distinct from EOF),
+// IO-16 (the readable bridge: cancel closes the source, EOF does not, a failed read does)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {BufferedSource} from './buffered-source.js';
 import {ClosedResourceError} from './errors.js';
-import {fakeReadableStream} from './test-support/fake-stream.js';
+import {drainStream, fakeReadableStream} from './test-support/fake-stream.js';
 import {rejection} from './test-support/rejection.js';
 
 const bytes = (...values: number[]): Uint8Array => Uint8Array.from(values);
@@ -130,5 +131,63 @@ describe('BufferedSource view properties', () => {
         },
       ),
     );
+  });
+});
+
+describe('BufferedSource closed reporting and bridge lifecycle (IO-16, IO-19, IO-22)', () => {
+  const sourceOf = (...values: number[]): BufferedSource =>
+    BufferedSource.overBytes(bytes(...values));
+
+  test('IO-22: a view invalidated by its parent reports itself closed', async () => {
+    // Reading only the view's own flag makes the natural guard `if (!view.closed) await view.read()`
+    // take the throwing branch every time, which defeats the point of exposing the flag.
+    const source = sourceOf(1, 2, 3);
+    const view = source.peek();
+    await source.close();
+    expect(source.closed).toBe(true);
+    expect(view.closed).toBe(true);
+  });
+
+  test('IO-19: draining the bridge to EOF leaves outstanding previews readable', async () => {
+    // IO-16 requires that closing the BRIDGE close the source; auto-closing at natural EOF is an extra
+    // step that tears down the whole window and invalidates every peek — defeating IO-19's stated
+    // rationale (previews, replay) for its most natural usage.
+    const source = sourceOf(1, 2, 3);
+    const preview = source.peek();
+    await drainStream(source.toReadableStream());
+    expect([...(await preview.readBytes())]).toEqual([1, 2, 3]);
+    expect(source.closed).toBe(false);
+    await source.close();
+  });
+
+  test('IO-16: cancelling the bridge closes the owning source', async () => {
+    const source = sourceOf(1, 2, 3);
+    const bridge = source.toReadableStream();
+    await bridge.cancel();
+    expect(source.closed).toBe(true);
+  });
+
+  test('IO-16: a mid-stream read failure closes the source instead of stranding it', async () => {
+    // `cancel` is NOT invoked on an errored stream, so without an explicit close here the reader lock
+    // and the retention window are both stranded on the failure path that matters most for a
+    // connection-backed source.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(bytes(1, 2, 3));
+      },
+      pull(): never {
+        throw new Error('mid-stream read failure');
+      },
+    });
+    const source = BufferedSource.overStream(stream);
+    expect(stream.locked).toBe(true);
+    expect(
+      (await rejection(drainStream(source.toReadableStream()))).message,
+    ).toContain('mid-stream read failure');
+    expect(source.closed).toBe(true);
+    // The lock is what actually leaks. The underlying `cancel` callback is deliberately NOT asserted:
+    // per the Streams spec, cancelling an ALREADY-ERRORED stream rejects with the stored error without
+    // ever invoking the underlying source's cancel, so there is nothing left to observe there.
+    expect(stream.locked).toBe(false);
   });
 });

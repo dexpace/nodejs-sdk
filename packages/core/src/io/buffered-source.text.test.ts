@@ -128,3 +128,76 @@ describe('BufferedSource line reads (IO-14)', () => {
     );
   });
 });
+
+describe('BufferedSource text decoding fidelity (IO-13, IO-14)', () => {
+  test('a BOM is preserved on every line, not silently deleted', async () => {
+    // A fresh TextDecoder per fragment with the default `ignoreBOM: false` strips U+FEFF wherever a
+    // fragment happens to begin. SSE-12 requires a mid-stream BOM to survive as ordinary data, so
+    // losing it here would make that requirement unimplementable in Phase 6b — the byte is gone before
+    // the SSE parser ever sees the line.
+    const source = BufferedSource.overBytes(utf8('a\n\ufeffb\n\ufeffc'));
+    const lines: (string | undefined)[] = [];
+    for (;;) {
+      const line = await source.readUtf8Line();
+      if (line === undefined) break;
+      lines.push(line);
+    }
+    expect(lines).toEqual(['a', '\ufeffb', '\ufeffc']);
+  });
+
+  test('a leading BOM survives a whole-body read', async () => {
+    // Dropping it would silently remove a body's first three bytes, breaking content hashing,
+    // signature verification and exact-length assertions.
+    const source = BufferedSource.overBytes(utf8('\ufeffpayload'));
+    const text = await source.readUtf8();
+    expect(text).toBe('\ufeffpayload');
+    expect(text.length).toBe(8);
+  });
+
+  test('a leading BOM survives a counted read', async () => {
+    const source = BufferedSource.overBytes(utf8('\ufeffab'));
+    expect(await source.readUtf8(5)).toBe('\ufeffab');
+  });
+
+  test('an unusable charset is refused before any byte is consumed', async () => {
+    const source = BufferedSource.overBytes(utf8('hello'));
+    expect(
+      (await rejection(source.readString('no-such-charset'))).message,
+    ).toContain('unsupported charset');
+    expect(await source.readUtf8()).toBe('hello');
+  });
+
+  test('readUtf8Line stays linear in the length of the line', async () => {
+    // Re-peeking the whole scanned prefix on every pulled chunk makes this quadratic in bytes copied
+    // with no line-length bound — and this is the primitive header and chunked-encoding parsing run
+    // over attacker-controlled bytes, so a peer dribbling a long newline-free line pins a CPU core.
+    const measure = async (length: number): Promise<number> => {
+      const source = BufferedSource.overStream(dribbledLine(length));
+      const started = performance.now();
+      await source.readUtf8Line();
+      return performance.now() - started;
+    };
+    await measure(2000); // warm the JIT so the ratio reflects the algorithm, not compilation
+    const small = await measure(4000);
+    const large = await measure(16000);
+    // Quadratic would be ~16x for 4x the input. Linear is ~4x; the ceiling is loose so the test does
+    // not go flaky on a noisy machine, but it is far under what a quadratic scan would produce.
+    expect(large).toBeLessThan(Math.max(small, 1) * 10);
+  });
+
+  /** One byte per chunk, so every byte forces another scan pass. */
+  function dribbledLine(length: number): ReadableStream<Uint8Array> {
+    let at = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller): void {
+        if (at < length) {
+          controller.enqueue(Uint8Array.from([0x61]));
+          at += 1;
+          return;
+        }
+        controller.enqueue(Uint8Array.from([0x0a]));
+        controller.close();
+      },
+    });
+  }
+});

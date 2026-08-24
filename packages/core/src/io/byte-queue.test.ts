@@ -2,7 +2,8 @@
 // packages/core/src/io/byte-queue.test.ts
 // Exercises: IO-1 (tail-append, transferred count, EOF sentinel), IO-2 (zero-count read),
 // IO-3 (negative count rejected before any I/O), IO-4 (exact head removal, no partial write),
-// IO-7 (FIFO buffer that is simultaneously source and sink)
+// IO-7 (FIFO buffer that is simultaneously source and sink), IO-8 (snapshot/copyOut independence),
+// IO-30 (a wrapped byte array is an independent copy)
 import {describe, expect, test} from 'bun:test';
 import {ByteQueue} from './byte-queue.js';
 import {AllocationLimitError, EndOfStreamError} from './errors.js';
@@ -234,5 +235,46 @@ describe('ByteQueue close (IO-41, IO-42)', () => {
       queue.writeBytes(bytes(4));
     }).not.toThrow();
     expect(queue.read(new ByteQueue(), 1)).toBe(1);
+  });
+});
+
+describe('ByteQueue input independence (IO-8, IO-30)', () => {
+  test('IO-30: a Node Buffer is COPIED, not aliased, so mutating it afterwards changes nothing', () => {
+    // `Buffer.prototype.slice` is an alias for `subarray`, so `bytes.slice()` would hand the queue a
+    // view over the caller's memory. A Buffer — very often a pooled one from a socket read — is the
+    // most likely input type in a Node SDK, which makes this the case IO-30 most needs to hold.
+    const buffer = Buffer.from('SECRET');
+    const queue = new ByteQueue();
+    queue.writeBytes(buffer);
+    buffer.fill(0x58);
+    expect(new TextDecoder().decode(queue.snapshot())).toBe('SECRET');
+  });
+
+  test('IO-30: a retained chunk survives its pooled backing buffer being reused', () => {
+    const pool = Buffer.allocUnsafe(32);
+    pool.write('FIRSTCHUNK', 0, 'latin1');
+    const queue = new ByteQueue();
+    queue.writeBytes(pool.subarray(0, 10));
+    pool.write('OVERWRITTEN', 0, 'latin1');
+    expect(new TextDecoder().decode(queue.snapshot())).toBe('FIRSTCHUNK');
+  });
+
+  test('copyOut returns an independent window without consuming', () => {
+    const queue = new ByteQueue();
+    queue.writeBytes(bytes(1, 2, 3));
+    queue.writeBytes(bytes(4, 5));
+    expect([...queue.copyOut(1, 3)]).toEqual([2, 3, 4]);
+    expect([...queue.copyOut(3)]).toEqual([4, 5]);
+    expect(queue.size).toBe(5);
+    const window = queue.copyOut(0, 2);
+    window[0] = 99;
+    expect([...queue.copyOut(0, 2)]).toEqual([1, 2]);
+  });
+
+  test('copyOut rejects a window past the end', () => {
+    const queue = new ByteQueue();
+    queue.writeBytes(bytes(1, 2));
+    expect(() => queue.copyOut(0, 3)).toThrow();
+    expect(() => queue.copyOut(-1, 1)).toThrow();
   });
 });

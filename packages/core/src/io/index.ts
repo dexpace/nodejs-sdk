@@ -7,7 +7,7 @@
 // it shapes BODY-1's write-to-sink around the platform's WritableStream instead of BufferedSink.
 export {BufferedSink} from './buffered-sink.js';
 export {BufferedSource} from './buffered-source.js';
-export {ByteQueue} from './byte-queue.js';
+export {ByteQueue, copyBytes} from './byte-queue.js';
 export {
   AllocationLimitError,
   ClosedResourceError,
@@ -25,7 +25,13 @@ export {
   type PrimitiveSink,
   type PrimitiveSource,
 } from './factories.js';
-export {END_OF_STREAM, MAX_BYTE_ARRAY_LENGTH} from './limits.js';
+export {
+  assertAllocatable,
+  END_OF_STREAM,
+  MAX_BYTE_ARRAY_LENGTH,
+} from './limits.js';
 export {writeAll} from './pump.js';
 export {RetentionWindow, type Cursor} from './retention-window.js';
+export type {Sink} from './sink.js';
 export {TeeSink} from './tee-sink.js';
+export {decodeText, encodeText} from './text-codec.js';

@@ -5,13 +5,16 @@
 // IO-27 (mirror BEFORE forwarding; staging cleared even on a failed write),
 // IO-28 (no direct backing-buffer handle), IO-29 (flush/close/emit forward to the primary only),
 // IO-42 (write after close rejects with the source intact),
-// IO-13 (the tap mirrors the primary's exact encoded bytes, and refuses a label identically)
+// IO-13 (the tap mirrors the primary's exact encoded bytes, and refuses a label identically),
+// IO-16 (the tee's own writable bridge still feeds the tap)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {BufferedSink} from './buffered-sink.js';
+import {BufferedSource} from './buffered-source.js';
 import {ByteQueue} from './byte-queue.js';
 import {ClosedResourceError} from './errors.js';
 import {TeeSink} from './tee-sink.js';
+import {writeAll} from './pump.js';
 import {
   collectingWritableStream,
   failingWritableStream,
@@ -209,5 +212,66 @@ describe('TeeSink text writes (IO-13, IO-25)', () => {
         },
       ),
     );
+  });
+});
+
+describe('TeeSink as a first-class sink (IO-16, IO-25)', () => {
+  test('a tee is accepted anywhere a sink is, including by the pump and by another tee', async () => {
+    // `BufferedSink`'s #private fields make it a NOMINAL type, so a decorator can never be assignable
+    // to it. Without a shared interface the only pump in the package cannot take a tee and tees cannot
+    // nest — which defeats the body capture IO-25 exists for.
+    const {stream, written} = collectingWritableStream();
+    const inner = new TeeSink(BufferedSink.overStream(stream));
+    const outer = new TeeSink(inner);
+    const total = await writeAll(
+      BufferedSource.overBytes(Uint8Array.from([1, 2, 3])),
+      outer,
+    );
+    expect(total).toBe(3);
+    expect([...written()]).toEqual([1, 2, 3]);
+    expect([...outer.snapshot()]).toEqual([1, 2, 3]);
+    expect([...inner.snapshot()]).toEqual([1, 2, 3]);
+  });
+
+  test('IO-16: the tee exposes its own bridge, so bridged bytes still reach the tap', async () => {
+    // Handing callers the primary's bridge instead would route every byte written through it past the
+    // tap, silently producing an empty capture.
+    const {stream, written} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    const writer = tee.toWritableStream().getWriter();
+    await writer.write(Uint8Array.from([7, 8]));
+    await writer.close();
+    expect([...written()]).toEqual([7, 8]);
+    expect([...tee.snapshot()]).toEqual([7, 8]);
+  });
+
+  test('IO-16: aborting the tee bridge aborts the primary with the reason', async () => {
+    const {stream, wasAborted, abortReason} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    const reason = new Error('cancelled');
+    await tee.toWritableStream().abort(reason);
+    expect(wasAborted()).toBe(true);
+    expect(abortReason()).toBe(reason);
+  });
+
+  test('a failed primary write leaves the caller its bytes, and the tap records the attempt', async () => {
+    // IO-27 requires the tap capture the ATTEMPTED bytes, so it keeps them either way; what must not
+    // happen is `src` being drained by a write that never reached the wire.
+    const tee = new TeeSink(
+      BufferedSink.overStream(failingWritableStream('boom')),
+    );
+    const source = queueOf(Uint8Array.from([1, 2, 3]));
+    expect((await rejection(tee.write(source, 3))).message).toContain('boom');
+    expect(source.size).toBe(3);
+    expect([...source.snapshot()]).toEqual([1, 2, 3]);
+    expect([...tee.snapshot()]).toEqual([1, 2, 3]);
+  });
+
+  test('an empty payload produces the same chunk sequence as the sink and the bridge', async () => {
+    const {stream, chunkSizes} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    await tee.writeUtf8('');
+    expect(chunkSizes()).toEqual([]);
+    expect(tee.snapshot().length).toBe(0);
   });
 });

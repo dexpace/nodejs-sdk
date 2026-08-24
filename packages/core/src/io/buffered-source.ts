@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/buffered-source.ts
 import {invariant} from '../invariant.js';
-import {ByteQueue} from './byte-queue.js';
-import {
-  AllocationLimitError,
-  ClosedResourceError,
-  EndOfStreamError,
-  IoError,
-} from './errors.js';
-import {END_OF_STREAM, MAX_BYTE_ARRAY_LENGTH} from './limits.js';
+import {ByteQueue, copyBytes} from './byte-queue.js';
+import {ClosedResourceError, EndOfStreamError} from './errors.js';
+import {assertAllocatable, END_OF_STREAM} from './limits.js';
 import {RetentionWindow, type Cursor} from './retention-window.js';
+import {assertDecodable, decodeText} from './text-codec.js';
 
 /**
  * A buffered, non-blocking byte source over a `ReadableStream<Uint8Array>` (IO-11–IO-24).
@@ -59,7 +55,7 @@ export class BufferedSource {
 
   /** Wrap a byte array as an independent copy (IO-30). */
   static overBytes(bytes: Uint8Array): BufferedSource {
-    const copy = bytes.slice();
+    const copy = copyBytes(bytes);
     return BufferedSource.overStream(
       new ReadableStream<Uint8Array>({
         start(controller): void {
@@ -70,8 +66,16 @@ export class BufferedSource {
     );
   }
 
+  /**
+   * Whether this source can still be read.
+   *
+   * Must consider the window, not just this instance's own flag: a peek/slice view is invalidated when
+   * its parent closes the window (IO-22) without anything touching the view's flag, so reading `#closed`
+   * alone reports an unusable view as open — making the natural guard `if (!view.closed) …` take the
+   * throwing branch every time, which is the opposite of what exposing the flag is for.
+   */
   get closed(): boolean {
-    return this.#closed;
+    return this.#closed || this.#window.closed;
   }
 
   /** Read up to `count` bytes onto `dest`'s tail (IO-1, IO-2, IO-3). */
@@ -106,7 +110,11 @@ export class BufferedSource {
     this.#assertOpen();
     const staging = new ByteQueue();
     while ((await this.read(staging, READ_CHUNK)) !== END_OF_STREAM) {
-      // Drain to exhaustion; `read` already bounds each transfer and advances the cursor.
+      // IO-9: check as we go, not at the `snapshot()` at the end. A count-less read cannot know the
+      // total up front, but deferring the check until materialization means a multi-gigabyte body is
+      // fully buffered first — so the process is far likelier to die of a low-level allocation failure
+      // than to reach the actionable refusal IO-9 exists to produce.
+      assertAllocatable(staging.size);
     }
     return staging.snapshot();
   }
@@ -117,9 +125,7 @@ export class BufferedSource {
     this.#assertOpen();
     // IO-9: refuse eagerly with an actionable error. Routing this through ByteQueue would raise
     // EndOfStreamError instead, since takeBytes checks its size before it ever tries to allocate.
-    if (count > MAX_BYTE_ARRAY_LENGTH) {
-      throw new AllocationLimitError(count, MAX_BYTE_ARRAY_LENGTH);
-    }
+    assertAllocatable(count);
     const staging = new ByteQueue();
     while (staging.size < count) {
       const read = await this.read(staging, count - staging.size);
@@ -137,12 +143,13 @@ export class BufferedSource {
   /** Decode `count` bytes (or every remaining byte) with an explicit charset (IO-13). */
   async readString(charset: string, count?: number): Promise<string> {
     this.#assertOpen();
-    const decoder = decoderFor(charset);
+    // Reject an unusable label BEFORE consuming bytes, so a bad charset does not also destroy the body.
+    assertDecodable(charset);
     const raw =
       count === undefined
         ? await this.readBytes()
         : await this.readExactly(count);
-    return decoder.decode(raw);
+    return decodeText(raw, charset);
   }
 
   /**
@@ -164,13 +171,14 @@ export class BufferedSource {
     const at = await this.#scanForNewline();
     if (at === END_OF_STREAM) {
       const rest = await this.readBytes();
-      return rest.length === 0
-        ? undefined
-        : new TextDecoder('utf-8').decode(rest);
+      return rest.length === 0 ? undefined : decodeText(rest, 'utf-8');
     }
     const line = await this.readExactly(at + 1);
     const end = at > 0 && line[at - 1] === CARRIAGE_RETURN ? at - 1 : at;
-    return new TextDecoder('utf-8').decode(line.subarray(0, end));
+    // Decoding goes through `decodeText`, which sets `ignoreBOM`. A per-line decoder with the default
+    // would strip U+FEFF from the front of EVERY line, not just the stream's first — see the note on
+    // `decodeText`, and SSE-12, which requires a mid-stream BOM to survive as ordinary data.
+    return decodeText(line.subarray(0, end), 'utf-8');
   }
 
   /**
@@ -186,10 +194,18 @@ export class BufferedSource {
         this.#remainingBudget(),
       );
       if (available > searched) {
-        const scanned = this.#window.peekBytes(this.#cursor, available);
-        const found = scanned.indexOf(NEWLINE, searched);
-        if (found >= 0) return found;
-        searched = scanned.length;
+        // Peek ONLY the bytes pulled since the last pass. Re-peeking the whole scanned prefix each time
+        // makes this quadratic in bytes copied, with no line-length bound — and this is the primitive
+        // header and chunked-encoding parsing run over attacker-controlled bytes, so a peer that
+        // dribbles a long newline-free line would pin a CPU core.
+        const tail = this.#window.peekBytes(
+          this.#cursor,
+          searched,
+          available - searched,
+        );
+        const found = tail.indexOf(NEWLINE);
+        if (found >= 0) return searched + found;
+        searched = available;
       }
       if (searched >= this.#remainingBudget()) return END_OF_STREAM;
       if (!(await this.#window.pullThrough(this.#cursor.at + searched + 1)))
@@ -265,9 +281,13 @@ export class BufferedSource {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    if (this.#ownsWindow) this.#window.close();
-    else this.#window.release(this.#cursor);
-    return Promise.resolve();
+    if (!this.#ownsWindow) {
+      this.#window.release(this.#cursor);
+      return;
+    }
+    // Awaited, so the promise settles only once the underlying reader is really cancelled and its lock
+    // released — and rejects if that teardown fails, rather than reporting a success that never happened.
+    await this.#window.close();
   }
 
   /** IO-42: a stream-backed source rejects reads after close, unlike an in-memory `ByteQueue`. */
@@ -287,10 +307,23 @@ export class BufferedSource {
     return new ReadableStream<Uint8Array>({
       pull: async (controller): Promise<void> => {
         const staging = new ByteQueue();
-        const read = await this.read(staging, BRIDGE_CHUNK);
+        let read: number;
+        try {
+          read = await this.read(staging, BRIDGE_CHUNK);
+        } catch (e: unknown) {
+          // A mid-stream read failure errors the bridge, and `cancel` is NOT invoked on an errored
+          // stream — so without this the reader lock and the retention window are both stranded on
+          // exactly the failure path that matters most for a connection-backed source.
+          await this.close().catch(() => undefined);
+          throw e;
+        }
         if (read === END_OF_STREAM) {
+          // Close the BRIDGE only. IO-16 requires that closing the bridge close the owning source, and
+          // `cancel` below does that; auto-closing at natural EOF is an extra step that would tear down
+          // the whole RetentionWindow and invalidate every outstanding peek/slice view — defeating
+          // IO-19's stated purpose (previews, replay) for its most natural usage: take a preview, hand
+          // the bridge to the transport, read the preview afterwards.
           controller.close();
-          await this.close();
           return;
         }
         controller.enqueue(staging.snapshot());
@@ -319,14 +352,4 @@ function assertCount(count: number): void {
     Number.isInteger(count) && count >= 0,
     `count must be a non-negative integer, got ${String(count)}`,
   );
-}
-
-function decoderFor(charset: string): TextDecoder {
-  try {
-    return new TextDecoder(charset);
-  } catch (e: unknown) {
-    // A charset label reaching this layer is internal, so this is an argument error, not boundary
-    // data. Phase 3b's HTTP-42 owns the "unknown declared charset falls back to UTF-8" rule.
-    throw new IoError(`unsupported charset: ${charset}`, {cause: e});
-  }
 }

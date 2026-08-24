@@ -2,7 +2,11 @@
 // packages/core/src/io/byte-queue.ts
 import {invariant} from '../invariant.js';
 import {AllocationLimitError, EndOfStreamError} from './errors.js';
-import {END_OF_STREAM, MAX_BYTE_ARRAY_LENGTH} from './limits.js';
+import {
+  assertAllocatable,
+  END_OF_STREAM,
+  MAX_BYTE_ARRAY_LENGTH,
+} from './limits.js';
 
 /**
  * One node in the queue's chunk list. `bytes` is never mutated after the node is linked in, which is what
@@ -30,6 +34,11 @@ export class ByteQueue {
   #tail: Chunk | undefined = undefined;
   #size = 0;
   #closed = false;
+  /** Bumped whenever bytes leave the head, invalidating the memoized seek position. */
+  #generation = 0;
+  #seekChunk: Chunk | undefined = undefined;
+  #seekStart = 0;
+  #seekGeneration = -1;
 
   /** Bytes currently held (IO-7). */
   get size(): number {
@@ -43,11 +52,13 @@ export class ByteQueue {
 
   /**
    * Append an independent copy of `bytes` to the tail. The copy is what lets IO-30's byte-array-wrapping
-   * factory promise that mutating the caller's input afterwards does not change the source.
+   * factory promise that mutating the caller's input afterwards does not change the source, and it is
+   * what makes the `Chunk.bytes` "never mutated after linked in" invariant — and therefore `#moveTo`'s
+   * zero-copy `subarray` transfers — safe.
    */
   writeBytes(bytes: Uint8Array): void {
     if (bytes.length === 0) return;
-    this.#append(bytes.slice());
+    this.#append(copyBytes(bytes));
   }
 
   /**
@@ -86,6 +97,27 @@ export class ByteQueue {
   }
 
   /**
+   * A fresh, independent copy of the window `[offset, offset + count)`, without consuming or mutating.
+   *
+   * The single-copy counterpart of `copyTo` for callers that want bytes rather than another queue:
+   * `copyTo(staging, ...)` followed by `staging.snapshot()` materializes the same window twice, which is
+   * what made `BufferedSource`'s newline scan quadratic.
+   */
+  copyOut(offset: number, count?: number): Uint8Array {
+    invariant(
+      Number.isInteger(offset) && offset >= 0,
+      `offset must be a non-negative integer, got ${String(offset)}`,
+    );
+    const length = count ?? this.#size - offset;
+    assertCount(length);
+    invariant(
+      offset + length <= this.#size,
+      `copy window ${String(offset)}..${String(offset + length)} exceeds size ${String(this.#size)}`,
+    );
+    return this.#materialize(offset, length);
+  }
+
+  /**
    * Copy the window `[offset, offset + count)` into `dest` WITHOUT consuming or mutating this queue
    * (IO-10). `count` defaults to "from offset through end". An out-of-range window is rejected.
    */
@@ -110,8 +142,7 @@ export class ByteQueue {
     // IO-9 before IO-4/IO-12's short-source check: an over-limit request is refused with an actionable
     // AllocationLimitError even when the queue also happens to be short, rather than surfacing as an
     // ordinary EndOfStreamError that hides the real problem.
-    if (count > MAX_BYTE_ARRAY_LENGTH)
-      throw new AllocationLimitError(count, MAX_BYTE_ARRAY_LENGTH);
+    assertAllocatable(count);
     if (count > this.#size) throw new EndOfStreamError(this.#size, count);
     const out = this.#materialize(0, count);
     this.#discard(count);
@@ -131,6 +162,7 @@ export class ByteQueue {
     this.#head = undefined;
     this.#tail = undefined;
     this.#size = 0;
+    this.#generation += 1;
   }
 
   /**
@@ -140,31 +172,58 @@ export class ByteQueue {
    * opposite orders across two methods is exactly the transposition hazard styleguide 5.5 names.
    */
   #materialize(offset: number, count: number): Uint8Array {
-    if (count > MAX_BYTE_ARRAY_LENGTH)
-      throw new AllocationLimitError(count, MAX_BYTE_ARRAY_LENGTH);
+    assertAllocatable(count);
     const out = allocate(count);
-    let skip = offset;
+    const seek = this.#seek(offset);
+    let chunk = seek.chunk;
+    let from = offset - seek.chunkStart;
     let at = 0;
-    for (
-      let chunk = this.#head;
-      chunk !== undefined && at < count;
-      chunk = chunk.next
-    ) {
+    while (chunk !== undefined && at < count) {
       const available = chunk.bytes.length - chunk.start;
-      if (skip >= available) {
-        skip -= available;
-        continue;
-      }
-      const from = chunk.start + skip;
-      const take = Math.min(available - skip, count - at);
-      out.set(chunk.bytes.subarray(from, from + take), at);
+      const take = Math.min(available - from, count - at);
+      const start = chunk.start + from;
+      out.set(chunk.bytes.subarray(start, start + take), at);
       at += take;
-      skip = 0;
+      from = 0;
+      chunk = chunk.next;
     }
     return out;
   }
 
+  /**
+   * Position at the chunk holding logical `offset`, resuming from the last seek when it is still valid.
+   *
+   * Walking from the head every time makes a SEQUENTIAL scan quadratic in the number of chunks, which is
+   * how `readUtf8Line` stayed quadratic even after it was changed to peek only the newly pulled tail: a
+   * peer dribbling one byte per chunk produces one chunk per byte, and each peek re-walked all of them.
+   * Bytes are only ever appended at the tail, so a remembered position stays correct until something is
+   * removed from the head — which `#generation` detects.
+   */
+  #seek(offset: number): {chunk: Chunk | undefined; chunkStart: number} {
+    let chunk = this.#head;
+    let chunkStart = 0;
+    if (
+      this.#seekChunk !== undefined &&
+      this.#seekGeneration === this.#generation &&
+      this.#seekStart <= offset
+    ) {
+      chunk = this.#seekChunk;
+      chunkStart = this.#seekStart;
+    }
+    while (chunk !== undefined) {
+      const available = chunk.bytes.length - chunk.start;
+      if (offset < chunkStart + available) break;
+      chunkStart += available;
+      chunk = chunk.next;
+    }
+    this.#seekChunk = chunk;
+    this.#seekStart = chunkStart;
+    this.#seekGeneration = this.#generation;
+    return {chunk, chunkStart};
+  }
+
   #discard(count: number): void {
+    if (count > 0) this.#generation += 1;
     let remaining = count;
     while (remaining > 0) {
       const head = this.#head;
@@ -191,6 +250,7 @@ export class ByteQueue {
 
   /** Caller owns the source-side size accounting; `#dropHead` deliberately does not touch `#size`. */
   #moveTo(dest: ByteQueue, count: number): void {
+    if (count > 0) this.#generation += 1;
     let remaining = count;
     while (remaining > 0) {
       const head = this.#head;
@@ -225,6 +285,23 @@ function assertCount(count: number): void {
     Number.isInteger(count) && count >= 0,
     `count must be a non-negative integer, got ${String(count)}`,
   );
+}
+
+/**
+ * A genuinely independent copy of `bytes`.
+ *
+ * `bytes.slice()` is NOT sufficient: a Node `Buffer` is a `Uint8Array` subclass whose own
+ * `slice` is an alias for `subarray`, so it returns an aliasing view over the caller's memory. Since a
+ * `Buffer` — very often a pooled one handed over by a socket read — is the single most likely input type
+ * in a Node SDK, that would silently break IO-30's independence guarantee. Allocating
+ * a fresh array and `set` copies into it unconditionally, whatever the argument's subclass does.
+ *
+ * @internal
+ */
+export function copyBytes(bytes: Uint8Array): Uint8Array {
+  const out = new Uint8Array(bytes.length);
+  out.set(bytes);
+  return out;
 }
 
 /**

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/buffered-sink.ts
 import {invariant} from '../invariant.js';
-import {ByteQueue} from './byte-queue.js';
-import {ClosedResourceError, IoError} from './errors.js';
+import type {ByteQueue} from './byte-queue.js';
+import {ClosedResourceError, EndOfStreamError} from './errors.js';
+import type {Sink} from './sink.js';
+import {encodeText} from './text-codec.js';
 
 /**
  * A buffered byte sink over a `WritableStream<Uint8Array>` (IO-4, IO-5, IO-13, IO-18).
@@ -11,9 +13,19 @@ import {ClosedResourceError, IoError} from './errors.js';
  *
  * @internal
  */
-export class BufferedSink {
+export class BufferedSink implements Sink {
   readonly #writer: WritableStreamDefaultWriter<Uint8Array>;
   #closed = false;
+  #closing: Promise<void> | undefined;
+  /**
+   * The most recent downstream write, settled or not.
+   *
+   * `emit()` and `flush()` await this rather than returning unconditionally. Without it neither method
+   * observes the writer at all: both report success on a stream that has already errored, and `flush()`
+   * resolves while a write started with `void sink.write(...)` is still outstanding — so IO-18's
+   * emit/flush distinction is unobservable in the only direction that matters.
+   */
+  #lastWrite: Promise<void> = Promise.resolve();
 
   private constructor(writer: WritableStreamDefaultWriter<Uint8Array>) {
     this.#writer = writer;
@@ -31,14 +43,18 @@ export class BufferedSink {
   /**
    * Remove exactly `count` bytes from `src`'s head and push them downstream (IO-4). Fails rather than
    * writing a partial amount when `src` holds fewer.
+   *
+   * `src` is drained only AFTER the downstream write resolves. Consuming first — the obvious reading of
+   * "remove, then push" — destroys the payload when the write fails, leaving the caller that catches the
+   * rejection with nothing to retry and nothing on the wire.
    */
   async write(src: ByteQueue, count: number): Promise<void> {
     assertCount(count);
     this.#assertOpen();
     if (count === 0) return;
-    // takeBytes raises EndOfStreamError when the source is short, before anything reaches the wire.
-    const payload = src.takeBytes(count);
-    await this.#writer.write(payload);
+    if (src.size < count) throw new EndOfStreamError(src.size, count);
+    await this.#push(src.copyOut(0, count));
+    src.skip(count);
   }
 
   /** Encode and write UTF-8 text (IO-13). */
@@ -49,92 +65,103 @@ export class BufferedSink {
   /**
    * Encode and write text with an explicit charset (IO-13).
    *
-   * The write side supports UTF-8 and ISO-8859-1 only. `TextEncoder` is UTF-8-only — there is no
-   * `TextEncoder('iso-8859-1')` — and SEAM-1 forbids an encoding dependency, so full symmetry with the
-   * read side is not reachable. These are the two encodings HTTP needs, and IO-13's own conformance note
-   * names ISO-8859-1. Any other label throws rather than silently re-encoding as UTF-8, which would
-   * corrupt the bytes on the wire.
+   * An empty payload writes NOTHING rather than a zero-length chunk, matching `write(src, 0)`, the tee,
+   * and the bridge. A zero-length chunk is not inert on the wire: to an HTTP/1.1 chunked-encoding
+   * transport it is the terminating chunk, so emitting one for `writeUtf8('')` can end a request body
+   * early.
    */
   async writeString(text: string, charset: string): Promise<void> {
     this.#assertOpen();
-    await this.#writer.write(encodeText(text, charset));
+    const encoded = encodeText(text, charset);
+    if (encoded.length === 0) return;
+    await this.#push(encoded);
   }
 
-  /** IO-18: a full force-out toward the destination. */
+  /**
+   * IO-18: a full force-out toward the destination — the outstanding write must reach the destination
+   * AND the destination must have drained.
+   */
   async flush(): Promise<BufferedSink> {
     this.#assertOpen();
+    await this.#lastWrite;
     await this.#writer.ready;
     return this;
   }
 
-  /** IO-18: a cheap one-level handoff, distinguished from `flush`. */
+  /**
+   * IO-18: a cheap one-level handoff — hand the buffered bytes to the underlying stream and surface any
+   * failure, without waiting for the destination to drain.
+   */
   async emit(): Promise<BufferedSink> {
     this.#assertOpen();
-    return Promise.resolve(this);
-  }
-
-  /** IO-5, IO-41: closeable and idempotent. */
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    await this.#writer.close();
+    await this.#lastWrite;
+    return this;
   }
 
   /**
-   * A writable host-native byte-stream bridge (IO-16). Closing the bridge closes the sink.
+   * IO-5, IO-41: closeable and idempotent, and the underlying resource is released at most once.
+   *
+   * Memoized rather than flag-guarded. Setting `#closed` before awaiting and early-returning on it means
+   * a close that FAILS is reported as a success to every later caller — `sink.closed` reads `true` for a
+   * destination that was never released, and the retry silently resolves. Handing every caller the same
+   * promise makes the failure propagate on every path (BODY-27) while still closing at most once.
+   */
+  async close(): Promise<void> {
+    this.#closing ??= this.#release(async () => this.#writer.close());
+    return this.#closing;
+  }
+
+  /**
+   * IO-42: discard the destination with a reason rather than committing what was written. Shares the
+   * close latch, so a sink is torn down exactly once whichever path gets there first.
+   */
+  async abort(reason?: unknown): Promise<void> {
+    this.#closing ??= this.#release(async () => this.#writer.abort(reason));
+    return this.#closing;
+  }
+
+  /**
+   * A writable host-native byte-stream bridge (IO-16). Closing the bridge closes the sink; ABORTING it
+   * aborts the sink, carrying the reason through.
    */
   toWritableStream(): WritableStream<Uint8Array> {
     return new WritableStream<Uint8Array>({
       write: async (chunk): Promise<void> => {
-        const staging = new ByteQueue();
-        staging.writeBytes(chunk);
-        await this.write(staging, staging.size);
+        if (chunk.length === 0) return;
+        await this.#push(chunk);
       },
       close: async (): Promise<void> => {
         await this.close();
       },
-      abort: async (): Promise<void> => {
-        await this.close();
+      // Forwarding the reason matters: collapsing an abort into a graceful close commits a cancelled
+      // request body downstream as a well-formed complete one, so the peer cannot tell an aborted upload
+      // from a successful short one.
+      abort: async (reason: unknown): Promise<void> => {
+        await this.abort(reason);
       },
     });
+  }
+
+  /** Track the in-flight write so `emit`/`flush` can observe it, without leaking an unhandled rejection. */
+  async #push(payload: Uint8Array): Promise<void> {
+    const pending = this.#writer.write(payload);
+    this.#lastWrite = pending;
+    // A caller may start a write with `void sink.write(...)` and only learn of the failure at the next
+    // `emit()`/`flush()`. Marking the promise handled here keeps that from surfacing as an unhandled
+    // rejection first; `pending` itself still rejects for everyone awaiting it.
+    pending.catch(() => undefined);
+    await pending;
+  }
+
+  async #release(teardown: () => Promise<void>): Promise<void> {
+    this.#closed = true;
+    await teardown();
   }
 
   /** IO-42: a stream-backed sink rejects writes, flushes, and emits after close. */
   #assertOpen(): void {
     if (this.#closed) throw new ClosedResourceError('BufferedSink');
   }
-}
-
-/**
- * The single source of truth for write-side encoding (IO-13).
- *
- * Exported because `TeeSink` must mirror the exact bytes this sink will emit. A second copy there would
- * be two implementations of one encoding rule, free to drift — the same DRY hazard that had the RFC 3986
- * encoder extracted in Phase 2. Keeping the charset *rejection* here too means `TeeSink` cannot
- * accidentally accept a label the primary would refuse.
- *
- * ISO-8859-1 is a direct code-point-to-byte map for 0–255; anything above is not representable.
- */
-export function encodeText(text: string, charset: string): Uint8Array {
-  const normalized = charset.toLowerCase();
-  if (normalized === 'utf-8' || normalized === 'utf8')
-    return new TextEncoder().encode(text);
-  if (normalized !== 'iso-8859-1' && normalized !== 'latin1') {
-    throw new IoError(
-      `unsupported write charset: ${charset} (only utf-8 and iso-8859-1 can be encoded)`,
-    );
-  }
-  const out = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    if (code > 0xff) {
-      throw new IoError(
-        `code point ${String(code)} is not representable in ${charset}`,
-      );
-    }
-    out[i] = code;
-  }
-  return out;
 }
 
 function assertCount(count: number): void {

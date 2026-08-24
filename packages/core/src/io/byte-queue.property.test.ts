@@ -41,15 +41,23 @@ describe('ByteQueue properties', () => {
     );
   });
 
-  test('IO-8: a snapshot is unaffected by later writes', () => {
+  test('IO-8: a snapshot is every written byte, leaves size alone, and survives later writes', () => {
     fc.assert(
       fc.property(chunks, fc.uint8Array({maxLength: 16}), (input, later) => {
         const queue = new ByteQueue();
         for (const chunk of input) queue.writeBytes(chunk);
         const before = queue.snapshot();
-        const expected = [...before];
+        const sizeBefore = queue.size;
+
+        // Comparing `before` against a copy of ITSELF is the trap here: both sides derive from the same
+        // array, so the assertion holds for any implementation — a `snapshot()` returning an empty array
+        // passes it. Pin the CONTENT against the input instead, so the property can actually fail.
+        expect([...before]).toEqual(input.flatMap(chunk => [...chunk]));
+        expect(queue.size).toBe(sizeBefore);
+
         queue.writeBytes(later);
-        expect([...before]).toEqual(expected);
+        expect([...before]).toEqual(input.flatMap(chunk => [...chunk]));
+        expect(queue.size).toBe(sizeBefore + later.length);
       }),
     );
   });

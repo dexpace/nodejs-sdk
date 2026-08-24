@@ -17,19 +17,45 @@ bench(
   },
 );
 
+// A pool of pre-filled queues, so the two benches below measure only the operation they are named
+// after. `writeBytes` COPIES, so a 64 KiB fill inside the timed closure costs about as much as the read
+// it is setting up — roughly halving the sensitivity of the regression floor Phases 6 and 8 diff
+// against. mitata has no per-iteration setup hook, so the fill is hoisted and the pool re-primed in
+// batches instead. Only the first bench measures `writeBytes`, deliberately.
+const POOL_SIZE = 256;
+
+function primedPool(): ByteQueue[] {
+  return Array.from({length: POOL_SIZE}, () => {
+    const queue = new ByteQueue();
+    queue.writeBytes(LARGE);
+    return queue;
+  });
+}
+
+let readPool = primedPool();
+let readAt = 0;
+const sinkQueue = new ByteQueue();
+
+bench('ByteQueue read of 64 KiB, pre-filled (warm-JIT, not end-to-end)', () => {
+  if (readAt >= POOL_SIZE) {
+    readPool = primedPool();
+    readAt = 0;
+  }
+  const source = readPool[readAt];
+  readAt += 1;
+  if (source === undefined) return;
+  sinkQueue.clear();
+  source.read(sinkQueue, source.size);
+});
+
+const snapshotQueue = new ByteQueue();
+snapshotQueue.writeBytes(LARGE);
+
 bench(
-  'ByteQueue write-then-read round trip, 64 KiB (warm-JIT, not end-to-end)',
+  'ByteQueue snapshot of 64 KiB, pre-filled (warm-JIT, not end-to-end)',
   () => {
-    const source = new ByteQueue();
-    source.writeBytes(LARGE);
-    source.read(new ByteQueue(), source.size);
+    snapshotQueue.snapshot();
   },
 );
-
-bench('ByteQueue snapshot of 64 KiB (warm-JIT, not end-to-end)', () => {
-  const queue = new ByteQueue();
-  queue.writeBytes(LARGE);
-  queue.snapshot();
-});
 
 await run();
