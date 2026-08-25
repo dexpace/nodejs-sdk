@@ -5,7 +5,7 @@
   <sub>spec · `docs/product-spec/01-product-overview.md:9-9` · high · sha:4f786c44354d</sub>
 - The byte-stream provider MUST expose factory operations to create a new empty in-memory buffer, a buffered reader over a raw input stream, a buffered reader over a byte array, a buffered writer over a raw output stream, and wrappers that add the buffered surface to a primitive source/sink (SEAM-3).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:7-7` · high · sha:0adae2d6a47f</sub>
-- A reader/writer created over a caller's raw stream takes ownership of that stream, so closing the reader/writer closes the underlying stream (SEAM-3).
+- A reader/writer created over a caller's raw stream takes ownership of that stream, so closing the reader/writer closes the underlying stream (SEAM-3 / IO-6).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:7-7` · high · sha:0adae2d6a47f</sub>
 - The synchronous transport MUST be a single-operation contract — given one request, produce one response — and MUST NOT pre-buffer the response body, leaving the caller to own reading and closing it (SEAM-11).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:12-12` · high · sha:0adae2d6a47f</sub>
@@ -29,15 +29,15 @@
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:25-25` · high · sha:0adae2d6a47f</sub>
 - Parametric deserialization targets MUST be expressible through a full generic type capture (SEAM-21).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:25-25` · high · sha:0adae2d6a47f</sub>
-- Provider resolution MUST follow a fixed precedence: an explicitly installed provider always wins; otherwise the runtime auto-discovers providers registered on the classpath/plugin registry (SEAM-5).
+- Provider resolution MUST follow a fixed precedence: an explicitly installed provider always wins; otherwise the runtime auto-discovers providers registered on the classpath/plugin registry (SEAM-5 / IO-33).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:34-34` · high · sha:0adae2d6a47f</sub>
 - Resolution MUST throw a descriptive error naming the install hint when zero providers are discoverable, and a descriptive error listing all candidates when more than one distinct provider is discoverable; exactly one discoverable provider is selected silently (SEAM-5).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:34-34` · high · sha:0adae2d6a47f</sub>
-- Explicit installation MUST be idempotent for the same instance and MUST reject installing a different provider when one is already installed, naming both in the error (SEAM-6).
+- Explicit installation MUST be idempotent for the same instance and MUST reject installing a different provider when one is already installed, naming both in the error (SEAM-6 / IO-32).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:35-35` · high · sha:0adae2d6a47f</sub>
-- A successful auto-resolution MUST be cached process-wide (SEAM-7).
+- A successful auto-resolution MUST be cached process-wide (SEAM-7 / IO-34).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:36-36` · high · sha:0adae2d6a47f</sub>
-- When an explicit install replaces a different provider that had already been auto-resolved and handed out, the runtime SHOULD emit a warning rather than fail, because objects may already exist against the previous provider (SEAM-8).
+- When an explicit install replaces a different provider that had already been auto-resolved and handed out, the runtime SHOULD emit a warning rather than fail, because objects may already exist against the previous provider (SEAM-8 / IO-35).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:38-38` · high · sha:0adae2d6a47f</sub>
 - The registry SHOULD tolerate one logical provider seen through more than one loader without misreporting it as multiple, de-duplicating by concrete implementation identity, and SHOULD recognize a thin delegating shim as its canonical target (SEAM-10).
   <sub>spec · `docs/product-spec/03-pluggable-seams-and-extension-model.md:39-39` · high · sha:0adae2d6a47f</sub>

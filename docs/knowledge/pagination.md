@@ -17,9 +17,9 @@
   <sub>spec · `docs/product-spec/12-pagination.md:19-19` · high · sha:ba759edd34ec</sub>
 - A Page MUST be a closeable resource owning exactly one underlying response, whoever pulls a page owns closing it, closing the page MUST release that response's body/connection, and a component that hands a caller a live page MUST NOT itself close the response.
   <sub>spec · `docs/product-spec/12-pagination.md:20-20` · high · sha:ba759edd34ec</sub>
-- A pagination strategy's parse output MUST carry items plus a next-request value where a null/absent next-request is the single exclusive end-of-stream signal, parse MUST always return a well-formed non-null result, termination MUST never be signaled by throwing or a side channel, and an empty items list with a non-null next-request is a valid non-terminal page.
+- A pagination strategy's parse output MUST carry items plus a next-request value where a null/absent next-request is the single exclusive end-of-stream signal, parse MUST always return a well-formed non-null result, termination MUST never be signaled by throwing or a side channel, and an empty items list with a non-null next-request is a valid non-terminal page (PAGE-4).
   <sub>spec · `docs/product-spec/12-pagination.md:26-26` · high · sha:ba759edd34ec</sub>
-- A pagination strategy MUST read everything it needs from the response synchronously inside parse since the body is single-use, MUST NOT retain the response or its body beyond the call, MUST NOT close or mutate the response, and strategies MUST be immutable and safe to share concurrently.
+- A pagination strategy MUST read everything it needs from the response synchronously inside parse since the body is single-use, MUST NOT retain the response or its body beyond the call, MUST NOT close or mutate the response, and strategies MUST be immutable and safe to share concurrently (PAGE-5).
   <sub>spec · `docs/product-spec/12-pagination.md:27-27` · high · sha:ba759edd34ec</sub>
 - The pagination engine MUST accept a page cap bounding a server that never advances its cursor, the cap counts exchanges/pages not items, the engine MUST stop fetching once the cap is reached even if the strategy reports a next-request, and the cap MUST be validated as strictly positive at construction rather than lazily.
   <sub>spec · `docs/product-spec/12-pagination.md:31-31` · high · sha:ba759edd34ec</sub>

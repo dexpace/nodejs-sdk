@@ -21,7 +21,7 @@
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:8-8` · high · sha:c2bf15dc8a06</sub>
 - A materialize-once operation MUST return the same body unchanged when already replayable, and otherwise drain the body's write output exactly once into an in-memory buffer and return a replayable buffer-backed body, after which the original MUST be treated as consumed (BODY-3 / HTTP-37).
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:9-9` · high · sha:c2bf15dc8a06</sub>
-- A single-use body MUST fail loudly on a second write, never silently emitting zero bytes, and the consume-once guard MUST be race-safe so that under concurrent writes at most one proceeds and the losers observe a clear error (BODY-3 / HTTP-37).
+- A single-use body MUST fail loudly on a second write, never silently emitting zero bytes, and the consume-once guard MUST be race-safe so that under concurrent writes at most one proceeds and the losers observe a clear error (BODY-3 / HTTP-37 / BODY-6 / BODY-7).
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:9-9` · high · sha:c2bf15dc8a06</sub>
 - A single-use body that owns a closeable source MUST release that source as part of its single write, so skipping materialization does not leak it (BODY-8).
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:10-10` · high · sha:c2bf15dc8a06</sub>
@@ -89,7 +89,7 @@
   <sub>design · `docs/sdk-design-nodejs/06-retry-redirect-and-authentication.md:38-42` · high · sha:b0e2bb42d809</sub>
 
 ## Reference
-- The reference implementation of the consume-once guard for a single-use body is an atomic compare-and-set (BODY-3 / HTTP-37).
+- The reference implementation of the consume-once guard for a single-use body is an atomic compare-and-set (BODY-3 / HTTP-37 / BODY-7).
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:9-9` · high · sha:c2bf15dc8a06</sub>
 - In the reference implementation, the buffered-source-backed single-use body drains and closes its source during write, while the raw byte-stream-backed bodies do not close their stream during write — the rewindable variant keeps it open to replay and the one-shot variant leaves the caller-supplied stream unclosed per its documented ownership (BODY-8).
   <sub>spec · `docs/product-spec/06-request-and-response-body-lifecycle.md:10-10` · high · sha:c2bf15dc8a06</sub>

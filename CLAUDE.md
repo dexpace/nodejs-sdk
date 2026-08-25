@@ -66,6 +66,26 @@ Four distinct trees, easy to confuse:
 `docs/product-spec/appendix-c-consolidated-normative-requirement-index.md` is the fastest way to locate a
 requirement ID.
 
+### Querying `docs/knowledge/`
+
+`docs/knowledge/` is 518 KB across 39 topic files — never read a topic file whole when a filtered query
+answers the question. `bun run knowledge` parses the corpus into entries and filters them; a requirement-ID
+query returns ~170 tokens against a ~5700-token file read.
+
+```bash
+bun run knowledge --req HTTP-13,HTTP-14,HTTP-15    # a whole task's IDs in one call (exact-token)
+bun run knowledge --chapter 6 interface class      # a "styleguide 6.7" citation
+bun run knowledge --section conflicts --brief      # open design-vs-styleguide calls; 6 entries corpus-wide
+```
+
+Different filters AND together, values within one filter OR; `--help` lists the rest. Each result carries its
+`<sub>` provenance line — the citation for test-file headers and deferral notes, though styleguide paths are
+absolute to a sibling repo and need their machine prefix stripped first. **A `--req` hit is not proof of
+knowledge:** 256 of 645 IDs are named only by an appendix-B conformance roll-up, tagged `[appendix-B roll-up]`
+in output; only 385 have a substantive entry (`--coverage` breaks this down). 16 of the 39 topics carry no
+requirement ID at all and are reachable only via `--topic`/`--chapter` (`--list-topics`). Nothing in CI runs
+this. The `.claude/skills/knowledge-lookup` skill carries the full workflow.
+
 ## Requirement-ID conventions (enforced by review, not tooling)
 
 - Every source file opens with `// SPDX-License-Identifier: MIT` on **line 1** (NFR-13).
@@ -139,3 +159,7 @@ Work proceeds phase by phase against `docs/superpowers/specs/2026-07-23-nodejs-s
 phase has a design spec, an implementation plan with numbered tasks (TDD: write the failing test, confirm it
 fails, implement, confirm it passes, commit), and a checklist mapping every requirement ID to the task that
 satisfies it. When asked to implement or validate a phase, read all three before touching code.
+
+Starting a numbered task means starting with what the corpus already knows about its requirement IDs — invoke
+the `knowledge-lookup` skill, which carries both entry points (ID-first via appendix C, topic-first for the
+styleguide-derived areas that carry no IDs).

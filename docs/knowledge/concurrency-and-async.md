@@ -69,7 +69,7 @@
   <sub>spec · `docs/product-spec/18-asynchronous-runtime-adapter-contract.md:33-33` · high · sha:f1bf00174456</sub>
 - An adapter that owns an executor should shut it down gracefully on close — stopping new work and waiting for in-flight tasks rather than interrupting them — escalating to forceful shutdown only if the closing thread is itself interrupted, with callers needing eager abort using the interrupt/structured-cancellation path.
   <sub>spec · `docs/product-spec/18-asynchronous-runtime-adapter-contract.md:34-34` · high · sha:f1bf00174456</sub>
-- The async transport SPI should provide a no-op default close so lightweight/functional implementations need not implement lifecycle management, while any implementation that owns resources overrides it to follow the idempotent/ownership-aware/interrupt-safe close contract; behavior of executeAsync after close is undefined.
+- The async transport SPI should provide a no-op default close so lightweight/functional implementations need not implement lifecycle management, while any implementation that owns resources overrides it to follow the idempotent/ownership-aware/interrupt-safe close contract; behavior of executeAsync after close is undefined (SEAM-15).
   <sub>spec · `docs/product-spec/18-asynchronous-runtime-adapter-contract.md:35-35` · high · sha:f1bf00174456</sub>
 - Components documented as shared/reusable across concurrent requests (pipeline steps, auth handlers, redactors, factories) must be safe for concurrent invocation, with per-call mutable state kept on the call's local state and any shared mutable state synchronized.
   <sub>spec · `docs/product-spec/19-cross-cutting-invariants-and-policies.md:28` · high · sha:d6123be82c9e</sub>
