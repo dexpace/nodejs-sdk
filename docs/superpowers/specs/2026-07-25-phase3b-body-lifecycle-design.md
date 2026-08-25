@@ -147,17 +147,30 @@ class Response {
   readonly body: ReadableStream<Uint8Array> | null;   // single-use (BODY-14)
   text(): Promise<string>;      // BODY-16, HTTP-42
   bytes(): Promise<Uint8Array>; // BODY-16
-  close(): Promise<void>;       // BODY-15, HTTP-43
-  [Symbol.asyncDispose](): Promise<void>;   // delegates to close() — checkpoint §5.4's now-bumped floor applies
+  close(): Promise<void>;       // BODY-15, HTTP-43 — the only teardown interface; see below
 }
 ```
 
-`Response` owns a resource (the body's connection) it releases via `close()`, so the checkpoint's §5.4 fix — already a
-prerequisite of this phase, floor bumped and `lib` extended before 3b starts — applies here too:
-`[Symbol.asyncDispose]` is the primary teardown interface, `close()` a retained delegate, so `await using response =
-...` works. The response-body logging wrapper (below) gets the same treatment for the same reason; `Body` itself
-does not, since no variant in this phase owns a closeable resource it must release (`StreamBody` is explicitly
-caller-owned, per `BODY-8`).
+**Teardown is `close()` only — no `[Symbol.asyncDispose]`.** This design was written assuming the checkpoint's §5.4
+fix (floor bump to the first Node release exposing `Symbol.dispose`/`Symbol.asyncDispose`, plus the matching `lib`
+entry) had already landed as a prerequisite. It had not: at implementation time `engines.node` was still `">=18.17"`
+and `tsconfig.base.json`'s `lib` was `["ES2022", "DOM", "DOM.AsyncIterable"]`, with none of Phase 2's `Transport` or
+Phase 3a's `ByteQueue`/`BufferedSource`/`BufferedSink`/`RetentionWindow` carrying the symbol. Shipping it on
+`Response` alone would have meant:
+
+- **A run-time trap on the declared floor.** `Symbol.asyncDispose` evaluates to `undefined` below Node 18.18, so the
+  computed key binds the method to the string `"undefined"` — precisely the failure Phase 3a's design named when it
+  declined the symbol, and it fails silently at run time, not at build time.
+- **A broken published `.d.ts`.** The symbol's *type* reaches this package only through a dev-only global. A consumer
+  compiling against the built package on the same `lib` this repo declares gets
+  `TS2550: Property 'asyncDispose' does not exist on type 'SymbolConstructor'`. No gate covers this —
+  `verify:dual-consumption` runs `node`, not `tsc`.
+- **An inconsistent taxonomy.** Two of seven resource-owning classes would have it and five would not.
+
+So this phase keeps Phase 3a's shipped decision, and both `Response` and the response-body logging wrapper assert the
+absence rather than leaving it implicit. Adding it back is checkpoint §5.4's job, in one pass across all seven owners,
+once the floor actually moves. Ledgered below. `Body` itself never needed it: no variant in this phase owns a
+closeable resource (`StreamBody` is explicitly caller-owned, per `BODY-8`).
 
 Mirrors the `writeTo` decision: the public surface is the platform `ReadableStream`, not an internal wrapper.
 `text()`/`bytes()` drain the reader with a plain manual chunk-accumulate-and-concatenate loop — **no `io/`
@@ -250,7 +263,7 @@ way to read the tap.
 **Response-body logging wrapper (`BODY-22`–`29`):**
 
 ```typescript
-interface LoggedResponseBody extends AsyncDisposable {
+interface LoggedResponseBody {   // close() only — same reason as Response, above
   read(): Promise<ReadableStream<Uint8Array>>;
   snapshot(): Uint8Array;              // non-consuming; partial bytes even after a failed drain (BODY-26)
   error(): Error | null;               // the cached drain failure, WITHOUT triggering a drain (BODY-26)
@@ -318,7 +331,8 @@ third instance of the same violation:
 
 ```
 DexpaceError                                    (Phase 2 root)
-├── RequiredFieldError, HeaderValidationError, …  (Phase 1, flattened per checkpoint §5.2)
+├── DomainModelError                            (Phase 1 — checkpoint §5.2 has NOT run; still a
+│   └── RequiredFieldError, HeaderValidationError, …   class tier. See the note below the diagram)
 ├── CancellationError, OperationAssemblyError     (Phase 2, already flat)
 ├── IoError                                       (Phase 3a — unchanged; already a flat leaf, used bare
 │                                                    at 4 sites in buffered-source/-sink.ts, tee-sink.ts
@@ -331,6 +345,19 @@ DexpaceError                                    (Phase 2 root)
 ├── MultipartBoundaryError                        (3b, new — HTTP-51 invalid caller boundary)
 └── HttpStatusError                               (3b, new — BODY-30/31)
 ```
+
+**The Phase 1 tier is still three deep.** This section assumed checkpoint §5.2 had already removed
+`DomainModelError` as a class tier. It has not run, so after this phase's retrofit the taxonomy is *mixed*:
+`DexpaceError → EndOfStreamError` is two levels while `DexpaceError → DomainModelError → RequiredFieldError` is
+still three. That is strictly better than before — the `io/` leaves no longer add a *second* independent violation —
+but it is a real residual, and it is deliberately **not** fixed here: removing `DomainModelError` deletes a class
+exported from the public barrel that consumers can `instanceof`, which is a breaking API change belonging to
+checkpoint §5.2, not to a body-lifecycle phase. Ledgered below and owned by the checkpoint (roadmap finding E2).
+
+A second checkpoint item lives in the same file and should be done in the same pass: §5.3 requires every error
+leaf to carry its identifying inputs as sanitized `readonly` fields, and it was applied to two of the ten Phase 1
+leaves and stopped (roadmap finding E3). Whoever opens `http/errors.ts` for the flattening is already touching
+every class E3 names.
 
 Grouping is restored the way the checkpoint prescribed, and lands on the lighter of its two sanctioned options:
 an exported type-guard union per category (`isIoError(e): e is IoError | EndOfStreamError | ...`, `isBodyError(e):
@@ -348,10 +375,19 @@ Phase 3a's design doc left open whether `§5` would be promoted to the public ba
 
 What *does* go public, for the first time since Phase 2: the `Body` interface, the *types* of its concrete
 variants and their factory functions, `MultipartPart`, `MultipartBodyBuilder`, `materialize`, `TypedResponse`,
-`HttpStatusError`/`toHttpError`, and the two new error leaves a caller can actually trigger and
-needs to catch — `ConsumedBodyError` (double-write on a single-use body) and `MultipartBoundaryError` (an invalid
-caller-supplied boundary) — matching Phase 1's precedent that domain-model validation errors are public, not
-internal. The logging tees and `toHttpError`'s internals stay `@internal` (unwired until Phase 7).
+`HttpStatusError`/`toHttpError`, and the error leaves a caller can actually trigger and
+needs to catch — `ConsumedBodyError` (double-write on a single-use body), `MultipartBoundaryError` (an invalid
+caller-supplied boundary), and `FormBodyValidationError` (a form field that cannot be rendered) — matching Phase 1's
+precedent that domain-model validation errors are public, not internal. `formUrlEncodedBody`'s input widened past
+this design's `ReadonlyMap<string, string>` during implementation, which brings `FormUrlEncodedInput` and
+`FormUrlEncodedValue` public alongside it; both are ledgered below.
+
+**Every public symbol carries a TSDoc block**, including each member of each exported class and interface.
+`api-extractor` records an undocumented reachable member as `(undocumented)` in the committed report, so the
+enforcement point is mechanical: `packages/core/etc/core.api.md` must contain zero occurrences of that marker, and
+`bun run api` fails CI on any drift. It is also the gate for `HTTP-2`: a `constructor(...)` line appearing under a
+class the barrel exports **as a value** means a public field-wise constructor escaped the builder, and the private
+constructor plus its `createX` friend hook is what keeps it out. The logging tees and `toHttpError`'s internals stay `@internal` (unwired until Phase 7).
 
 **Two consequences a barrel edit alone won't enforce.** First, the concrete body *classes* are exported as types
 only, never as values: exporting the class exposes `new ByteArrayBody(...)` as a public field-wise constructor,
@@ -379,14 +415,24 @@ packages/core/src/body/
   request-body-logging.ts    # withRequestLogging tee decorator (@internal)
   response-body-logging.ts   # response-body logging wrapper, two regimes (@internal)
   http-status-error.ts       # HttpStatusError, toHttpError()
-  errors.ts                  # ConsumedBodyError, MultipartBoundaryError
+  errors.ts                  # ConsumedBodyError, MultipartBoundaryError, FormBodyValidationError
+  write-body.ts              # withBodyWriter — the one writer scope every variant shares
+  media-type-safety.ts       # header-safety validation for a Body's media type
+  freeze-body.ts             # freezeBody — HTTP-1's freeze, single-sourced
   index.ts                   # barrel — Body/variants/factories/TypedResponse/HttpStatusError/ConsumedBodyError/
-                              # MultipartBoundaryError re-exported from src/index.ts; logging tees stay internal-only
+                              # MultipartBoundaryError/FormBodyValidationError re-exported from src/index.ts;
+                              # logging tees stay internal-only
 ```
 
+The last three files are not in this design's original plan; each earned its place during implementation and is
+ledgered below. They exist as named modules rather than inlined code for the same reason `io/limits.ts`'s
+`assertAllocatable` does: each encodes a rule applied at four or five call sites, and a rule applied in five shapes
+is a rule that drifts.
+
 Also modifies (not creates): `packages/core/src/http/request.ts` and `response.ts` (real body types replace
-Phase 1's `unknown` placeholder; `Response` gains `text()`/`bytes()`/`close()`), and `packages/core/src/io/errors.ts`
-(the flattening retrofit above).
+Phase 1's `unknown` placeholder; `Response` gains `text()`/`bytes()`/`close()`), a new
+`packages/core/src/http/charset.ts` (`HTTP-42`'s charset resolution, shared by `Response.text()` and
+`HttpStatusError.preview()`), and `packages/core/src/io/errors.ts` (the flattening retrofit above).
 
 ## Deviation Ledger (for Phase 10)
 
@@ -400,6 +446,24 @@ Phase 1's `unknown` placeholder; `Response` gains `text()`/`bytes()`/`close()`),
 | Logging tees and `toHttpError`'s preview machinery shipped `@internal`, unwired to any `Logger` | none — matches Phase 2's `Serde<T>` precedent | No `Logger`/config surface exists until Phase 7 |
 | `BODY-34`'s shared preview cap covers the two logging tees only, not `toHttpError` | `BODY-34` (MUST), read literally as "all three" | `HTTP-52` *fixes* the error-body cap at 1 MiB, so it cannot also be the configurable shared value. The two capture sites `BODY-34` actually names — request-side tee and response-side drain — do share one cap |
 | Concrete `Body` classes exported from the public barrel as types only, never as values | none — required by `HTTP-2` | Exporting the class as a value publishes a field-wise constructor, which `HTTP-2` forbids; the factory functions are the sanctioned construction path and the classes remain usable as type annotations |
+| `close()` only, no `[Symbol.asyncDispose]`, on `Response` and `LoggedResponseBody` | this design's own §"Response Body", which assumed checkpoint §5.4 had landed | The checkpoint has not run: `engines.node` is still `">=18.17"` and `lib` carries no `esnext.disposable`. Below Node 18.18 the computed key evaluates to `undefined` and binds the method to the string `"undefined"`; and the symbol's type reaches this package only through a dev-only global, so a consumer compiling against the published `.d.ts` on this repo's own declared `lib` fails with `TS2550`. Two of seven resource owners would have carried it. Matches Phase 3a's shipped decision; **owned by checkpoint §5.4**, to be added to all seven at once |
+| Phase 1's `DomainModelError` tier left three-deep while `io/`'s leaves are flattened | checkpoint §5.2, which this design's error-tree diagram assumed had already run | Removing `DomainModelError` deletes a barrel-exported class consumers can `instanceof` — a breaking API change that belongs to the checkpoint, not to a body phase. The residual is a *mixed* taxonomy, strictly better than the two independent violations that preceded it. **Owned by checkpoint §5.2** |
+| `write-body.ts` — one shared `withBodyWriter` scope for all five variants | this design's File Layout, which had each variant close its own sink | The naive `try { … } finally { await writer.close() }` is wrong twice: closing an already-errored writer rejects with `TypeError`, and a throwing `finally` *replaces* the in-flight exception, destroying the real cause (`RECOV-12`) — which also declassifies the failure for `RETRY-2`'s cause-chain walk. Aborting rather than closing on failure additionally tells the transport the message is broken, where a clean close would signal a complete body that was never written |
+| `media-type-safety.ts` — `Body.mediaType` validated as header-safe at construction | none — closes a `HTTP-51` header-injection hole this design did not anticipate | `mediaType` is interpolated verbatim into a multipart part header, so a CR/LF in it can append arbitrary headers, close the header block, and forge a closing boundary — while the shared framing routine keeps the declared length consistent with the corrupted bytes. Uses the same predicate as outbound header-value validation (`HTTP-26`). `headerSafeMediaType` is the inbound counterpart: `HTTP-19` lets a received `content-type` carry obs-text that `HTTP-18` forbids outbound, so `HttpStatusError.body()` drops it rather than raising from an accessor on an error object |
+| `freeze-body.ts` — every `Body` variant frozen at construction | this design, which specified no freeze | `readonly` is erased at run time, so a caller could reassign `contentLength` after construction and desynchronize the value a transport stamps into `Content-Length` from the bytes `writeTo` emits. That is the same drift `HTTP-51` makes `MultipartBody` share one framing routine to prevent and `HTTP-1`/`XCUT-15` make it defensively copy its parts for — left open one level up. Matches the `Object.freeze(this)` step every `packages/core/src/http/` model already performs |
+| `http/charset.ts` — `HTTP-42`'s charset resolution extracted and shared | this design, which put the charset logic inside `Response.text()` | `HttpStatusError.preview()` needs the identical resolve-then-fall-back-to-UTF-8 rule (`BODY-33`), and two copies of a fallback chain drift. Named `decodeBodyText`, **not** `decodeText`: `io/text-codec.ts`'s `decodeText` deliberately implements true ISO-8859-1 and sets `ignoreBOM` for per-fragment decoding (`IO-13`, `SSE-12`), while this one delegates to `TextDecoder`'s windows-1252 mapping and consumes a leading BOM, which is right for a whole message body. The two are not interchangeable and the names now say so |
+| `FormBodyValidationError` public, and `formUrlEncodedBody` accepts `FormUrlEncodedInput`/`FormUrlEncodedValue` | this design's `formUrlEncodedBody(params: ReadonlyMap<string, string>)` | A field value that is neither a primitive nor `null` cannot be rendered; dropping it silently puts an incomplete body on the wire, so it is raised naming the key. Widening the input to `QueryParams`, a map, a record, or entry pairs reuses Phase 1's `QueryParams` encoder rather than a second hand-rolled one, which is also what makes the `+`-for-space rule single-sourced (`HTTP-38`/`BODY-35`) |
+| `StringBody.mediaType` defaults to `text/plain; charset=utf-8`; `StringBody.text` and `FormUrlEncodedBody.params` are public fields | this design, which defaulted `mediaType` to `undefined` and exposed neither field | The default states the encoding `writeTo` actually emits instead of leaving a text body with no declared type. The two readable fields are the non-destructive way to inspect a body a caller already holds — the alternative is draining it, which for a `Body` is the one thing an inspection must not do |
+| `Response.close()` memoized on a promise rather than a boolean flag | this design's `#closed = false` sketch | A flag set before the `await` reports a FAILED release as success to every later caller, over a connection that was never released. Handing every caller the same promise propagates the failure on every path while still cancelling at most once — the shape `BufferedSink.close()` already settled on for `IO-5`/`IO-41` |
+| `TypedResponse`'s raw fields are getters, not constructor-assigned `readonly` fields | this design's class sketch | Same observable surface; delegating to the wrapped `Response` keeps the two from being able to disagree. `value()` additionally wraps the parse in an `async` IIFE so a parser that throws *synchronously* is still memoized — a bare `??=` never completes the assignment in that case and re-runs the handler against a single-use body whose bytes are gone, which `HTTP-44` forbids |
+| `assertCount` hoisted into `io/limits.ts`, and `TeeSink.write` gained it | Phase 3a's frozen surface | `IO-3`'s guard existed as three byte-for-byte copies (`byte-queue.ts`, `buffered-source.ts`, `buffered-sink.ts`) and `TeeSink` — the fourth size-taking surface — had none, so a negative count reached it and was rejected only indirectly, by whichever `ByteQueue` call happened to run first, and not at all on its `count === 0` and short-source early returns. Behavior-preserving for the three that had it |
+| `BODY-25`'s zero-chunk check applied on the exceeds-cap tail path too, not only in `drainOnce` | the first implementation of this design's two-regime wrapper | A rule enforced in one regime and not the other makes the same violating upstream pass or fail depending only on how big the body happened to be |
+| `MultipartBody.writeTo` verifies the bytes it writes against its own declared `contentLength` | this design, which treated the shared framing routine as sufficient | The shared routine keeps the *framing* consistent but takes each part's own `contentLength` on trust — and `MultipartPart.body` is the `@public` `Body` interface, so a caller-supplied implementation can report one length and write another. Measured drift on a one-part body: declared 59, written 63. A bounded writer now refuses a chunk that would carry the message past the declared total (early, for the reason `StreamBody.#writeExactly` checks early) and a short total raises inside the writer scope so the sink is aborted rather than cleanly closed |
+| A caller-supplied multipart boundary is validated for grammar only, not for non-appearance in part content | `HTTP-51`'s "caller-boundary validation", read as covering RFC 2046's full sender obligation | RFC 2046 puts two duties on the sender: a `bchars`-valid delimiter, and one that appears in no part. Only the first is checkable here — a `StreamBody` part's bytes do not exist until the write, so a scan would be a *partial* check that reads as complete, which is worse than a stated limitation. Mitigated where it matters: the default boundary is 32 random characters from Web Crypto and is generated unless the caller opts out, and both entry points now document the obligation a caller-supplied delimiter carries. A caller who supplies a guessable boundary alongside attacker-influenced part content can have that content forge a closing delimiter |
+| `Response.bytes()`/`text()` and `toHttpError` acquire the body reader *inside* the try | the first implementation, which acquired it above | `getReader()` itself throws a `TypeError` when an external consumer already holds the lock, and `BODY-15` forbids assuming the body was never touched — so the one failure `BODY-16`'s close guarantee most needs to cover was the one that skipped the close entirely and held the connection |
+| The request-logging tee closes the primary sink when a delegate resolves without closing the adapter | none — closes a hole in this design's own decorator | `Body.writeTo`'s contract is that the body closes the sink it was given, and this wrapper is the only place that takes a writer on behalf of someone else's `Body`. A delegate that just resolves would strand the caller's sink open and locked with nothing thrown to notice it by |
+| A foreign primitive source that over-reports its transferred count raises `SourceContractViolationError`, not `EndOfStreamError` | Phase 3a's `factories.ts`, which left the over-report direction to `ByteQueue.takeBytes` | It surfaced as `end of stream: delivered 2 of 99 bytes` — reporting a foreign source's broken accounting as an exhausted stream, which is the exact confusion `IO-17` forbids. The under-report direction already had `assertDrained`; the file's own comment claimed both were covered |
+| New blocking gate `verify:consumer-types` | none — this is the gate whose absence let the `Symbol.asyncDispose` defect ship | It compiles a throwaway consumer against the built `.d.ts` using the `lib`/`target` read from `tsconfig.base.json`, with `types: []`. `typecheck` passes on dev-only ambient globals, `build` emits regardless, `api` only compares a report, `lint:publish` checks resolution and export shape rather than whether declarations resolve, and `verify:dual-consumption` runs `node`, not `tsc`. Verified to fail on the reintroduced defect and pass once reverted |
 
 ## Testing
 
