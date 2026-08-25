@@ -2,27 +2,14 @@
 // packages/core/src/http/response.ts
 import type {Builder} from './builder.js';
 import {requireField} from './builder.js';
-import type {Request} from './request.js';
-import type {Protocol} from './protocol.js';
-import type {Status} from './status.js';
+import {decodeText, resolveCharset} from './charset.js';
 import {Headers} from './headers.js';
-
-// eslint-disable-next-line max-params -- private, builder-internal plumbing; field count fixed by HTTP-6
-let createResponse: (
-  request: Request,
-  protocol: Protocol,
-  status: Status,
-  reasonPhrase: string | undefined,
-  headers: Headers,
-  body: unknown,
-) => Response;
+import type {Protocol} from './protocol.js';
+import type {Request} from './request.js';
+import type {Status} from './status.js';
 
 /**
- * An immutable HTTP response: the originating request, the negotiated protocol, the status, an
- * optional reason phrase, headers, and an optional body (HTTP-6).
- *
- * Status-range classification is reached through {@link Response.status} — `response.status.isSuccess`,
- * `response.status.isError`, and the rest (HTTP-11).
+ * An HTTP response model (HTTP-6).
  *
  * @public
  */
@@ -32,16 +19,19 @@ export class Response {
   readonly #status: Status;
   readonly #reasonPhrase: string | undefined;
   readonly #headers: Headers;
-  readonly #body: unknown;
+  readonly #body: ReadableStream<Uint8Array> | null;
+  // Not `readonly` -- Object.freeze(this) below only freezes normal properties, never #private fields,
+  // so this can still track close state after construction (BODY-15, HTTP-43).
+  #closing: Promise<void> | undefined;
 
   // eslint-disable-next-line max-params -- private, builder-internal; field count fixed by the wire model (HTTP-6)
-  private constructor(
+  constructor(
     request: Request,
     protocol: Protocol,
     status: Status,
     reasonPhrase: string | undefined,
     headers: Headers,
-    body: unknown,
+    body: ReadableStream<Uint8Array> | null,
   ) {
     this.#request = request;
     this.#protocol = protocol;
@@ -52,30 +42,10 @@ export class Response {
     Object.freeze(this);
   }
 
-  static {
-    // eslint-disable-next-line max-params -- private, builder-internal plumbing; field count fixed by HTTP-6
-    createResponse = (request, protocol, status, reasonPhrase, headers, body) =>
-      new Response(request, protocol, status, reasonPhrase, headers, body);
-  }
-
-  /**
-   * Starts an empty builder.
-   *
-   * @returns a fresh {@link ResponseBuilder}.
-   */
   static newBuilder(): ResponseBuilder {
     return new ResponseBuilder();
   }
 
-  /**
-   * Derives a builder pre-populated from this instance (HTTP-3).
-   *
-   * Every field it carries is itself immutable — `Request` freezes and defensively clones its URL,
-   * and `Headers`, `Status`, and `Protocol` are frozen values — so sharing them cannot leak
-   * mutability back into either instance.
-   *
-   * @returns a {@link ResponseBuilder} holding this response's state.
-   */
   newBuilder(): ResponseBuilder {
     return new ResponseBuilder()
       .request(this.#request)
@@ -86,42 +56,97 @@ export class Response {
       .body(this.#body);
   }
 
-  /** The request this response was produced for. */
   get request(): Request {
     return this.#request;
   }
 
-  /** The negotiated protocol version. */
   get protocol(): Protocol {
     return this.#protocol;
   }
 
-  /** The response status, which also carries the range classification (HTTP-11). */
   get status(): Status {
     return this.#status;
   }
 
-  /** The reason phrase as sent, or `undefined` when the transport supplied none. */
   get reasonPhrase(): string | undefined {
     return this.#reasonPhrase;
   }
 
-  /** The response headers — never null, possibly empty. */
   get headers(): Headers {
     return this.#headers;
   }
 
-  /**
-   * The response body, or `undefined` when absent. Typed `unknown` until the body lifecycle lands
-   * in a later phase.
-   */
-  get body(): unknown {
+  /** Single-use (BODY-14) -- the same reference every call, never a replay. */
+  get body(): ReadableStream<Uint8Array> | null {
     return this.#body;
+  }
+
+  /** Reads the whole body as bytes, closing the response whether or not the read succeeds (BODY-16). */
+  async bytes(): Promise<Uint8Array> {
+    if (this.#body === null) {
+      await this.close();
+      return new Uint8Array(0);
+    }
+    const reader = this.#body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        // Serial by necessity: each read depends on the previous one advancing the cursor.
+        const {done, value} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        total += value.length;
+      }
+    } finally {
+      // MUST precede close(): ReadableStream.cancel() rejects with TypeError on a locked stream, and
+      // reading to done does NOT release the lock. Without this the finally replaces the read value
+      // with a TypeError and bytes()/text() never succeed.
+      reader.releaseLock();
+      await this.close();
+    }
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  }
+
+  /** Reads the whole body as text, defaulting to the media type's charset then UTF-8 (HTTP-42). */
+  async text(): Promise<string> {
+    const bytes = await this.bytes();
+    return decodeText(bytes, resolveCharset(this.#headers.get('content-type')));
+  }
+
+  /** Idempotent; releases the underlying connection whether or not the body was read (BODY-15, HTTP-43). */
+  async close(): Promise<void> {
+    // Memoized rather than flag-guarded, the same shape BufferedSink.close settled on for IO-5/IO-41:
+    // a `#closed = true` set before the await reports a FAILED release as success to every later caller,
+    // over a connection that was never released. Handing every caller the same promise propagates the
+    // failure on every path while still cancelling at most once.
+    this.#closing ??= this.#release();
+    return this.#closing;
+  }
+
+  async #release(): Promise<void> {
+    if (this.#body === null) return;
+    // BODY-15 forbids assuming the body was read, so an external consumer may still hold the reader
+    // lock -- cancel() rejects with TypeError in that case. Swallow only that: the caller asked to
+    // release the connection, and the lock holder's own close will finish the job.
+    await this.#body.cancel().catch((error: unknown) => {
+      if (!(error instanceof TypeError)) throw error;
+    });
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.close();
   }
 }
 
 /**
- * Accumulates response state and produces an immutable {@link Response}.
+ * Builder for {@link Response}.
  *
  * @public
  */
@@ -131,86 +156,43 @@ export class ResponseBuilder implements Builder<Response> {
   #status: Status | undefined;
   #reasonPhrase: string | undefined;
   #headers: Headers = Headers.newBuilder().build();
-  #body: unknown;
+  #body: ReadableStream<Uint8Array> | null = null;
 
-  /**
-   * Sets the originating request. Required.
-   *
-   * @param request - the request this response answers.
-   * @returns this builder, for chaining.
-   */
   request(request: Request): this {
     this.#request = request;
     return this;
   }
 
-  /**
-   * Sets the negotiated protocol. Required.
-   *
-   * @param protocol - the protocol the exchange used.
-   * @returns this builder, for chaining.
-   */
   protocol(protocol: Protocol): this {
     this.#protocol = protocol;
     return this;
   }
 
-  /**
-   * Sets the response status. Required.
-   *
-   * @param status - the status received.
-   * @returns this builder, for chaining.
-   */
   status(status: Status): this {
     this.#status = status;
     return this;
   }
 
-  /**
-   * Sets the reason phrase.
-   *
-   * @param reasonPhrase - the phrase as sent, or `undefined` when there was none.
-   * @returns this builder, for chaining.
-   */
   reasonPhrase(reasonPhrase: string | undefined): this {
     this.#reasonPhrase = reasonPhrase;
     return this;
   }
 
-  /**
-   * Sets the response headers, replacing whatever was set before.
-   *
-   * @param headers - the headers received; already immutable, so held by reference.
-   * @returns this builder, for chaining.
-   */
   headers(headers: Headers): this {
     this.#headers = headers;
     return this;
   }
 
-  /**
-   * Sets the response body.
-   *
-   * @param body - the body, or `undefined` when absent.
-   * @returns this builder, for chaining.
-   */
-  body(body: unknown): this {
+  body(body: ReadableStream<Uint8Array> | null): this {
     this.#body = body;
     return this;
   }
 
-  /**
-   * Validates the required fields and constructs the response.
-   *
-   * @returns the frozen response.
-   * @throws {@link RequiredFieldError} when the request, protocol, or status was never set,
-   * naming whichever is missing (HTTP-4).
-   */
   build(): Response {
     const request = requireField(this.#request, 'request');
     const protocol = requireField(this.#protocol, 'protocol');
     const status = requireField(this.#status, 'status');
-    return createResponse(
+    return new Response(
       request,
       protocol,
       status,

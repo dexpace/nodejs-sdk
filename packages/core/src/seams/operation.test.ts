@@ -98,17 +98,20 @@ describe('SEAM-27: base-URL composition rules', () => {
   });
 });
 
+import {stringBody} from '../body/simple-bodies.js';
+
 describe('operation headers and body projections are threaded through', () => {
   test('supplied headers and body appear on the built request', () => {
     const headers = Headers.newBuilder().add('X-Trace', 'abc').build();
+    const body = stringBody('Fido');
     const request = buildRequest('https://host', {
       method: 'POST',
       pathTemplate: '/pets',
       headers,
-      body: {name: 'Fido'},
+      body,
     });
     expect(request.headers.get('x-trace')).toBe('abc');
-    expect(request.body).toEqual({name: 'Fido'});
+    expect(request.body).toBe(body);
   });
 });
 

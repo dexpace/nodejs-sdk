@@ -13,6 +13,7 @@ export {
   ClosedResourceError,
   EndOfStreamError,
   IoError,
+  isIoError,
   SourceContractViolationError,
 } from './errors.js';
 export {
