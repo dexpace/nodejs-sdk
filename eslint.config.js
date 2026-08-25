@@ -22,12 +22,14 @@ export default tseslint.config(
     rules: {'prettier/prettier': ['error', gtsPrettierOptions]},
   },
   {
-    // The root config and the `.mjs` verification scripts belong to no
-    // TypeScript project; they get the gts/format baseline only, never the
-    // type-aware tiers below. gts scopes its own Node globals to a fixed list
-    // of filenames that does not include `scripts/*.mjs`, so declare them here
-    // or `console`/`URL` trip `no-undef`.
-    files: ['eslint.config.js', 'scripts/*.mjs'],
+    // The root config, the `.mjs` verification scripts, and the Node-runtime
+    // conformance suite belong to no TypeScript project; they get the
+    // gts/format baseline only, never the type-aware tiers below. gts scopes
+    // its own Node globals to a fixed list of filenames that includes none of
+    // these, so declare them here or `console`/`URL` trip `no-undef` — and, in
+    // the conformance suite, so do the Web Streams and `AbortSignal` globals
+    // that are the whole point of running it on Node.
+    files: ['eslint.config.js', 'scripts/*.mjs', 'test/node-conformance/*.mjs'],
     languageOptions: {sourceType: 'module', globals: globals.node},
   },
   {

@@ -84,7 +84,8 @@ phase consults it) — ⏳ Deferred (named target phase) — 🚫 Not built (per
 | Negative space and cleanup | styleguide 11.9, 13.9 | ✅ | Double-close on `Response` and the response wrapper; write-after-consumed; read-after-tail-consumed; a delegate failure aborting rather than closing the primary sink; a caller stream that must not be cancelled |
 | Every test file cites its requirement IDs | Phase 1 convention, for Phase 9 | ✅ | Top-of-file comment in all ten `body/` test files, both modified `http/` ones, and the `io/` files this phase touched |
 | SPDX header on line 1 | `NFR-13` | ✅ | Every file under `packages/core/src/`. `http/response.test.ts` lost it in Task 8's wholesale rewrite and has it back |
-| 80% aggregate coverage floor | `NFR-5` | ✅ | Well above; `bun test` runs coverage by default |
+| 80% aggregate coverage floor | `NFR-5` | ✅ | Well above; `bun test` runs coverage by default, and the threshold is enforced rather than merely reported — raising it to `0.999` makes the identical suite exit 1 |
+| The body surface runs on Node, not only Bun | checkpoint §5.9; roadmap E5 | ✅ | `test/node-conformance/body-lifecycle.test.mjs` exercises `Response.bytes`/`text`/`close`'s reader-lock discipline, `StreamBody`'s `preventCancel` ownership, multipart framing including the Web Crypto boundary, and `toHttpError` buffering against the **built** artifact under `node --test`. Added when E5 was closed; this phase's surface is a founding member of that suite because §6 is where Web Streams semantics first reach a consumer |
 | Changeset committed | Consumer-facing change | ✅ | `RequestBuilder.body` and `ResponseBuilder.body` both narrow from `unknown`, which `api-design.md` classes as breaking. Released as **minor** under semver's 0.x initial-development carve-out, with the pointer recorded — this is D1's decision, taken |
 
 ## Deferred out of this phase

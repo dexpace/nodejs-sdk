@@ -2989,11 +2989,18 @@ bun test --coverage
 bun run api
 bun run lint:publish
 bun run verify:dual-consumption
+bun run verify:consumer-types
 bun run verify:seam-1
-bun run verify:node-floor
+bun run verify:runtime-floor
 bun run test:node
 bun run audit
 ```
+
+> **Corrected 2026-08-26.** This sequence originally called `bun run test:node`, which did not exist — the
+> step could not be executed as written (roadmap finding E5). The script now exists, and
+> `bun run verify:node-floor` has been removed from the list because checkpoint §5.9 folded that script's two
+> `AbortSignal.any` assertions into the conformance suite rather than keeping two parallel Node entry points.
+> `verify:consumer-types` and `verify:runtime-floor` are added because both are blocking CI steps.
 
 Expected: all exit 0. Coverage at or above the 80% aggregate floor (`NFR-5`).
 
