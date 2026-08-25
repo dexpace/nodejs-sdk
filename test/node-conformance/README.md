@@ -26,7 +26,13 @@ Node).
   on the other.
 - **Must pass on the declared floor.** `package.json` `engines.node` is the contract; CI runs this suite as a
   matrix over that floor and current LTS. Do not reach for an API newer than the floor without moving the floor
-  in the same change.
+  in the same change. The floor is set by the *built-ins the code calls*, not by the syntax it emits — it reads
+  `>=20.3` because `globalThis.crypto` is absent from ESM on every Node 18 release and `AbortSignal.any()`
+  reached the 20.x line in 20.3.0, not because of anything ES2023.
+- **Do not await a timer the runtime does not ref.** `AbortSignal.timeout()`'s timer is unref'd everywhere by
+  design, so awaiting its `abort` event with nothing else scheduled lets the loop drain and the runner report
+  `Promise resolution is still pending but the event loop has already resolved`. Hold the loop open with a ref'd
+  deadline that also fails the case if the event never arrives.
 
 ## Membership rule
 
@@ -38,6 +44,6 @@ means Phase 4 (pipelines, where `NFR-11`'s async-framework-leak check lands) and
 
 | File | Surface |
 |---|---|
-| `seams.test.mjs` | `AbortSignal.any()` composition — folded in from the retired `scripts/verify-node-floor.mjs`, whose two assertions were the only Node coverage that existed before this suite |
+| `seams.test.mjs` | `AbortSignal.any()` composition — folded in from the retired `scripts/verify-node-floor.mjs`, whose two assertions were the only Node coverage that existed before this suite — plus the `globalThis.crypto` floor assertion, made from ESM on purpose (Node 18 exposed `crypto` to CommonJS while leaving it undefined in ES modules) |
 | `io-byte-stream.test.mjs` | Phase 3a's `ByteQueue`, `BufferedSource` + views, `BufferedSink`, `TeeSink`, `writeAll` |
 | `body-lifecycle.test.mjs` | Phase 3b's public body surface over real Node Web Streams — reader-lock discipline, `pipeTo` ownership, multipart framing, error-body buffering |

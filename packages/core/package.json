@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20.3"
   },
   "exports": {
     ".": {

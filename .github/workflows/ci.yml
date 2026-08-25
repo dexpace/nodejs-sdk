@@ -70,7 +70,7 @@ jobs:
         # The declared floor AND current LTS, which is the "in addition to current LTS" half of
         # sdk-design-nodejs/09:52-54 that a floor-only pin left unexercised (checkpoint 5.9).
         # `lts/*` resolves at run time, so this does not go stale as LTS moves.
-        node: ['18.17.0', 'lts/*']
+        node: ['20.3.0', 'lts/*']
     name: node-conformance (${{ matrix.node }})
     steps:
       - uses: actions/checkout@v4

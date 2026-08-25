@@ -87,8 +87,8 @@ Phase 10 (`docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-de
     discovery surface to keep-configure at all, the same discovery machinery Item 2 above already retired. This
     closes the item permanently rather than leaving it re-flagged for a future phase.
 11. **`Symbol.asyncDispose` is adopted opportunistically, not uniformly, and this is deliberate, not drift.**
-    Internal `io/` primitives ship `close()` only — the symbol postdates the package's declared `>=18.17` Node
-    floor, and these types are `@internal` and never surface to a consumer who'd use the ergonomic disposal syntax
+    Internal `io/` primitives ship `close()` only — the symbol postdates the package's declared Node floor
+    (`>=20.3` since 2026-08-26; on the 20.x line the symbol arrives in 20.4.0), and these types are `@internal` and never surface to a consumer who'd use the ergonomic disposal syntax
     (Phase 3a). Public, consumer-facing disposable resources added in later phases — `Body`/`Response` (Phase 3b),
     `SseStream` (Phase 6b), `Page` (Phase 6c) — each add `[Symbol.asyncDispose]` as optional and runtime-guarded
     rather than declaring `implements AsyncDisposable`, so the type works whether or not the running Node version
