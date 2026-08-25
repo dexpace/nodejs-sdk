@@ -16,6 +16,7 @@
     "fast-check": "^3",
     "globals": "^17.8.0",
     "gts": "^7",
+    "mitata": "^1",
     "publint": "^0.3",
     "typescript": "^5.8",
     "typescript-eslint": "^8"
