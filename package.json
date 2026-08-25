@@ -33,6 +33,7 @@
     "api": "cd packages/core && bun run api:ci",
     "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm",
     "audit": "bun audit --audit-level=high --prod",
+    "changeset": "node scripts/changeset.mjs",
     "verify:dual-consumption": "node scripts/verify-dual-consumption.mjs",
     "verify:consumer-types": "node scripts/verify-consumer-types.mjs",
     "verify:seam-1": "node scripts/verify-seam-1.mjs",

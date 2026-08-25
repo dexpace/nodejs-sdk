@@ -152,7 +152,12 @@ Anything the barrel exports needs a TSDoc block with `@public`, plus `@throws` n
 class on operations that throw. `api-extractor` will otherwise flag it, and the committed report records it as
 `(undocumented)`. After changing exports: rebuild, run `api:local`, and commit the regenerated report.
 
-Consumer-facing changes need a changeset (`bunx changeset`).
+Consumer-facing changes need a changeset — `bun run changeset`, not `bunx changeset`. The wrapper
+(`scripts/changeset.mjs`) forwards every argument to the CLI, then renames the file it generates from
+`@changesets/write`'s random `human-id` name to `YYYY-MM-DD-<slug>.md`, matching
+`docs/superpowers/{specs,plans}`. The slug is prompted for, defaulting to the changeset's own first
+sentence. Nothing reads the filename back — the CLI globs `.changeset/*.md` and decides from the
+frontmatter — so a hand-written changeset just needs to be named the same way.
 
 ## Phase workflow
 
