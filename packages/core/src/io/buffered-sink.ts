@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/buffered-sink.ts
-import {invariant} from '../invariant.js';
 import type {ByteQueue} from './byte-queue.js';
 import {ClosedResourceError, EndOfStreamError} from './errors.js';
+import {assertCount} from './limits.js';
 import type {Sink} from './sink.js';
 import {encodeText} from './text-codec.js';
 
@@ -162,11 +162,4 @@ export class BufferedSink implements Sink {
   #assertOpen(): void {
     if (this.#closed) throw new ClosedResourceError('BufferedSink');
   }
-}
-
-function assertCount(count: number): void {
-  invariant(
-    Number.isInteger(count) && count >= 0,
-    `count must be a non-negative integer, got ${String(count)}`,
-  );
 }

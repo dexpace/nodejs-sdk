@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/http-status-error.ts
-import {decodeText, resolveCharset} from '../http/charset.js';
+import {decodeBodyText, resolveCharset} from '../http/charset.js';
 import {DexpaceError} from '../http/errors.js';
 import type {Response} from '../http/response.js';
 import {invariant} from '../invariant.js';
@@ -18,6 +18,7 @@ const ERROR_BODY_CAP_BYTES = 1024 * 1024; // 1 MiB, HTTP-52/BODY-30
  * @public
  */
 export class HttpStatusError extends DexpaceError {
+  /** The response status code, always in HTTP-11's 400-599 error band (BODY-31). */
   readonly status: number;
   readonly #bodyBytes: Uint8Array | undefined;
   readonly #mediaType: string | undefined;
@@ -57,7 +58,7 @@ export class HttpStatusError extends DexpaceError {
    */
   preview(charset?: string): string | null {
     if (this.#bodyBytes === undefined) return null;
-    return decodeText(
+    return decodeBodyText(
       this.#bodyBytes,
       charset ?? resolveCharset(this.#mediaType),
     );
@@ -84,10 +85,14 @@ export async function toHttpError(
     await response.close();
     return new HttpStatusError(response.status.code, undefined, mediaType);
   }
-  const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  // Acquired INSIDE the try, for the same reason Response.bytes does it: `getReader()` throws when an
+  // external consumer already holds the lock, and acquiring it above the try skipped the close on
+  // exactly that path -- holding the connection open (HTTP-52/BODY-30).
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
+    reader = response.body.getReader();
     for (;;) {
       // Serial by necessity: each read depends on the previous one advancing the cursor.
       const {done, value} = await reader.read();
@@ -100,7 +105,7 @@ export async function toHttpError(
     }
   } finally {
     // Release before close(): cancel() rejects with TypeError on a locked stream (see Response.bytes).
-    reader.releaseLock();
+    reader?.releaseLock();
     await response.close();
   }
   invariant(

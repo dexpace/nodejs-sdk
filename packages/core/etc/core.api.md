@@ -6,13 +6,9 @@
 
 // @public
 interface Body_2 {
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
-    // (undocumented)
     readonly mediaType: string | undefined;
-    // (undocumented)
     readonly replayable: boolean;
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
@@ -29,15 +25,10 @@ export function buildRequest(baseUrl: string | URL, operation: OperationDescript
 // @public
 export class ByteArrayBody implements Body_2 {
     constructor(bytes: Uint8Array, mediaType?: string);
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: "byte-array";
-    // (undocumented)
     readonly mediaType: string | undefined;
-    // (undocumented)
     readonly replayable = true;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 
@@ -55,7 +46,6 @@ export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): Abo
 // @public
 export class ConsumedBodyError extends DexpaceError {
     constructor(bodyKind: string, options?: ErrorOptions);
-    // (undocumented)
     readonly bodyKind: string;
 }
 
@@ -85,24 +75,17 @@ export class EtagParseError extends DomainModelError {
 // @public
 export class FormBodyValidationError extends DexpaceError {
     constructor(field: string, value: unknown, options?: ErrorOptions);
-    // (undocumented)
     readonly field: string;
 }
 
 // @public
 export class FormUrlEncodedBody implements Body_2 {
     constructor(input: FormUrlEncodedInput);
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: "form-urlencoded";
-    // (undocumented)
     readonly mediaType = "application/x-www-form-urlencoded";
-    // (undocumented)
     readonly params: QueryParams;
-    // (undocumented)
     readonly replayable = true;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 
@@ -174,7 +157,6 @@ export class HttpStatusError extends DexpaceError {
     constructor(status: number, bodyBytes: Uint8Array | undefined, mediaType: string | undefined, options?: ErrorOptions);
     body(): Body_2 | undefined;
     preview(charset?: string): string | null;
-    // (undocumented)
     readonly status: number;
 }
 
@@ -210,18 +192,12 @@ export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'O
 // @public
 export class MultipartBody implements Body_2 {
     constructor(parts: readonly MultipartPart[], boundary?: string);
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: "multipart";
-    // (undocumented)
     readonly mediaType: string;
-    // (undocumented)
     static newBuilder(): MultipartBodyBuilder;
     newBuilder(): MultipartBodyBuilder;
-    // (undocumented)
     readonly replayable: boolean;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 
@@ -230,30 +206,22 @@ export function multipartBody(parts: readonly MultipartPart[], boundary?: string
 
 // @public
 export class MultipartBodyBuilder implements Builder<MultipartBody> {
-    // (undocumented)
     addPart(part: MultipartPart): this;
-    // (undocumented)
     boundary(boundary: string | undefined): this;
-    // (undocumented)
     build(): MultipartBody;
-    // (undocumented)
     parts(parts: readonly MultipartPart[]): this;
 }
 
 // @public
 export class MultipartBoundaryError extends DexpaceError {
     constructor(boundary: string, options?: ErrorOptions);
-    // (undocumented)
     readonly boundary: string;
 }
 
 // @public
 export interface MultipartPart {
-    // (undocumented)
     readonly body: Body_2;
-    // (undocumented)
     readonly filename?: string | undefined;
-    // (undocumented)
     readonly name: string;
 }
 
@@ -383,25 +351,15 @@ export class RequiredFieldError extends DomainModelError {
 
 // @public
 class Response_2 {
-    // (undocumented)
-    [Symbol.asyncDispose](): Promise<void>;
-    constructor(request: Request_2, protocol: Protocol, status: Status, reasonPhrase: string | undefined, headers: Headers_2, body: ReadableStream<Uint8Array> | null);
     get body(): ReadableStream<Uint8Array> | null;
     bytes(): Promise<Uint8Array>;
     close(): Promise<void>;
-    // (undocumented)
     get headers(): Headers_2;
-    // (undocumented)
     static newBuilder(): ResponseBuilder;
-    // (undocumented)
     newBuilder(): ResponseBuilder;
-    // (undocumented)
     get protocol(): Protocol;
-    // (undocumented)
     get reasonPhrase(): string | undefined;
-    // (undocumented)
     get request(): Request_2;
-    // (undocumented)
     get status(): Status;
     text(): Promise<string>;
 }
@@ -409,19 +367,12 @@ export { Response_2 as Response }
 
 // @public
 export class ResponseBuilder implements Builder<Response_2> {
-    // (undocumented)
     body(body: ReadableStream<Uint8Array> | null): this;
-    // (undocumented)
     build(): Response_2;
-    // (undocumented)
     headers(headers: Headers_2): this;
-    // (undocumented)
     protocol(protocol: Protocol): this;
-    // (undocumented)
     reasonPhrase(reasonPhrase: string | undefined): this;
-    // (undocumented)
     request(request: Request_2): this;
-    // (undocumented)
     status(status: Status): this;
 }
 
@@ -444,15 +395,10 @@ export class Status {
 // @public
 export class StreamBody implements Body_2 {
     constructor(stream: ReadableStream<Uint8Array>, mediaType?: string, contentLength?: number);
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: "stream";
-    // (undocumented)
     readonly mediaType: string | undefined;
-    // (undocumented)
     readonly replayable = false;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 
@@ -462,17 +408,11 @@ export function streamBody(stream: ReadableStream<Uint8Array>, mediaType?: strin
 // @public
 export class StringBody implements Body_2 {
     constructor(text: string, mediaType?: string);
-    // (undocumented)
     readonly contentLength: number;
-    // (undocumented)
     readonly kind: "string";
-    // (undocumented)
     readonly mediaType: string;
-    // (undocumented)
     readonly replayable = true;
-    // (undocumented)
     readonly text: string;
-    // (undocumented)
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
 }
 
@@ -491,14 +431,10 @@ export interface Transport {
 // @public
 export class TypedResponse<T> {
     constructor(response: Response_2, parse: (response: Response_2) => Promise<T>);
-    // (undocumented)
     get headers(): Response_2['headers'];
-    // (undocumented)
     get protocol(): string;
-    // (undocumented)
     get reason(): string | undefined;
     get request(): Request_2;
-    // (undocumented)
     get status(): Response_2['status'];
     value(): Promise<T>;
 }

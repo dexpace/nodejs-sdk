@@ -4,6 +4,7 @@ import {invariant} from '../invariant.js';
 import {AllocationLimitError, EndOfStreamError} from './errors.js';
 import {
   assertAllocatable,
+  assertCount,
   END_OF_STREAM,
   MAX_BYTE_ARRAY_LENGTH,
 } from './limits.js';
@@ -278,13 +279,6 @@ export class ByteQueue {
     this.#head = head.next;
     if (this.#head === undefined) this.#tail = undefined;
   }
-}
-
-function assertCount(count: number): void {
-  invariant(
-    Number.isInteger(count) && count >= 0,
-    `count must be a non-negative integer, got ${String(count)}`,
-  );
 }
 
 /**

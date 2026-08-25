@@ -2,8 +2,10 @@
 // packages/core/src/io/factories.test.ts
 // Exercises: IO-30 (factory half — fresh, independent, empty buffers; stream, byte-array, and
 // foreign-primitive wrapping; the byte-array source is an independent copy), IO-17 (a primitive
-// source returning 0 for a positive request fails loudly)
+// source returning 0 for a positive request fails loudly, and one that misreports its transferred
+// count in either direction is a contract violation rather than an exhausted stream)
 import {describe, expect, test} from 'bun:test';
+import {ByteQueue} from './byte-queue.js';
 import {SourceContractViolationError} from './errors.js';
 import {
   bufferedSinkOverPrimitive,
@@ -131,5 +133,35 @@ describe('bufferedSourceOverPrimitive residue handling (IO-1, IO-17)', () => {
       },
     });
     expect([...(await source.readBytes())]).toEqual([10, 11, 20, 21]);
+  });
+});
+
+describe('a foreign primitive source that misreports its count (IO-17)', () => {
+  test('over-reporting is a contract violation, not an exhausted stream', async () => {
+    // Left to `takeBytes` this surfaced as `EndOfStreamError: delivered 2 of 99 bytes` -- reporting a
+    // foreign source's broken accounting as end-of-stream, the exact confusion IO-17 forbids.
+    const source = bufferedSourceOverPrimitive({
+      read(dest: ByteQueue): number {
+        dest.writeBytes(Uint8Array.from([1, 2]));
+        return 99;
+      },
+    });
+    const error = await rejection(source.readBytes());
+    expect(error).toBeInstanceOf(SourceContractViolationError);
+    expect(error.message).toContain('appended only 2');
+    // No close(): the pull failure already errored the stream, so cancel() would reject with the very
+    // same error. Matches the zero-read case above.
+  });
+
+  test('under-reporting is a contract violation too', async () => {
+    const source = bufferedSourceOverPrimitive({
+      read(dest: ByteQueue): number {
+        dest.writeBytes(Uint8Array.from([1, 2, 3]));
+        return 1;
+      },
+    });
+    expect(await rejection(source.readBytes())).toBeInstanceOf(
+      SourceContractViolationError,
+    );
   });
 });

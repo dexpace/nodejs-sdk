@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // scripts/verify-runtime-floor.mjs
 //
 // NFR-10 / the design doc's "Runtime-floor discipline" gate: a publishable

@@ -28,6 +28,7 @@ export {
 } from './factories.js';
 export {
   assertAllocatable,
+  assertCount,
   END_OF_STREAM,
   MAX_BYTE_ARRAY_LENGTH,
 } from './limits.js';

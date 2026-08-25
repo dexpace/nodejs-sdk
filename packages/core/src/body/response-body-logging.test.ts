@@ -20,6 +20,16 @@ function readableOf(...chunks: number[][]): ReadableStream<Uint8Array> {
   });
 }
 
+/** Awaits a rejection and returns its reason, failing loudly when the promise resolves instead. */
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error as Error;
+  }
+  throw new Error('expected a rejection, but the promise resolved');
+}
+
 async function readAll(
   stream: ReadableStream<Uint8Array>,
 ): Promise<Uint8Array> {
@@ -98,8 +108,12 @@ describe('withResponseLogging lifecycle (BODY-27, 28)', () => {
     expect([...logged.snapshot()]).toEqual([1, 2]);
   });
 
-  test('[Symbol.asyncDispose] delegates to close()', async () => {
-    await withResponseLogging(readableOf([1]), 100)[Symbol.asyncDispose]();
+  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=18.17 floor', () => {
+    // See Response's matching assertion: the symbol is undefined on the declared floor, so declaring
+    // it binds the method to the string "undefined". Absence is the assertion.
+    const logged = withResponseLogging(readableOf([1]), 100);
+    expect(Object.keys(logged)).not.toContain('undefined');
+    expect(typeof logged.close).toBe('function');
   });
 });
 
@@ -238,6 +252,33 @@ describe('delegate stream contract (BODY-25)', () => {
     expect(logged.read()).rejects.toThrow(SourceContractViolationError);
     expect(logged.error()).toBeInstanceOf(SourceContractViolationError);
     expect(logged.read()).rejects.toThrow(SourceContractViolationError);
+  });
+});
+
+describe('the tail path enforces the same chunk contract (BODY-25)', () => {
+  test('a zero-length chunk after the cap is raised, not enqueued', async () => {
+    // The drain stops at the cap, so a violating chunk arriving afterwards is read by tailStream, not
+    // drainOnce. A rule that holds in one regime and not the other makes the same upstream pass or
+    // fail depending only on how big the body happened to be.
+    let pulls = 0;
+    const delegate = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(Uint8Array.from([1, 2, 3, 4]));
+          return;
+        }
+        controller.enqueue(new Uint8Array(0));
+      },
+    });
+    const logged = withResponseLogging(delegate, 2);
+    const tail = await logged.read();
+
+    expect((await rejection(readAll(tail))).name).toBe(
+      'SourceContractViolationError',
+    );
+    // BODY-26: cached like any other delegate failure, so error() still reports it.
+    expect(logged.error()).toBeInstanceOf(SourceContractViolationError);
   });
 });
 

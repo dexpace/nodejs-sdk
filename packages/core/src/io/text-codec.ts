@@ -63,6 +63,10 @@ export function encodeText(text: string, charset: string): Uint8Array {
  *
  * Every other label goes to `TextDecoder`, which is correct for them.
  *
+ * NOT interchangeable with `http/charset.ts`'s `decodeBodyText`, which decodes a whole message body at
+ * the HTTP layer, delegates `iso-8859-1` to `TextDecoder`'s windows-1252 mapping, and consumes a leading
+ * BOM. This one is per-fragment decoding at the byte layer. See that function's note for the full split.
+ *
  * `ignoreBOM: true` is REQUIRED, not incidental. The decoder is applied per fragment — per line, per
  * counted read — so the default (strip a leading U+FEFF) deletes a BOM anywhere a fragment happens to
  * begin, not just at the start of a stream. That silently drops the first three bytes of a body, breaking

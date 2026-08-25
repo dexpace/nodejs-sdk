@@ -6,7 +6,18 @@ import {SourceContractViolationError} from '../io/errors.js';
 import {MAX_BYTE_ARRAY_LENGTH} from '../io/limits.js';
 import {ConsumedBodyError} from './errors.js';
 
-export interface LoggedResponseBody extends AsyncDisposable {
+/**
+ * A lazily-draining, bounded capture wrapper over a raw response body stream (BODY-22..29).
+ *
+ * Teardown is `close()` only. `[Symbol.asyncDispose]` is deliberately absent: it postdates the declared
+ * `engines.node` floor (`>=18.17`), where the computed key evaluates to `undefined` and binds the method
+ * to the string `"undefined"` instead -- wrong, silent, and only at run time. This matches the decision
+ * every Phase 3a resource already ships with. Revisit when the checkpoint's floor bump lands and adds it
+ * to all of them at once, rather than to two classes out of seven.
+ *
+ * @internal
+ */
+export interface LoggedResponseBody {
   /**
    * Returns a stream serving the body. Lazy -- nothing is read from the delegate until the first call
    * (BODY-22). Fits-cap regime: every call, including calls after the first, returns a fresh
@@ -20,6 +31,11 @@ export interface LoggedResponseBody extends AsyncDisposable {
   error(): Error | null;
   /** Captured size iff fully captured within the cap, else the delegate's declared length (BODY-29). */
   readonly contentLength: number;
+  /**
+   * Releases the delegate. Idempotent, and shared with the exceeds-cap tail stream's own completion so
+   * the delegate is cancelled at most once however close is reached (BODY-27). The captured bytes
+   * survive, so `snapshot()` still works afterwards (BODY-28).
+   */
   close(): Promise<void>;
 }
 
@@ -55,15 +71,28 @@ async function closeDelegate(state: DrainState): Promise<void> {
 }
 
 /**
- * Reads until EOF (fits regime) or until the cap is reached (exceeds regime, leaving the delegate open
- * and the overflow chunk staged). BODY-26: a failure is cached, never allowed to truncate silently.
- *
  * BODY-25: a delegate chunk of zero bytes is a stream-contract violation, not a no-op and never EOF --
  * EOF is signalled only by `{done: true}`. `ReadableStreamDefaultReader.read()` carries no requested
  * count, so the requirement's "for a positive requested count" has no literal analog, but the tolerant
  * reading is the wrong one to pick: `RetentionWindow` raises on the same input under IO-17's identical
  * rule, and a response body reaches both this tee and `BufferedSource`, so a divergence would make one
  * upstream fail or succeed depending only on which wrapper it passed through.
+ *
+ * Applied on BOTH read paths -- `drainOnce` and the exceeds-cap tail -- because a rule that holds in one
+ * regime and not the other makes the same upstream pass or fail depending only on how big the body
+ * happened to be.
+ */
+function assertNonEmptyChunk(value: Uint8Array): void {
+  if (value.length === 0) {
+    throw new SourceContractViolationError(
+      'source delivered 0 bytes without signalling end of stream',
+    );
+  }
+}
+
+/**
+ * Reads until EOF (fits regime) or until the cap is reached (exceeds regime, leaving the delegate open
+ * and the overflow chunk staged). BODY-26: a failure is cached, never allowed to truncate silently.
  */
 async function drainOnce(state: DrainState): Promise<void> {
   try {
@@ -75,11 +104,7 @@ async function drainOnce(state: DrainState): Promise<void> {
         await closeDelegate(state);
         return;
       }
-      if (value.length === 0) {
-        throw new SourceContractViolationError(
-          'source delivered 0 bytes without signalling end of stream',
-        ); // BODY-25
-      }
+      assertNonEmptyChunk(value);
       if (state.captured.size + value.length <= state.cap) {
         state.captured.writeBytes(value);
         continue;
@@ -157,6 +182,15 @@ function tailStream(state: DrainState): ReadableStream<Uint8Array> {
         controller.close();
         return;
       }
+      try {
+        assertNonEmptyChunk(value); // BODY-25, same rule as the drain
+      } catch (error: unknown) {
+        // Cached like any other delegate failure so `error()` still reports it (BODY-26); the throw
+        // errors this stream, which is what the consumer of the tail actually observes.
+        state.failure =
+          error instanceof Error ? error : new Error(String(error));
+        throw state.failure;
+      }
       controller.enqueue(value);
     },
     async cancel() {
@@ -166,7 +200,9 @@ function tailStream(state: DrainState): ReadableStream<Uint8Array> {
 }
 
 /**
- * Wraps a raw response body stream (BODY-22..29). `@internal` -- unwired until Phase 7 supplies a Logger.
+ * Wraps a raw response body stream (BODY-22..29).
+ *
+ * @internal Unwired until Phase 7 supplies a Logger to drive it.
  */
 export function withResponseLogging(
   delegate: ReadableStream<Uint8Array>,
@@ -214,6 +250,5 @@ export function withResponseLogging(
       return state.regime === 'fits' ? state.captured.size : declaredLength;
     },
     close: () => closeDelegate(state),
-    [Symbol.asyncDispose]: () => closeDelegate(state),
   };
 }

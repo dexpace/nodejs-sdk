@@ -4,6 +4,7 @@ import {QueryParams, type QueryParamsBuilder} from '../http/query-params.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {FormBodyValidationError} from './errors.js';
+import {freezeBody} from './freeze-body.js';
 import {assertHeaderSafeMediaType} from './media-type-safety.js';
 import {withBodyWriter} from './write-body.js';
 
@@ -13,9 +14,13 @@ import {withBodyWriter} from './write-body.js';
  * @public
  */
 export class ByteArrayBody implements Body {
+  /** Discriminates this variant within the {@link Body} union. */
   readonly kind = 'byte-array' as const;
+  /** The declared media type, or `undefined` when the caller supplied none. */
   readonly mediaType: string | undefined;
+  /** The exact byte count `writeTo` will emit -- always known for an in-memory body. */
   readonly contentLength: number;
+  /** Always `true`: the bytes are held in memory, so every write is byte-for-byte identical. */
   readonly replayable = true;
   readonly #bytes: Uint8Array;
 
@@ -27,8 +32,14 @@ export class ByteArrayBody implements Body {
     this.#bytes = Uint8Array.from(bytes);
     this.mediaType = mediaType;
     this.contentLength = this.#bytes.length;
+    freezeBody(this);
   }
 
+  /**
+   * Writes the held bytes into `sink`, then closes it (BODY-1). Repeatable.
+   *
+   * @param sink - the destination; this body's to close, the caller's only to supply.
+   */
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);
@@ -56,10 +67,15 @@ export function byteArrayBody(
  * @public
  */
 export class StringBody implements Body {
+  /** Discriminates this variant within the {@link Body} union. */
   readonly kind = 'string' as const;
+  /** Defaults to `text/plain; charset=utf-8`, matching the UTF-8 encoding `writeTo` emits. */
   readonly mediaType: string;
+  /** The UTF-8 byte count, which is not the character count for non-ASCII text. */
   readonly contentLength: number;
+  /** Always `true`: the text is held in memory, so every write is byte-for-byte identical. */
   readonly replayable = true;
+  /** The source text, exactly as supplied. */
   readonly text: string;
   readonly #bytes: Uint8Array;
 
@@ -69,8 +85,15 @@ export class StringBody implements Body {
     this.mediaType = mediaType;
     this.#bytes = new TextEncoder().encode(text);
     this.contentLength = this.#bytes.length;
+    freezeBody(this);
   }
 
+  /**
+   * Writes the UTF-8 encoding of {@link StringBody.text} into `sink`, then closes it (BODY-1).
+   * Repeatable.
+   *
+   * @param sink - the destination; this body's to close, the caller's only to supply.
+   */
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);
@@ -162,10 +185,15 @@ function toQueryParams(input: FormUrlEncodedInput): QueryParams {
  * @public
  */
 export class FormUrlEncodedBody implements Body {
+  /** Discriminates this variant within the {@link Body} union. */
   readonly kind = 'form-urlencoded' as const;
+  /** Fixed at `application/x-www-form-urlencoded` -- the encoding defines the media type. */
   readonly mediaType = 'application/x-www-form-urlencoded';
+  /** The byte count of the encoded form, always known. */
   readonly contentLength: number;
+  /** Always `true`: the encoded form is held in memory (BODY-35). */
   readonly replayable = true;
+  /** The normalized parameters, whatever input shape they were built from. */
   readonly params: QueryParams;
   readonly #bytes: Uint8Array;
 
@@ -179,8 +207,14 @@ export class FormUrlEncodedBody implements Body {
     );
     this.#bytes = new TextEncoder().encode(encoded);
     this.contentLength = this.#bytes.length;
+    freezeBody(this);
   }
 
+  /**
+   * Writes the encoded form into `sink`, then closes it (BODY-1). Repeatable.
+   *
+   * @param sink - the destination; this body's to close, the caller's only to supply.
+   */
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     await withBodyWriter(sink, async writer => {
       if (this.#bytes.length > 0) await writer.write(this.#bytes);

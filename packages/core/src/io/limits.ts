@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/io/limits.ts
+import {invariant} from '../invariant.js';
 import {AllocationLimitError} from './errors.js';
 
 /**
@@ -38,4 +39,21 @@ export function assertAllocatable(count: number): void {
   if (count > MAX_BYTE_ARRAY_LENGTH) {
     throw new AllocationLimitError(count, MAX_BYTE_ARRAY_LENGTH);
   }
+}
+
+/**
+ * IO-3's eager guard: a negative or non-integer count is an argument error, rejected BEFORE any I/O so
+ * neither the source nor the destination is touched.
+ *
+ * Single-sourced here for the same reason `assertAllocatable` is. It previously existed as three
+ * byte-for-byte copies (`byte-queue.ts`, `buffered-source.ts`, `buffered-sink.ts`) and `TeeSink` — the
+ * fourth size-taking surface — had none at all, so a negative count reached it and was rejected only
+ * indirectly, by whichever `ByteQueue` call happened to run first. That is exactly the drift the
+ * "a rule applied in two shapes is a rule that drifts" note above warns about.
+ */
+export function assertCount(count: number): void {
+  invariant(
+    Number.isInteger(count) && count >= 0,
+    `count must be a non-negative integer, got ${String(count)}`,
+  );
 }

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/multipart-body.ts
 import type {Builder} from '../http/builder.js';
+import {EndOfStreamError} from '../io/errors.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {MultipartBoundaryError} from './errors.js';
+import {freezeBody} from './freeze-body.js';
 import {assertHeaderSafeMediaType} from './media-type-safety.js';
 import {withBodyWriter} from './write-body.js';
 
@@ -13,8 +15,11 @@ import {withBodyWriter} from './write-body.js';
  * @public
  */
 export interface MultipartPart {
+  /** The form field name, rendered into `Content-Disposition` and quoted/escaped (HTTP-51). */
   readonly name: string;
+  /** An optional upload filename, quoted/escaped the same way as {@link MultipartPart.name}. */
   readonly filename?: string | undefined;
+  /** The part's payload. Its `mediaType` becomes the part's `Content-Type` when present. */
   readonly body: Body;
 }
 
@@ -91,16 +96,43 @@ function computeContentLength(
   return total + trailerBytes(boundary).length;
 }
 
-// Wraps a locked writer as a WritableStream whose close() does not close the real sink -- multiple parts
-// share one underlying writer, and only the outer writeTo's own finally block closes it.
-function nonClosingSink(
+/**
+ * Counts what reaches the sink and refuses a chunk that would carry the message past `declared`
+ * (HTTP-51).
+ *
+ * The shared framing routine guarantees the declared length and the emitted bytes agree about the
+ * FRAMING, but it takes each part's own `contentLength` on trust -- and `MultipartPart.body` is the
+ * public `Body` interface, so a caller-supplied implementation can report one length and write
+ * another. That desynchronizes the value a transport stamps into `Content-Length` from what is
+ * actually on the socket, which is the precise drift HTTP-51 exists to prevent.
+ *
+ * Refused BEFORE the write, not tallied after the loop, for the same reason `StreamBody.#writeExactly`
+ * checks early: once the length is stamped, an overrun byte sits where the peer reads it as the start
+ * of the next message, and a thrown error cannot recall bytes already written.
+ */
+function boundedWriter(
   writer: WritableStreamDefaultWriter<Uint8Array>,
-): WritableStream<Uint8Array> {
-  return new WritableStream<Uint8Array>({
-    write: async chunk => {
+  declared: number,
+): {write: (chunk: Uint8Array) => Promise<void>; written: () => number} {
+  let written = 0;
+  return {
+    write: async (chunk: Uint8Array): Promise<void> => {
+      if (declared !== -1 && written + chunk.length > declared) {
+        throw new EndOfStreamError(written + chunk.length, declared);
+      }
+      written += chunk.length;
       await writer.write(chunk);
     },
-  });
+    written: () => written,
+  };
+}
+
+// Wraps the bounded write as a WritableStream whose close() does not close the real sink -- multiple
+// parts share one underlying writer, and only the outer writeTo's own scope closes it.
+function nonClosingSink(
+  write: (chunk: Uint8Array) => Promise<void>,
+): WritableStream<Uint8Array> {
+  return new WritableStream<Uint8Array>({write});
 }
 
 /**
@@ -110,9 +142,13 @@ function nonClosingSink(
  * @public
  */
 export class MultipartBody implements Body {
+  /** Discriminates this variant within the {@link Body} union. */
   readonly kind = 'multipart' as const;
+  /** `multipart/form-data` carrying the boundary this instance frames its parts with. */
   readonly mediaType: string;
+  /** The total framed byte count, or -1 when any part's own length is unknown (BODY-2). */
   readonly contentLength: number;
+  /** `true` only when every part is replayable -- composite replayability (BODY-2). */
   readonly replayable: boolean;
   readonly #parts: readonly MultipartPart[];
   readonly #boundary: string;
@@ -129,27 +165,65 @@ export class MultipartBody implements Body {
         this.contentLength >= trailerBytes(this.#boundary).length,
       `framing computed an impossible length ${String(this.contentLength)}`,
     );
+    freezeBody(this); // HTTP-1: see freeze-body.ts
   }
 
+  /**
+   * Starts an empty builder (HTTP-3).
+   *
+   * @returns a fresh {@link MultipartBodyBuilder}.
+   */
   static newBuilder(): MultipartBodyBuilder {
     return new MultipartBodyBuilder();
   }
 
-  /** HTTP-3: pre-populated with this instance's parts and boundary, aliasing neither. */
+  /**
+   * Derives a builder pre-populated with this instance's parts and boundary, aliasing neither (HTTP-3).
+   *
+   * @returns a {@link MultipartBodyBuilder} holding a copy of this body's state.
+   */
   newBuilder(): MultipartBodyBuilder {
     return new MultipartBodyBuilder()
       .parts(this.#parts)
       .boundary(this.#boundary);
   }
 
+  /**
+   * Writes every part framed by this body's boundary, then the closing trailer, then closes `sink`
+   * (BODY-2).
+   *
+   * Two mechanisms keep {@link MultipartBody.contentLength} and these bytes from drifting (HTTP-51),
+   * and both are needed. The shared framing routine that computed the length also produces the
+   * framing here, which covers the delimiters and part headers; and the write is bounded and totalled
+   * against the declared length, which covers what the routine cannot -- each part's own reported
+   * `contentLength`, taken on trust from an interface any caller can implement.
+   *
+   * @param sink - the destination; this body's to close, the caller's only to supply. Each part
+   * receives a non-closing adapter over the same writer, so no part can end the message early.
+   * @throws EndOfStreamError when the bytes actually written disagree with
+   * {@link MultipartBody.contentLength} — which happens when a caller-supplied part `Body` reports one
+   * length and writes another (HTTP-51).
+   * @throws {@link ConsumedBodyError} when a single-use part is written a second time (BODY-3) -- a
+   * non-replayable composite needs no guard of its own; the offending part's own guard fires.
+   */
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     await withBodyWriter(sink, async writer => {
+      const bounded = boundedWriter(writer, this.contentLength);
       for (const part of this.#parts) {
-        await writer.write(renderPartHeader(part, this.#boundary));
-        await part.body.writeTo(nonClosingSink(writer));
-        await writer.write(CRLF);
+        await bounded.write(renderPartHeader(part, this.#boundary));
+        await part.body.writeTo(nonClosingSink(bounded.write));
+        await bounded.write(CRLF);
       }
-      await writer.write(trailerBytes(this.#boundary));
+      await bounded.write(trailerBytes(this.#boundary));
+      // HTTP-51: a part that writes FEWER bytes than it declared is the mirror of the overrun the
+      // bounded writer refuses, and just as wrong on the wire. Raised inside the writer scope so
+      // withBodyWriter aborts rather than signalling a clean close over a short body.
+      if (
+        this.contentLength !== -1 &&
+        bounded.written() !== this.contentLength
+      ) {
+        throw new EndOfStreamError(bounded.written(), this.contentLength);
+      }
     });
   }
 }
@@ -178,24 +252,48 @@ export class MultipartBodyBuilder implements Builder<MultipartBody> {
   #parts: MultipartPart[] = [];
   #boundary: string | undefined;
 
+  /**
+   * Replaces the whole parts list, copying it so the builder never aliases the caller's array.
+   *
+   * @param parts - the parts, in the order they will be framed.
+   * @returns this builder, for chaining.
+   */
   parts(parts: readonly MultipartPart[]): this {
     this.#parts = [...parts];
     return this;
   }
 
+  /**
+   * Appends one part, keeping whatever was added before.
+   *
+   * @param part - the part to append.
+   * @returns this builder, for chaining.
+   */
   addPart(part: MultipartPart): this {
     this.#parts.push(part);
     return this;
   }
 
+  /**
+   * Sets the boundary, or clears it so `build()` generates a fresh random one.
+   *
+   * Prefer the generated default; see {@link multipartBody} for the RFC 2046 non-appearance
+   * obligation a caller-supplied delimiter carries and that this class cannot check.
+   *
+   * @param boundary - an RFC 2046 `bchars` delimiter that appears in no part, or `undefined`.
+   * @returns this builder, for chaining.
+   */
   boundary(boundary: string | undefined): this {
     this.#boundary = boundary;
     return this;
   }
 
   /**
-   * @throws MultipartBoundaryError when the configured boundary violates RFC 2046's bchars grammar
-   * (HTTP-51).
+   * Frames the accumulated parts into an immutable {@link MultipartBody}.
+   *
+   * @returns the frozen body.
+   * @throws {@link MultipartBoundaryError} when the configured boundary violates RFC 2046's bchars
+   * grammar (HTTP-51).
    * @throws MediaTypeParseError when a part's media type contains a control character or non-ASCII byte
    * (HTTP-26/HTTP-51).
    */

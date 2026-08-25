@@ -3,7 +3,7 @@
 import {invariant} from '../invariant.js';
 import {ByteQueue, copyBytes} from './byte-queue.js';
 import {ClosedResourceError, EndOfStreamError} from './errors.js';
-import {assertAllocatable, END_OF_STREAM} from './limits.js';
+import {assertAllocatable, assertCount, END_OF_STREAM} from './limits.js';
 import {RetentionWindow, type Cursor} from './retention-window.js';
 import {assertDecodable, decodeText} from './text-codec.js';
 
@@ -346,10 +346,3 @@ const READ_CHUNK = 16 * 1024;
 const BRIDGE_CHUNK = 16 * 1024;
 const NEWLINE = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
-
-function assertCount(count: number): void {
-  invariant(
-    Number.isInteger(count) && count >= 0,
-    `count must be a non-negative integer, got ${String(count)}`,
-  );
-}

@@ -5,13 +5,17 @@
 // natural exhaustion), HTTP-39/BODY-10 (declared length verified, short stream raises
 // delivered-of-declared, and an overrunning stream is stopped BEFORE the extra bytes reach the sink),
 // IO-3 (a contentLength below the -1 sentinel is rejected), HTTP-26/HTTP-51 (a media type is
-// header-safe), RECOV-12 (a close failure never masks the primary write failure)
+// header-safe), RECOV-12 (a close failure never masks the primary write failure), HTTP-1 (frozen at
+// construction so the declared length cannot be desynced from the written bytes)
 import {describe, expect, test} from 'bun:test';
 import {MediaTypeParseError} from '../http/errors.js';
 import {InvariantViolation} from '../invariant.js';
 import {EndOfStreamError} from '../io/errors.js';
 import {ConsumedBodyError} from './errors.js';
 import {streamBody} from './stream-body.js';
+
+/** Sentinel distinguishing "cancel() never ran" from "cancel() ran with undefined". */
+const NOT_CANCELLED = Symbol('not-cancelled');
 
 function readableOf(...chunks: number[][]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -44,6 +48,56 @@ function collectingSink(): {
     },
   };
 }
+
+describe('caller stream ownership (BODY-8)', () => {
+  test('a sink failure does not cancel the caller stream on the unknown-length path', async () => {
+    // `pipeTo`'s default (`preventCancel: false`) cancels the SOURCE when the destination errors,
+    // which takes cancellation ownership away from the caller on exactly the failure path -- and
+    // disagrees with the declared-length path below, which only releases its reader.
+    let cancelReason: unknown = NOT_CANCELLED;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2, 3]));
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const failing = new WritableStream<Uint8Array>({
+      write: () => {
+        throw new Error('SOCKET GONE');
+      },
+    });
+
+    expect(streamBody(source).writeTo(failing)).rejects.toThrow('SOCKET GONE');
+    await Promise.resolve();
+    expect(cancelReason).toBe(NOT_CANCELLED);
+  });
+
+  test('a sink failure does not cancel the caller stream on the declared-length path either', async () => {
+    let cancelReason: unknown = NOT_CANCELLED;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2, 3]));
+        controller.close();
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const failing = new WritableStream<Uint8Array>({
+      write: () => {
+        throw new Error('SOCKET GONE');
+      },
+    });
+
+    expect(streamBody(source, undefined, 3).writeTo(failing)).rejects.toThrow(
+      'SOCKET GONE',
+    );
+    await Promise.resolve();
+    expect(cancelReason).toBe(NOT_CANCELLED);
+  });
+});
 
 describe('StreamBody properties and writeTo (BODY-1, BODY-9)', () => {
   test('is always single-use, regardless of declared length (BODY-9)', () => {

@@ -44,6 +44,7 @@ Release-shape and invariant gates:
 ```bash
 bun run lint:publish              # publint + attw against the built package
 bun run verify:dual-consumption   # plain `node` imports the built package and runs it
+bun run verify:consumer-types     # the built .d.ts compiles on the declared `lib` with types: []
 bun run verify:seam-1             # asserts @dexpace/core has zero runtime dependencies
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run audit                     # bun audit --audit-level=high --prod

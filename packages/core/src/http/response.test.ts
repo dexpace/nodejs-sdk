@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // packages/core/src/http/response.test.ts
 // Exercises: HTTP-6 (required fields), HTTP-41/BODY-14 (single-use body, same reference on repeat
 // access), HTTP-41/BODY-15, HTTP-43 (idempotent close, releases the connection whether or not the body
@@ -9,6 +10,16 @@ import {Protocol} from './protocol.js';
 import {Request} from './request.js';
 import {Response} from './response.js';
 import {Status} from './status.js';
+
+/** Awaits a rejection and returns its reason, failing loudly when the promise resolves. */
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error as Error;
+  }
+  throw new Error('expected the promise to reject, but it resolved');
+}
 
 function baseRequest(): Request {
   return Request.newBuilder().url('https://example.com').build();
@@ -137,6 +148,15 @@ describe('bytes/text (BODY-16, HTTP-42)', () => {
     expect(await baseResponse(stream, headers).text()).toBe('hé');
   });
 
+  test('text() falls back to UTF-8 when the content-type itself is unparseable', async () => {
+    // Distinct from an unrecognized *charset* below: here MediaType.parse throws before any charset
+    // is read. HTTP-42's fallback has to cover absent, unparseable, and unrecognized alike.
+    const headers = Headers.newBuilder()
+      .add('content-type', 'not a media type at all')
+      .build();
+    expect(await baseResponse(readableOf('ok'), headers).text()).toBe('ok');
+  });
+
   test('text() falls back to UTF-8 when the declared charset is unrecognized', async () => {
     const headers = Headers.newBuilder()
       .add('content-type', 'text/plain;charset=bogus-charset')
@@ -210,9 +230,74 @@ describe('close (HTTP-41/BODY-15, HTTP-43)', () => {
     expect(cancelled).toBe(true);
   });
 
-  test('[Symbol.asyncDispose] delegates to close()', async () => {
+  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=18.17 floor', () => {
+    // The symbol postdates engines.node ">=18.17", where the computed key evaluates to `undefined`
+    // and binds the method to the string "undefined" instead. Asserting its ABSENCE is what keeps it
+    // from being reintroduced ahead of the floor bump that would make it real on every resource owner.
     const response = baseResponse(readableOf('x'));
-    await response[Symbol.asyncDispose]();
-    expect(response.close()).resolves.toBeUndefined();
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(response)),
+    ).not.toContain('undefined');
+    expect(typeof response.close).toBe('function');
+  });
+});
+
+describe('the close guarantee survives a locked body (BODY-16)', () => {
+  // `getReader()` itself throws when an external consumer already holds the lock, and BODY-15
+  // forbids assuming the body was never touched. Acquiring the reader above the try meant the one
+  // failure BODY-16's guarantee most needs to cover was the one that skipped close entirely.
+  function lockedResponse(): {response: Response; released: () => boolean} {
+    let released = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1]));
+      },
+      cancel() {
+        released = true;
+      },
+    });
+    const response = baseResponse(stream);
+    stream.getReader(); // an external consumer takes the lock
+    return {response, released: () => released};
+  }
+
+  test('bytes() still closes the response when the body is already locked', async () => {
+    const {response, released} = lockedResponse();
+    expect((await rejection(response.bytes())).name).toBe('TypeError');
+    // The connection is released as far as this response can release it; the external lock holder's
+    // own close finishes the job, exactly as close() already documents.
+    expect(released()).toBe(false);
+    // Idempotent and already-closed: a second close is a no-op rather than a second cancel attempt.
+    await response.close();
+  });
+
+  test('text() inherits the same guarantee', async () => {
+    const {response} = lockedResponse();
+    expect((await rejection(response.text())).name).toBe('TypeError');
+    await response.close();
+  });
+});
+
+describe('construction is builder-only (HTTP-2)', () => {
+  test('the constructor is unreachable from outside the module', () => {
+    // `Response` is exported as a VALUE, so a public field-wise constructor would let a caller skip
+    // build()'s required-field validation and would appear in the emitted .d.ts. The private
+    // constructor plus the createResponse friend hook is what prevents both.
+    //
+    // The assertion is the @ts-expect-error itself: every argument below is well-typed and the arity
+    // is right, so privacy is the ONLY reason this line errors. If the private constructor is ever
+    // lost, the suppression becomes unused and `tsc` fails the build.
+    const args = [
+      baseRequest(),
+      Protocol.HTTP_1_1,
+      Status.of(200),
+      undefined,
+      Headers.newBuilder().build(),
+      null,
+    ] as const;
+    const construct = (): unknown =>
+      // @ts-expect-error -- HTTP-2: constructible only through ResponseBuilder, never directly.
+      new Response(...args);
+    expect(construct()).toBeInstanceOf(Response);
   });
 });

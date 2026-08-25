@@ -23,18 +23,25 @@ export class TypedResponse<T> {
     this.#parse = parse;
   }
 
+  /** The response status, carrying HTTP-11's range classification. Never touches the body. */
   get status(): Response['status'] {
     return this.#response.status;
   }
 
+  /** The response headers. Never touches the body. */
   get headers(): Response['headers'] {
     return this.#response.headers;
   }
 
+  /** The negotiated protocol as its lower-case wire token, e.g. `http/1.1`. */
   get protocol(): string {
     return this.#response.protocol.token; // lower-case token string (Protocol.token)
   }
 
+  /**
+   * The reason phrase as sent, or `undefined` when the transport supplied none -- following
+   * `Response.reasonPhrase` rather than re-converting absence to `null`.
+   */
   get reason(): string | undefined {
     return this.#response.reasonPhrase;
   }
@@ -49,6 +56,7 @@ export class TypedResponse<T> {
    * subsequent calls return the same parsed value (or re-throw the same error) without re-parsing or
    * re-reading the body (HTTP-44). Concurrent first callers share the single in-flight parse (HTTP-45).
    *
+   * @returns the parsed value.
    * @throws Whatever the parser raises -- rethrown identically on every later call, never re-parsed.
    */
   value(): Promise<T> {

@@ -3,13 +3,36 @@
 // Exercises: BODY-17 (mirror + forward the full untruncated payload), BODY-18 (tap clears at the start
 // of every write), BODY-19 (tap cap, full payload unaffected), BODY-20 (partial-failure snapshot), BODY-21
 // (replayable/materialize pass through, preserving the tap CAP without sharing its buffer), BODY-37 (no
-// backing-buffer escape hatch)
+// backing-buffer escape hatch), plus the decorator's own sink ownership: an abort must reach the
+// primary sink rather than stopping at the adapter (RECOV-12)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {InvariantViolation} from '../invariant.js';
 import {withRequestLogging} from './request-body-logging.js';
+import {rejection} from '../io/test-support/rejection.js';
+import type {Body} from './body.js';
+import {ConsumedBodyError} from './errors.js';
 import {byteArrayBody} from './simple-bodies.js';
 import {streamBody} from './stream-body.js';
+
+/** Sentinel distinguishing "abort() never ran" from "abort(undefined)". */
+const NOT_ABORTED = Symbol('not-aborted');
+
+/** A healthy sink that records which teardown path the body took. */
+function observableSink(): {
+  sink: WritableStream<Uint8Array>;
+  aborted: () => unknown;
+  closed: () => boolean;
+} {
+  let aborted: unknown = NOT_ABORTED;
+  let closed = false;
+  const sink = new WritableStream<Uint8Array>({
+    write: () => undefined,
+    close: () => void (closed = true),
+    abort: reason => void (aborted = reason),
+  });
+  return {sink, aborted: () => aborted, closed: () => closed};
+}
 
 function collectingSink(): {
   sink: WritableStream<Uint8Array>;
@@ -188,5 +211,71 @@ describe('materialize does not alias the tap (BODY-21)', () => {
     const {sink} = collectingSink();
     await materialized.writeTo(sink);
     expect([...materialized.snapshot()]).toEqual([1, 2]);
+  });
+});
+
+describe('the decorator owns the sink it was handed (BODY-17, RECOV-12)', () => {
+  // The adapter stream the tee hands the delegate must forward BOTH teardown paths. Without an
+  // `abort` algorithm on it the delegate's abort stops at the decorator -- the adapter's default
+  // abort is a no-op -- so the real sink is never told the message is broken and a truncated body
+  // can be committed downstream as a complete one.
+
+  test('a delegate failure aborts the primary sink rather than closing it', async () => {
+    // A declared length the stream cannot satisfy: withBodyWriter aborts, and that abort has to
+    // reach the caller's sink through the tee.
+    const {sink, aborted, closed} = observableSink();
+    const short = streamBody(bytesStream(1, 2), undefined, 5);
+    const logged = withRequestLogging(short, 10);
+
+    expect((await rejection(logged.writeTo(sink))).name).toBe(
+      'EndOfStreamError',
+    );
+    expect(aborted()).not.toBe(NOT_ABORTED);
+    expect(closed()).toBe(false);
+  });
+
+  test('a delegate that refuses before writing still tears the primary sink down', async () => {
+    // ConsumedBodyError is raised before the adapter is ever touched, so neither of its handlers
+    // runs and only writeTo's own catch can release the writer it took.
+    const {sink, aborted, closed} = observableSink();
+    const body = streamBody(bytesStream());
+    await body.writeTo(new WritableStream());
+    const logged = withRequestLogging(body, 10);
+
+    expect(await rejection(logged.writeTo(sink))).toBeInstanceOf(
+      ConsumedBodyError,
+    );
+    expect(aborted()).toBeInstanceOf(ConsumedBodyError);
+    expect(closed()).toBe(false);
+  });
+
+  test('a delegate that resolves without closing the adapter still closes the primary', async () => {
+    // Body.writeTo's contract is that the body closes the sink it was given. A delegate that just
+    // resolves would otherwise strand the caller's sink open and locked, with nothing thrown.
+    const {sink, aborted, closed} = observableSink();
+    const rogue: Body = {
+      kind: 'byte-array',
+      mediaType: undefined,
+      contentLength: 1,
+      replayable: true,
+      writeTo: async (target: WritableStream<Uint8Array>): Promise<void> => {
+        const writer = target.getWriter();
+        await writer.write(Uint8Array.from([1]));
+        writer.releaseLock(); // resolves without close() or abort()
+      },
+    };
+
+    await withRequestLogging(rogue, 10).writeTo(sink);
+    expect(closed()).toBe(true);
+    expect(aborted()).toBe(NOT_ABORTED);
+  });
+
+  test('a successful write closes the primary sink and never aborts it', async () => {
+    const {sink, aborted, closed} = observableSink();
+    await withRequestLogging(byteArrayBody(Uint8Array.from([1])), 10).writeTo(
+      sink,
+    );
+    expect(closed()).toBe(true);
+    expect(aborted()).toBe(NOT_ABORTED);
   });
 });

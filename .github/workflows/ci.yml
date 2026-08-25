@@ -47,6 +47,9 @@ jobs:
       - name: Dual JS/TS consumption check
         run: bun run verify:dual-consumption
 
+      - name: Consumer typecheck against the published .d.ts
+        run: bun run verify:consumer-types
+
       - name: SEAM-1 zero-dependency check
         run: bun run verify:seam-1
 

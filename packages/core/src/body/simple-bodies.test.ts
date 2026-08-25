@@ -3,10 +3,13 @@
 // Exercises: HTTP-36/BODY-1 (mediaType, contentLength, replayable, writeTo), HTTP-38/BODY-35 (replayable
 // by source; form-urlencoded uses "+" for space, distinct from RFC 3986 query encoding; a field value
 // that cannot be rendered is raised, never dropped), HTTP-26/HTTP-51 (a media type is header-safe),
-// RECOV-12 (a close failure never masks the primary write failure)
+// RECOV-12 (a close failure never masks the primary write failure), HTTP-1/XCUT-15 (frozen at
+// construction, so the declared length cannot be desynced from the bytes writeTo emits)
 import {describe, expect, test} from 'bun:test';
 import {MediaTypeParseError} from '../http/errors.js';
 import {FormBodyValidationError} from './errors.js';
+import {multipartBody} from './multipart-body.js';
+import {streamBody} from './stream-body.js';
 import {
   byteArrayBody,
   formUrlEncodedBody,
@@ -184,5 +187,47 @@ describe('form field values (HTTP-38/BODY-35)', () => {
     expect(() => formUrlEncodedBody({missing: undefined} as never)).toThrow(
       FormBodyValidationError,
     );
+  });
+});
+
+describe('every Body variant is frozen at construction (HTTP-1)', () => {
+  // `readonly` is erased at run time. Without the freeze a caller can reassign contentLength after
+  // construction and desync the value a transport stamps into Content-Length from the bytes writeTo
+  // emits -- the same drift HTTP-51 makes MultipartBody share one framing routine to prevent.
+  const variants = (): {name: string; body: object}[] => [
+    {name: 'ByteArrayBody', body: byteArrayBody(Uint8Array.from([1, 2, 3]))},
+    {name: 'StringBody', body: stringBody('abc')},
+    {name: 'FormUrlEncodedBody', body: formUrlEncodedBody({a: 'b'})},
+    {
+      name: 'StreamBody',
+      body: streamBody(
+        new ReadableStream({
+          start: c => {
+            c.close();
+          },
+        }),
+      ),
+    },
+    {
+      name: 'MultipartBody',
+      body: multipartBody([{name: 'a', body: stringBody('x')}], 'B'),
+    },
+  ];
+
+  for (const {name, body} of variants()) {
+    test(`${name} is frozen and refuses a contentLength reassignment`, () => {
+      expect(Object.isFrozen(body)).toBe(true);
+      expect(() => {
+        (body as {contentLength: number}).contentLength = 999;
+      }).toThrow(TypeError);
+    });
+  }
+
+  test('the declared length still matches the bytes written after a reassignment attempt', async () => {
+    const body = byteArrayBody(Uint8Array.from([1, 2, 3]));
+    expect(() => {
+      (body as {contentLength: number}).contentLength = 999;
+    }).toThrow(TypeError);
+    expect((await drain(body)).length).toBe(body.contentLength);
   });
 });

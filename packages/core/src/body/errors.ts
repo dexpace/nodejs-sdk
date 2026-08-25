@@ -18,6 +18,7 @@ import {DexpaceError} from '../http/errors.js';
  * @public
  */
 export class ConsumedBodyError extends DexpaceError {
+  /** The `Body.kind` of the variant that refused the write. */
   readonly bodyKind: string;
 
   constructor(bodyKind: string, options?: ErrorOptions) {
@@ -35,6 +36,7 @@ export class ConsumedBodyError extends DexpaceError {
  * @public
  */
 export class MultipartBoundaryError extends DexpaceError {
+  /** The rejected boundary, exactly as supplied. */
   readonly boundary: string;
 
   constructor(boundary: string, options?: ErrorOptions) {
@@ -51,6 +53,7 @@ export class MultipartBoundaryError extends DexpaceError {
  * @public
  */
 export class FormBodyValidationError extends DexpaceError {
+  /** The form field name whose value could not be rendered. */
   readonly field: string;
 
   constructor(field: string, value: unknown, options?: ErrorOptions) {

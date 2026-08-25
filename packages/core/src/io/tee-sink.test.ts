@@ -6,7 +6,8 @@
 // IO-28 (no direct backing-buffer handle), IO-29 (flush/close/emit forward to the primary only),
 // IO-42 (write after close rejects with the source intact),
 // IO-13 (the tap mirrors the primary's exact encoded bytes, and refuses a label identically),
-// IO-16 (the tee's own writable bridge still feeds the tap)
+// IO-16 (the tee's own writable bridge still feeds the tap),
+// IO-3 (a negative count is an argument error, rejected before any transfer)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {BufferedSink} from './buffered-sink.js';
@@ -273,5 +274,30 @@ describe('TeeSink as a first-class sink (IO-16, IO-25)', () => {
     await tee.writeUtf8('');
     expect(chunkSizes()).toEqual([]);
     expect(tee.snapshot().length).toBe(0);
+  });
+});
+
+describe('argument validation (IO-3)', () => {
+  test('a negative count is rejected before the source or the tap is touched', async () => {
+    // Previously reached the tee unchecked and was rejected only indirectly, by whichever ByteQueue
+    // call happened to run first -- and not at all on the count === 0 and short-source early returns.
+    const {stream, chunkSizes} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    const source = queueOf(Uint8Array.from([1, 2, 3]));
+
+    expect((await rejection(tee.write(source, -1))).name).toBe(
+      'InvariantViolation',
+    );
+    expect(source.size).toBe(3);
+    expect(tee.snapshot().length).toBe(0);
+    expect(chunkSizes()).toEqual([]);
+  });
+
+  test('a negative count is rejected even when the source is empty', async () => {
+    const {stream} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    expect((await rejection(tee.write(new ByteQueue(), -1))).name).toBe(
+      'InvariantViolation',
+    );
   });
 });

@@ -3,6 +3,7 @@
 import {invariant} from '../invariant.js';
 import {ByteQueue} from './byte-queue.js';
 import {ClosedResourceError, EndOfStreamError, IoError} from './errors.js';
+import {assertCount} from './limits.js';
 import type {Sink} from './sink.js';
 import {encodeText} from './text-codec.js';
 
@@ -61,6 +62,10 @@ export class TeeSink implements Sink {
    * exactly that, so the tap records what was ATTEMPTED, not what reached the wire.
    */
   async write(src: ByteQueue, count: number): Promise<void> {
+    // IO-3: a negative or non-integer count is an argument error, rejected here rather than left to
+    // whichever `ByteQueue` call happens to run first -- which reported it only as a side effect of
+    // `copyTo`, and not at all on the `count === 0` and short-source paths that return early.
+    assertCount(count);
     // IO-42: reject before consuming from `src` or touching the tap.
     if (this.#primary.closed) throw new ClosedResourceError('TeeSink');
     if (src.size < count) throw new EndOfStreamError(src.size, count);

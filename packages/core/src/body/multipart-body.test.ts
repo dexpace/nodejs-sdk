@@ -33,6 +33,39 @@ function oneByteStream(): ReadableStream<Uint8Array> {
   });
 }
 
+/** Awaits a rejection and returns its reason, failing loudly when the promise resolves. */
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error as Error;
+  }
+  throw new Error('expected the promise to reject, but it resolved');
+}
+
+function collectingSink(): {
+  sink: WritableStream<Uint8Array>;
+  written: () => Uint8Array;
+} {
+  const chunks: Uint8Array[] = [];
+  const sink = new WritableStream<Uint8Array>({
+    write: c => void chunks.push(c),
+  });
+  return {
+    sink,
+    written: () => {
+      const total = chunks.reduce((sum, c) => sum + c.length, 0);
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.length;
+      }
+      return out;
+    },
+  };
+}
+
 async function drain(body: {
   writeTo: (sink: WritableStream<Uint8Array>) => Promise<void>;
 }): Promise<string> {
@@ -267,5 +300,52 @@ describe('MultipartBody failure propagation (RECOV-12)', () => {
       },
     });
     expect(body.writeTo(sink)).rejects.toThrow('SOCKET GONE');
+  });
+});
+
+describe('the declared length is verified against what is written (HTTP-51)', () => {
+  // MultipartPart.body is the public `Body` interface, so a caller-supplied implementation can
+  // report one length and write another. The shared framing routine keeps the FRAMING consistent
+  // but takes each part's own contentLength on trust, which desynchronizes the value a transport
+  // stamps into Content-Length from what is actually on the socket.
+  function lyingBody(declared: number, actual: number): Body {
+    return {
+      kind: 'byte-array',
+      mediaType: undefined,
+      contentLength: declared,
+      replayable: true,
+      writeTo: async (sink: WritableStream<Uint8Array>): Promise<void> => {
+        const writer = sink.getWriter();
+        await writer.write(new Uint8Array(actual).fill(65));
+        await writer.close();
+      },
+    };
+  }
+
+  test('a part that overruns its declared length is stopped before the extra bytes reach the sink', async () => {
+    const {sink, written} = collectingSink();
+    const body = multipartBody([{name: 'a', body: lyingBody(1, 5)}], 'B');
+    const declared = body.contentLength;
+
+    expect((await rejection(body.writeTo(sink))).name).toBe('EndOfStreamError');
+    // Same reasoning as StreamBody's overrun check: once the length is stamped, a byte past it sits
+    // where the peer reads it as the start of the next message.
+    expect(written().length).toBeLessThanOrEqual(declared);
+  });
+
+  test('a part that writes fewer bytes than it declared fails rather than sending a short body', async () => {
+    const {sink} = collectingSink();
+    const body = multipartBody([{name: 'a', body: lyingBody(5, 1)}], 'B');
+    expect((await rejection(body.writeTo(sink))).name).toBe('EndOfStreamError');
+  });
+
+  test('an unknown-length composite is not length-checked at all', async () => {
+    // contentLength collapses to -1, so there is no declared value to disagree with.
+    const body = multipartBody(
+      [{name: 'a', body: streamBody(oneByteStream())}],
+      'B',
+    );
+    expect(body.contentLength).toBe(-1);
+    await body.writeTo(collectingSink().sink);
   });
 });

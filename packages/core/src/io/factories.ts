@@ -86,6 +86,14 @@ export function bufferedSourceOverPrimitive(
             'foreign source returned 0 bytes for a positive request',
           );
         }
+        // IO-17: over-reporting is a contract violation too, and must say so. Left to `takeBytes` it
+        // surfaced as `EndOfStreamError: delivered 2 of 99 bytes` -- reporting a foreign source's
+        // broken accounting as an exhausted stream, which is the exact confusion IO-17 forbids.
+        if (staging.size < read) {
+          throw new SourceContractViolationError(
+            `foreign source reported ${String(read)} bytes but appended only ${String(staging.size)}`,
+          );
+        }
         const chunk = staging.takeBytes(read);
         // IO-17: appending more than it reported is a contract violation too. Silently dropping the
         // excess is how bytes go missing with no error at all.
