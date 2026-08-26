@@ -136,10 +136,10 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
    *
    * The range check is deliberately wider than "not negative". A retry ceiling is a count of wire
    * sends, so `Infinity` and `NaN` are as out-of-range as `-1` -- and they are worse in effect: a
-   * negative value at least fails a downstream `>= 1` guard, while a non-finite one makes a retry
-   * driver's "attempt >= ceiling" test permanently false and its loop unbounded. HTTP-35's point is
-   * that an out-of-range retry count is a loud error at the call site that supplied it, never a
-   * value reinterpreted somewhere downstream.
+   * negative value at least fails a downstream lower-bound guard, while a non-finite one makes a
+   * retry driver's "have I reached the ceiling" test permanently false and its loop unbounded.
+   * HTTP-35's point is that an out-of-range retry count is a loud error at the call site that
+   * supplied it, never a value reinterpreted somewhere downstream.
    *
    * @returns this builder, for chaining.
    * @throws {@link RequestOptionsValidationError} when a defined value is negative, fractional, or
