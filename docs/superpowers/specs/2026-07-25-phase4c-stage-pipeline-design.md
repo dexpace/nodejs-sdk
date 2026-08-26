@@ -456,6 +456,7 @@ first ships a pillar step.
 | `PIPE-26`'s "delegate execute/execute-async to its own send/send-async" satisfied by one `send()` method | `PIPE-26`'s literal two-method framing | Follows directly from the row above: `Transport` has one method, so there is nothing to delegate to beyond it |
 | Steps are functions wrapped in a `StepDescriptor`, not classes implementing an interface | Reference's class-based step modeling (`PIPE-36`'s subclass-locking framing) | `sdk-design-nodejs/05`'s existing precedent; `StepDescriptor.type` (a `symbol`) carries the identity/anchor-matching role a class hierarchy would otherwise provide |
 | `Stage` is a string-literal union plus an explicit `STAGE_ORDER` array, not numeric enum values with gaps | `PIPE-3`'s "sparse numeric order keys" (SHOULD, naming a mechanism) | The styleguide bars TS `enum` outright (erasable-syntax rule, binding since Phase 0); a string union + ordered array satisfies the same underlying goal (inserting a stage never touches existing stages' identities) without a numeric type at all |
+| Two `eslint-disable` directives ship in this phase | The plan's lint-gate pre-check, which asserted "No `eslint-disable` anywhere in this phase" | Added during implementation (2026-08-26). (1) `PillarCollisionError(stage, existingType, incomingType, options?)` is four parameters and `max-params` counts them — the plan's audit covered the builder's methods and `Cursor`/`Runtime`'s constructors but not the error leaves. `PIPE-5` fixes the first three and `DexpaceError`'s contract fixes the trailing `options?: ErrorOptions`, so the shape is not reducible; `HttpStatusError` (Phase 3) established the same exemption for the same reason. (2) `runtime.test.ts` disables `@typescript-eslint/require-await` on a step that throws before its first `await` — that shape *is* the case under test (`PIPE-29`/`PIPE-30`'s structural claim), and rewriting it as `Promise.reject` would exercise something else. Both carry the `-- reason` that `eslint-comments/require-description` demands (`NFR-7`) |
 
 ## Deferred Items
 
@@ -513,6 +514,24 @@ ships (plumbing, no pillar steps — a test that needs redirect or retry *behavi
   "reusing the handle... MUST be treated as a defect"). Note this is *stronger* than the reference, whose
   conformance clause describes the handle silently resuming past already-visited steps — the behavior the
   one-shot guard makes unreachable, so that clause is not transcribable as written.
+
+**Added during the 2026-08-26 implementation review**, all testable with plumbing alone and none of them
+covered by the list above as written:
+
+- `PIPE-12`'s two remaining clauses, each its own case: a step that short-circuits (returns without calling
+  `next`) never reaches the terminal transport, and a step may substitute the outbound response on the way
+  back out.
+- `PIPE-26`'s "a configured pipeline can stand in wherever a transport is expected... and options survive the
+  indirection": a `Runtime` nested as another `Runtime`'s transport — step order across both hops, and the
+  caller's `options`/`signal` reaching the terminal transport by reference.
+- `PIPE-14`'s stickiness *across forks* (the design's "visible to every subsequent fork" claim, distinct from
+  the downstream-within-one-drive case): a substitution made inside one fork is what the next fork dispatches.
+- `PIPE-10`/`PIPE-11`'s concurrency claim: two interleaved `send()` calls on one `Runtime` each reach the
+  transport with their own in-flight request, which is what a shared mutable `#request` would break.
+- `PIPE-25`/`PIPE-10`'s immutability, structurally rather than by equality: `Runtime.steps` is frozen, and
+  mutating the array handed to the constructor afterwards cannot reach the built runtime.
+- `PIPE-23`'s all-or-nothing on the `SEND` rejection path, not only on a pillar collision; and `PIPE-20`/
+  `PIPE-5`'s interaction — a pillar emptied by `remove` accepts a step of a different type.
 
 `PIPE-40`'s response-release discipline is a contract on wrapping steps, not on `Cursor`/`Runtime` (see "Cursor
 and fork"), and its conformance clause is a 2-hop redirect — untestable without a redirect step. It moves to the
