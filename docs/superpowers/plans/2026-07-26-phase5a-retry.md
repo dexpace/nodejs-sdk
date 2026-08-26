@@ -38,10 +38,20 @@ classification, backoff math, and pacing parsing take no I/O and no clock — dr
 engine, not two stacks** — `RETRY-28` explicitly instructs a unifying port to make the total-timeout opt-in, which
 `RetrySettings.totalTimeoutMs` does.
 
-**Tech Stack:** TypeScript 5.8+, native `SuppressedError`, `fast-check` for the four invariant-bearing pure
+**Tech Stack:** TypeScript 5.8+, Phase 4b's guarded `suppress()` helper (never native `SuppressedError` — see below), `fast-check` for the four invariant-bearing pure
 functions, `bun test`. No new runtime dependencies — `SEAM-1` untouched. No `node:` imports — core's zero-`node:`
 invariant, mechanically enforced since the scaffold, still holds (the RFC 1123 parser and the timer are both
 platform-neutral).
+
+> ### ✅ F1 CLOSED — use `suppress()`, not `new SuppressedError(...)`
+>
+> Resolved 2026-08-26 in Phase 4b as branch (b): `packages/core/src/suppress.ts` ships
+> `suppress(error, suppressed, message)` — native `SuppressedError` when `globalThis.SuppressedError` exists, a
+> shape-compatible stand-in (`name`, `error`, `suppressed`) when it does not. The native class reached Node only
+> in **24.0.0** and `engines.node` is `>=20.3`, so the direct form neither type-checks (not in this package's
+> `lib`) nor runs on the floor. Every `new SuppressedError(...)` below becomes `suppress(...)`, and every
+> `toBeInstanceOf(SuppressedError)` becomes an assertion on that shape — the `instanceof` form would silently
+> assert nothing on the floor runtime.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, 4a, 4b, and 4c are implemented exactly as their plans
 specify, **plus Phase 7a's `Clock` seam** (added by the 2026-07-28 Phase 7a brainstorm's retrofit — see the

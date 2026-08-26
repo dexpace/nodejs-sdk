@@ -261,10 +261,12 @@ serde semantics) rather than methods.
 
   **Runtime-floor note on the close-failure path.** Preserving a decode failure as primary while carrying the
   close failure alongside it is what `SuppressedError` is for, and `SuppressedError` is **not available on the
-  declared `engines.node` floor** — it is a V8 global from the full Explicit Resource Management proposal,
-  absent on every 18.x runtime, and `esnext.disposable` in `lib` supplies only the type. This is the open
-  cross-phase decision recorded at `plans/2026-07-25-phase4b-recovery-chain.md:22-47`; 6a is a fourth site
-  alongside 5a, 6b and 6c, and whichever option lands there lands here unchanged.
+  declared `engines.node` floor** — it belongs to the full Explicit Resource Management proposal, which reached
+  Node only in 24.0.0, against a floor of `>=20.3`, and this package's `lib` does not supply its type either.
+  The cross-phase decision is **closed**: Phase 4b resolved it to branch (b) and shipped
+  `suppress(error, suppressed, message)` in `packages/core/src/suppress.ts` — native class where the runtime has
+  one, shape-compatible stand-in where it does not. 6a calls that helper and asserts its shape, never
+  `instanceof SuppressedError`.
 - `SERDE-28`: 2xx decodes. **4xx/5xx delegates to 3b's `toHttpError()`** — that function already buffers a bounded
   error body inside the response's own close-guaranteeing scope, at the shared 1 MiB cap `BODY-30`/`HTTP-52`
   define and `§14` itself points at. Building a second cap here would be a defect. Other non-2xx (1xx, an
