@@ -26,6 +26,8 @@
     "typecheck": "tsc -p packages/core/tsconfig.json --noEmit",
     "build": "tsc -p packages/core/tsconfig.build.json",
     "test": "bun test",
+    "knowledge": "node scripts/knowledge.mjs",
+    "test:knowledge": "node --test 'scripts/*.test.mjs'",
     "api": "cd packages/core && bun run api:ci",
     "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm",
     "audit": "bun audit --audit-level=high --prod",

@@ -41,9 +41,9 @@
   <sub>spec · `docs/product-spec/13-server-sent-events-and-streaming.md:37-37` · high · sha:dd401a407f5d</sub>
 - The SSE streaming facade MUST own exactly one closeable resource and MUST close it exactly once across the stream's whole life regardless of termination path (clean end, explicit close, use-block exit, partial consume, or mid-stream failure).
   <sub>spec · `docs/product-spec/13-server-sent-events-and-streaming.md:45-45` · high · sha:dd401a407f5d</sub>
-- On reader end-of-stream during iteration, the SSE facade MUST both terminate the iterator cleanly and release the resource, so a fully-consumed stream needs no explicit close.
+- On reader end-of-stream during iteration, the SSE facade MUST both terminate the iterator cleanly and release the resource, so a fully-consumed stream needs no explicit close (SSE-24).
   <sub>spec · `docs/product-spec/13-server-sent-events-and-streaming.md:46-46` · high · sha:dd401a407f5d</sub>
-- A partial consume of the SSE stream MUST NOT strand the resource; closing after reading only some events MUST release it.
+- A partial consume of the SSE stream MUST NOT strand the resource; closing after reading only some events MUST release it (SSE-25).
   <sub>spec · `docs/product-spec/13-server-sent-events-and-streaming.md:47-47` · high · sha:dd401a407f5d</sub>
 - The SSE streaming facade MUST be single-pass such that obtaining an iterator succeeds at most once, and a second attempt MUST fail loudly.
   <sub>spec · `docs/product-spec/13-server-sent-events-and-streaming.md:48-48` · high · sha:dd401a407f5d</sub>

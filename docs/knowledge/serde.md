@@ -5,9 +5,9 @@
   <sub>spec · `docs/product-spec/14-serialization-serde.md:7-7` · high · sha:c6bc7789c3a9</sub>
 - A Serde MUST declare the wire media type it produces, that media type MUST be used as the default Content-Type when a request body is created from a value plus a Serde, and the media type MUST NOT be defaulted to a format-agnostic constant at the SPI level.
   <sub>spec · `docs/product-spec/14-serialization-serde.md:8-8` · high · sha:c6bc7789c3a9</sub>
-- When encoding into or decoding from a caller-supplied stream, the serializer/deserializer MUST read/write the payload fully to EOF on the read side but MUST NOT close or take ownership of the caller's stream, and the encode-into-buffer profile likewise touches only the target region without assuming ownership.
+- When encoding into or decoding from a caller-supplied stream, the serializer/deserializer MUST read/write the payload fully to EOF on the read side but MUST NOT close or take ownership of the caller's stream, and the encode-into-buffer profile likewise touches only the target region without assuming ownership (SEAM-20).
   <sub>spec · `docs/product-spec/14-serialization-serde.md:12-12` · high · sha:c6bc7789c3a9</sub>
-- The encode-into-buffer serialization profile MUST return the number of bytes written, MUST honor a start offset, MUST throw a range/overflow error distinct from the serde exception type when the offset is out of range or the payload does not fit, and MUST leave bytes before the offset untouched.
+- The encode-into-buffer serialization profile MUST return the number of bytes written, MUST honor a start offset, MUST throw a range/overflow error distinct from the serde exception type when the offset is out of range or the payload does not fit, and MUST leave bytes before the offset untouched (SEAM-20).
   <sub>spec · `docs/product-spec/14-serialization-serde.md:13-13` · high · sha:c6bc7789c3a9</sub>
 - Every decode operation MUST take an explicit runtime type witness for the target type, and a decoder MUST NOT rely on erased compile-time generics because on an erasure-based runtime that silently yields an untyped map/list which detonates as a cast error on first field access.
   <sub>spec · `docs/product-spec/14-serialization-serde.md:17-17` · high · sha:c6bc7789c3a9</sub>
@@ -15,11 +15,11 @@
   <sub>spec · `docs/product-spec/14-serialization-serde.md:18-18` · high · sha:c6bc7789c3a9</sub>
 - An ergonomic reified/inline decode helper, where the host language offers one, MUST capture the full generic type and route through the generic carrier rather than forwarding only the raw class.
   <sub>spec · `docs/product-spec/14-serialization-serde.md:19-19` · high · sha:c6bc7789c3a9</sub>
-- The generic type carrier MUST capture a concrete, fully-resolved type at construction and MUST reject construction with no type argument or an unresolved type variable, failing fast with an actionable message.
+- The generic type carrier MUST capture a concrete, fully-resolved type at construction and MUST reject construction with no type argument or an unresolved type variable, failing fast with an actionable message (SEAM-22).
   <sub>spec · `docs/product-spec/14-serialization-serde.md:20-20` · high · sha:c6bc7789c3a9</sub>
-- Encode/decode failures MUST surface as the SDK's stable serde exception type or a subtype; adapters MUST catch the backing codec's processing failures and rethrow as the serde type, MUST chain the original as the cause, and MUST NOT allow a backing-library exception type to escape the SPI.
+- Encode/decode failures MUST surface as the SDK's stable serde exception type or a subtype; adapters MUST catch the backing codec's processing failures and rethrow as the serde type, MUST chain the original as the cause, and MUST NOT allow a backing-library exception type to escape the SPI (SEAM-23).
   <sub>spec · `docs/product-spec/14-serialization-serde.md:24-24` · high · sha:c6bc7789c3a9</sub>
-- Write-path serde failures MUST be a serialization-specific subtype and read-path failures a deserialization-specific subtype, both of a common root exception type, so callers can distinguish direction while catching one base type.
+- Write-path serde failures MUST be a serialization-specific subtype and read-path failures a deserialization-specific subtype, both of a common root exception type, so callers can distinguish direction while catching one base type (SEAM-23).
   <sub>spec · `docs/product-spec/14-serialization-serde.md:25-25` · high · sha:c6bc7789c3a9</sub>
 - A genuine stream I/O error raised while reading/writing a caller-owned stream MUST propagate unwrapped as an I/O error and MUST NOT be re-wrapped as a serde exception; only malformed-input, shape-mismatch, or unencodable-value failures are wrapped.
   <sub>spec · `docs/product-spec/14-serialization-serde.md:27-27` · high · sha:c6bc7789c3a9</sub>

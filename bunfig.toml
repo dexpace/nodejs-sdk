@@ -2,3 +2,7 @@
 coverage = true
 coverageThreshold = 0.8
 coverageSkipTestFiles = true
+# The 80% floor is a statement about `packages/core`. Scoping discovery to
+# `packages` keeps `scripts/*.test.mjs` — repo tooling, run via
+# `bun run test:knowledge` (`node --test`) — out of both the run and the floor.
+root = "packages"
