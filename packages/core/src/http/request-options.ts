@@ -131,15 +131,24 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
    * Sets the per-call retry ceiling.
    *
    * @param value - the maximum retries, or `undefined` for no override. `0` is accepted and means
-   * "disable retries for this call"; a negative count is rejected rather than silently
-   * reinterpreted (HTTP-35).
+   * "disable retries for this call"; anything that is not a non-negative integer is rejected rather
+   * than silently reinterpreted (HTTP-35).
+   *
+   * The range check is deliberately wider than "not negative". A retry ceiling is a count of wire
+   * sends, so `Infinity` and `NaN` are as out-of-range as `-1` -- and they are worse in effect: a
+   * negative value at least fails a downstream lower-bound guard, while a non-finite one makes a
+   * retry driver's "have I reached the ceiling" test permanently false and its loop unbounded.
+   * HTTP-35's point is that an out-of-range retry count is a loud error at the call site that
+   * supplied it, never a value reinterpreted somewhere downstream.
+   *
    * @returns this builder, for chaining.
-   * @throws {@link RequestOptionsValidationError} when a defined value is negative.
+   * @throws {@link RequestOptionsValidationError} when a defined value is negative, fractional, or
+   * not finite.
    */
   maxRetries(value: number | undefined): this {
-    if (value !== undefined && value < 0) {
+    if (value !== undefined && !(Number.isInteger(value) && value >= 0)) {
       throw new RequestOptionsValidationError(
-        `maxRetries must not be negative, got ${String(value)}`,
+        `maxRetries must be a non-negative integer, got ${String(value)}`,
       );
     }
     this.#maxRetries = value;

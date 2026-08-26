@@ -43,9 +43,31 @@ describe('maxRetries validation (HTTP-35)', () => {
     );
   });
 
+  test('rejects a non-finite maxRetries, which would make a retry loop unbounded', () => {
+    // Worse in effect than a negative value: a negative one still fails a downstream `>= 1` guard,
+    // while Infinity/NaN make an "attempt >= ceiling" test permanently false and the loop endless.
+    for (const value of [Number.POSITIVE_INFINITY, Number.NaN]) {
+      expect(() => RequestOptions.newBuilder().maxRetries(value)).toThrow(
+        RequestOptionsValidationError,
+      );
+    }
+  });
+
+  test('rejects a fractional maxRetries, which is not a count of wire sends', () => {
+    expect(() => RequestOptions.newBuilder().maxRetries(1.5)).toThrow(
+      RequestOptionsValidationError,
+    );
+  });
+
   test('accepts 0, meaning "disable retries for this call"', () => {
     expect(RequestOptions.newBuilder().maxRetries(0).build().maxRetries).toBe(
       0,
+    );
+  });
+
+  test('accepts a positive integer', () => {
+    expect(RequestOptions.newBuilder().maxRetries(3).build().maxRetries).toBe(
+      3,
     );
   });
 });

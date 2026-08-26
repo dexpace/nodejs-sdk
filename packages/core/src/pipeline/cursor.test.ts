@@ -379,3 +379,132 @@ describe('Cursor fork (PIPE-15, PIPE-16, PIPE-17)', () => {
     ]);
   });
 });
+
+describe('StepContext.signal', () => {
+  test('a step observes the signal the cursor was constructed with', async () => {
+    const controller = new AbortController();
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request);
+    let observed: AbortSignal | undefined;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (_request, ctx) => {
+        observed = ctx.signal;
+        return ctx.next();
+      },
+    };
+
+    await new Cursor({
+      steps: [descriptor],
+      transport: new RecordingTransport(aResponse(200)),
+      request,
+      context,
+      signal: controller.signal,
+    }).advance();
+
+    expect(observed).toBe(controller.signal);
+  });
+
+  test('signal is undefined when the cursor was constructed without one', async () => {
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request);
+    let observed: AbortSignal | undefined = new AbortController().signal;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (_request, ctx) => {
+        observed = ctx.signal;
+        return ctx.next();
+      },
+    };
+
+    await new Cursor({
+      steps: [descriptor],
+      transport: new RecordingTransport(aResponse(200)),
+      request,
+      context,
+    }).advance();
+
+    expect(observed).toBeUndefined();
+  });
+});
+
+describe('StepContext.signal on a pillar step', () => {
+  test('a pillar step observes the signal too', async () => {
+    const controller = new AbortController();
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request);
+    let observed: AbortSignal | undefined;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'RETRY',
+      fn: async (_request, ctx) => {
+        observed = ctx.signal;
+        return ctx.next();
+      },
+    };
+
+    await new Cursor({
+      steps: [descriptor],
+      transport: new RecordingTransport(aResponse(200)),
+      request,
+      context,
+      signal: controller.signal,
+    }).advance();
+
+    expect(observed).toBe(controller.signal);
+  });
+});
+
+describe('StepContext.options (PIPE-17)', () => {
+  test('a step reads the per-call options the cursor was constructed with', async () => {
+    const options = RequestOptions.newBuilder().maxRetries(0).build();
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request);
+    let observed: RequestOptions | undefined;
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (_request, ctx) => {
+        observed = ctx.options;
+        return ctx.next();
+      },
+    };
+
+    await new Cursor({
+      steps: [descriptor],
+      transport: new RecordingTransport(aResponse(200)),
+      request,
+      context,
+      options,
+    }).advance();
+
+    // PIPE-17: the same immutable instance, not a copy.
+    expect(observed).toBe(options);
+  });
+
+  test('options is undefined when the caller supplied none', async () => {
+    const request = aRequest('https://example.com');
+    const context = createRequestContext(request);
+    let observed: RequestOptions | undefined =
+      RequestOptions.newBuilder().build();
+    const descriptor: StepDescriptor = {
+      type: Symbol('observer'),
+      stage: 'LOGGING',
+      fn: async (_request, ctx) => {
+        observed = ctx.options;
+        return ctx.next();
+      },
+    };
+
+    await new Cursor({
+      steps: [descriptor],
+      transport: new RecordingTransport(aResponse(200)),
+      request,
+      context,
+    }).advance();
+
+    expect(observed).toBeUndefined();
+  });
+});

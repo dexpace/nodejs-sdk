@@ -2,6 +2,7 @@
 // packages/core/src/pipeline/step.ts
 import type {ExecutionContext} from '../context/context.js';
 import type {Request} from '../http/request.js';
+import type {RequestOptions} from '../http/request-options.js';
 import type {Response} from '../http/response.js';
 import type {Stage} from './stage.js';
 
@@ -25,16 +26,24 @@ export type Next = (request?: Request) => Promise<Response>;
  * What a step receives on each invocation (PIPE-12). `fork` is present only when the invoking step occupies
  * a pillar stage (PIPE-15/16); an ordinary step's `ctx.fork` is `undefined`.
  *
- * The call's per-call `options` and `AbortSignal` are deliberately absent here: `Cursor` carries both and
- * threads them into the terminal dispatch, but PIPE-17's "readable by any step" clause has no reader until
- * Phase 5a's retry engine, which adds both fields as one additive amendment (5a Task 1).
- *
  * @internal
  */
 export interface StepContext {
   readonly next: Next;
   readonly fork?: (() => Next) | undefined;
   readonly context: ExecutionContext;
+  /**
+   * The call's cancellation signal, threaded from the cursor (PIPE-13). Undefined when the caller
+   * supplied none. A pillar step that waits between drives (retry's backoff, auth's token fetch)
+   * MUST honor it (RETRY-26/RETRY-32).
+   */
+  readonly signal?: AbortSignal | undefined;
+  /**
+   * The caller's per-call options, immutable and shared across every fork (PIPE-17: "readable by
+   * any step"). Undefined when the caller supplied none. The retry step reads `maxRetries`
+   * (RETRY-41/HTTP-35); the auth step reads the per-call auth descriptor (5c).
+   */
+  readonly options?: RequestOptions | undefined;
 }
 
 /**
