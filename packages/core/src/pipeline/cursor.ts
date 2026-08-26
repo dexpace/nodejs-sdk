@@ -86,14 +86,21 @@ export class Cursor {
       `pipeline cursor position ${String(position)} is within bounds but undefined`,
     );
     const next = this.#continuationAt(position + 1, descriptor.stage);
+    // PIPE-17: `signal` and `options` are readable by every step, pillar or not, and are shared by
+    // reference across every fork -- never copied, so a step cannot diverge them per attempt.
+    const shared = {
+      next,
+      context: this.#context,
+      signal: this.#signal,
+      options: this.#options,
+    };
     const ctx: StepContext = PILLAR_STAGES.has(descriptor.stage)
       ? {
-          next,
-          context: this.#context,
+          ...shared,
           fork: (): Next =>
             this.#continuationAt(position + 1, descriptor.stage),
         }
-      : {next, context: this.#context};
+      : shared;
     return descriptor.fn(this.#request, ctx);
   }
 
