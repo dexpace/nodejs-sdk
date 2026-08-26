@@ -16,46 +16,38 @@ reuse Phase 3b's already-async `toHttpError()` directly. **Nothing in this phase
 barrel** — `recovery/` is resilience-layer plumbing; `api-extractor`'s committed report must come back
 byte-identical.
 
-**Tech Stack:** TypeScript 5.8+, `fast-check` for the invariant-bearing-function property tests. No new runtime
+**Tech Stack:** TypeScript 5.8+, `fast-check` for the invariant-bearing-function property tests, and the
+runtime-guarded `suppress()` helper this phase adds for `RECOV-12` (see the notice below). No new runtime
 dependencies — `SEAM-1` untouched.
 
-> ### ⛔ BLOCKED — do not execute this plan yet
+> ### ✅ UNBLOCKED — executed 2026-08-26
 >
-> **`RECOV-12`'s `SuppressedError` is not available on the declared runtime floor.** An earlier draft of this
-> plan claimed it was "already available since Phase 3b's checkpoint lib bump" — that is false and has been
-> removed. The checkpoint raised `engines.node` only to the first release exposing `Symbol.dispose`/
-> `Symbol.asyncDispose` (`plans/2026-07-25-checkpoint-scaffold-through-phase3a.md:57`, believed `18.18.0`,
-> which also forbids any further floor movement as "unreviewed drift"). Node backported those two symbols on
-> its own; `SuppressedError` is a V8 global from the full Explicit Resource Management proposal and is absent
-> on every 18.x runtime.
+> **F1 (`SuppressedError`) resolved to branch (b): a runtime-guarded `suppress()` helper.** The roadmap's
+> "F1 resolution — the verified version facts" settled the choice on evidence: `SuppressedError` belongs to the
+> full Explicit Resource Management proposal, which reached Node only in **24.0.0**. Branch (a) is therefore not
+> a patch bump — it means `engines.node >= 24`, dropping Node 18, 20 and 22 outright for one error class. The
+> floor stayed at `>=20.3` (set by `AbortSignal.any()`), and this package's `lib` is `["ES2023", "DOM",
+> "DOM.AsyncIterable"]`, which does not supply `SuppressedError`'s type either.
 >
-> Adding `esnext.disposable` to `lib` supplies the *type* only. So `new SuppressedError(...)` at Task 3 type-
-> checks, passes `bun test` locally, and then throws `ReferenceError: SuppressedError is not defined` at call
-> time — precisely the `NFR-10` trap `docs/knowledge/tooling-and-quality-gates.md:60-61` describes. Task 7's
-> `bun run verify:node-floor`, `bun run test:node`, and the `node-floor-conformance` job pinned to `18.17.0`
-> would all fail.
+> `packages/core/src/suppress.ts` ships `suppress(error, suppressed, message)`: it constructs the native class
+> when `globalThis.SuppressedError` exists and a shape-compatible stand-in (`name`, `error`, `suppressed`) when
+> it does not, reading the global per call rather than capturing it at module load. Task 3 calls it instead of
+> `new SuppressedError(...)`, and every assertion is written against the shape rather than
+> `toBeInstanceOf(SuppressedError)` — the `instanceof` form would silently assert nothing on the floor runtime.
+> Both branches are forced in `suppress.test.ts`, and `test/node-conformance/recovery-chain.test.mjs` re-forces
+> the guarded branch from real Node, since `bun test` alone only ever exercises whichever branch Bun takes.
 >
-> **Needs a decision, and it is cross-phase** — Phases 5a, 6a, 6b and 6c reach for `SuppressedError` on the same
-> premise (`plans/2026-07-26-phase5a-retry.md:36`, `plans/2026-07-28-phase6a-serde.md`'s `closingAfter` helper,
-> `specs/2026-07-28-phase6b-sse-design.md:163`, `specs/2026-07-28-phase6c-pagination-design.md:192`), so
-> whichever option lands must land in all five:
+> **The same helper is the fix for Phases 5a, 6a, 6b and 6c**, which reach for `SuppressedError` on the same
+> premise. Their plans now point here; each replaces `new SuppressedError(...)` with `suppress(...)` when it
+> executes.
 >
-> - **(a) Raise `engines.node`** past the first release shipping Explicit Resource Management. Consumer-visible
->   breaking change, and the checkpoint forbids unsanctioned floor moves. Confirm the exact release first.
-> - **(b) A runtime-guarded `suppress(primary, secondary)` helper** in `packages/core/src/`, using native
->   `SuppressedError` when `globalThis.SuppressedError` exists and attaching a `suppressed` property otherwise —
->   the same guarded shape the roadmap already sanctioned for `Symbol.asyncDispose`. Changes Task 3's
->   `expect(wrapped).toBeInstanceOf(SuppressedError)` assertion.
->
-> **Second open decision, non-blocking: assertion density.** This phase ships zero `invariant()` calls across
-> roughly a dozen functions, against `docs/knowledge/assertions.md:6-7`'s 2-per-function module average. The
-> concrete cost: no `apply()` checks that a step returned a value at all, so a step returning `undefined`
-> poisons the fold silently and surfaces layers away. Project-wide inconsistency rather than 4b's alone —
-> Phases 1/2/3b/4a ship zero, 4c ships fifteen. Resolve as either postcondition assertions at the fold sites
-> or a Deviation Ledger row, ideally project-wide at Phase 10.
->
-> Both items are tracked in the roadmap's "Open Findings — Phase 4b Validation Review (2026-07-28)" section.
-> Everything else that review raised (F3–F10) is already applied to this plan and its design.
+> **F2 (assertion density) resolved to a Deviation Ledger row**, the alternative F2 itself named. This phase
+> ships zero `invariant()` calls across roughly a dozen functions, against `docs/knowledge/assertions.md:6-7`'s
+> 2-per-function module average, with a named cost: no `apply()` postcondition checks that a step returned a
+> value at all, so a step returning `undefined` poisons the fold silently. It is a project-wide inconsistency
+> rather than 4b's — Phases 1/2/3b/4a ship zero, 4c ships fifteen — so assertions added to 4b alone would deepen
+> the split rather than close it. The design's ledger carries the row; Phase 10 settles the density rule once,
+> project-wide.
 
 **Prerequisite:** This plan assumes Phases 0, 1, 2, 3a, 3b, and 4a are already implemented exactly as their own
 plans specify. Concretely: `packages/core/src/http/*` exports `DexpaceError`, `Request`, `Response`,
@@ -92,8 +84,11 @@ addition alongside the existing `invariant()`/`InvariantViolation` it already ex
 - **`RECOV-12`'s close-on-throw is a hand-written `try`/`catch`, never `using`/`await using`.** Native
   disposal's auto-generated `SuppressedError` puts the *later* error (the disposal failure) first, making it
   primary and the original body error `.suppressed` — the opposite of what `RECOV-12` wants (the step's original
-  throwable stays primary; a close failure rides along as `.suppressed`). Construct
-  `new SuppressedError(originalError, closeError, message)` by hand — original first.
+  throwable stays primary; a close failure rides along as `.suppressed`). Build it with
+  `suppress(originalError, closeError, message)` from `../suppress.js` — original first. **Never
+  `new SuppressedError(...)`:** it is absent on the declared floor (Node 24.0.0 and up only) and absent from
+  this package's `lib`, so the direct form neither type-checks nor runs there. Assert its shape (`name`,
+  `error`, `suppressed`), never `toBeInstanceOf(SuppressedError)`.
 - **`RECOV-13`: a step that deliberately *returns* a different outcome (no throw) is never auto-closed.** Only a
   caught throw triggers the close-and-wrap path. Do not add a "close whenever the outcome changes" check — that
   would violate `RECOV-13` by closing a response a step meant to keep alive or already closed itself.
@@ -151,6 +146,8 @@ addition alongside the existing `invariant()`/`InvariantViolation` it already ex
 ```
 packages/core/src/invariant.ts        # MODIFY: add assertNever()                              (Task 1)
 packages/core/src/invariant.test.ts   # MODIFY: add assertNever coverage
+packages/core/src/suppress.ts         # NEW: suppress(), the guarded SuppressedError (F1 (b))  (Task 1b)
+packages/core/src/suppress.test.ts    # NEW: both branches of the guard, forced
 
 packages/core/src/recovery/
   outcome.ts             # Outcome<T>, success(), failure(), fold()                             (Task 1)
@@ -186,7 +183,7 @@ No `recovery/index.ts` (see Global Constraints). Task 7 runs the full gate seque
   onFailure): R` (from `recovery/outcome.ts`). Every later task in this plan imports `Outcome`/`success`/`failure`
   from `outcome.js`.
 
-- [ ] **Step 1: Write the failing test for `assertNever`**
+- [x] **Step 1: Write the failing test for `assertNever`**
 
 ```typescript
 // packages/core/src/invariant.test.ts
@@ -212,12 +209,12 @@ describe('assertNever', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/invariant.test.ts`
 Expected: FAIL — `assertNever is not a function` (or similar export error).
 
-- [ ] **Step 3: Add `assertNever` to `invariant.ts`**
+- [x] **Step 3: Add `assertNever` to `invariant.ts`**
 
 Append to the existing file (do not touch the existing `invariant()`/`InvariantViolation` exports):
 
@@ -234,19 +231,19 @@ export function assertNever(value: never, message = `unreachable case: ${String(
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/invariant.test.ts`
 Expected: PASS, including the 2 new tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/invariant.ts packages/core/src/invariant.test.ts
 git commit -m "feat(core): add assertNever exhaustiveness helper"
 ```
 
-- [ ] **Step 6: Write the failing test for `Outcome<T>`**
+- [x] **Step 6: Write the failing test for `Outcome<T>`**
 
 ```typescript
 // packages/core/src/recovery/outcome.test.ts
@@ -329,12 +326,12 @@ describe('fold identity law (RECOV-1)', () => {
 });
 ```
 
-- [ ] **Step 7: Run and confirm it fails**
+- [x] **Step 7: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/outcome.test.ts`
 Expected: FAIL — `Cannot find module './outcome.js'`.
 
-- [ ] **Step 8: Write `outcome.ts`**
+- [x] **Step 8: Write `outcome.ts`**
 
 ```typescript
 // packages/core/src/recovery/outcome.ts
@@ -379,16 +376,53 @@ export function fold<T, R>(outcome: Outcome<T>, onSuccess: (value: T) => R, onFa
 }
 ```
 
-- [ ] **Step 9: Run and confirm it passes**
+- [x] **Step 9: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/outcome.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/core/src/recovery/outcome.ts packages/core/src/recovery/outcome.test.ts
 git commit -m "feat(core): add Outcome<T>, success/failure/fold (RECOV-1)"
+```
+
+---
+
+### Task 1b: `suppress()` — the runtime-guarded `SuppressedError` (F1 branch (b))
+
+**Files:**
+- Create: `packages/core/src/suppress.ts`
+- Create: `packages/core/src/suppress.test.ts`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `interface SuppressedErrorLike`, `suppress(error: unknown, suppressed: unknown, message: string):
+  SuppressedErrorLike`. Task 3's `toFailureClosingSuccess` is its first call site; Phases 5a, 6a, 6b and 6c are
+  the next ones.
+
+- [x] **Step 1: Write the failing test** — both branches of the guard, forced. The native branch is skipped when
+  the runtime has no `SuppressedError`; the fallback branch is reached by deleting the global inside a
+  `try`/`finally` that restores the original property descriptor, with a following test asserting the restore
+  actually happened. Without that, whichever branch the test runtime happens to take is the only one ever
+  covered, and the floor runtime takes the *other* one.
+
+- [x] **Step 2: Run and confirm it fails** — `Cannot find module './suppress.js'`.
+
+- [x] **Step 3: Write `suppress.ts`** — read `globalThis.SuppressedError` **per call**, not at module load, via
+  an intersection cast (`globalThis as typeof globalThis & {SuppressedError?: SuppressedErrorConstructor}`); a
+  cast to a bare optional-property type trips TS's weak-type check. Fall back to a module-private class
+  extending `Error` that sets `name = 'SuppressedError'` and assigns `error`/`suppressed` in the constructor
+  body — no parameter properties (`erasableSyntaxOnly`).
+
+- [x] **Step 4: Run and confirm it passes** — 5 tests.
+
+- [x] **Step 5: Commit**
+
+```bash
+git add packages/core/src/suppress.ts packages/core/src/suppress.test.ts
+git commit -m "feat(core): add a runtime-guarded suppress() helper for RECOV-12"
 ```
 
 ---
@@ -405,7 +439,7 @@ git commit -m "feat(core): add Outcome<T>, success/failure/fold (RECOV-1)"
 - Produces: `type RequestStep = (request: Request) => Promise<Request>`, `class RequestRecoveryChain`. Task 6
   (`orchestrator.ts`) imports `RequestRecoveryChain`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/request-chain.test.ts
@@ -489,12 +523,12 @@ describe('RequestRecoveryChain.apply fold law', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/request-chain.test.ts`
 Expected: FAIL — `Cannot find module './request-chain.js'`.
 
-- [ ] **Step 3: Write `request-chain.ts`**
+- [x] **Step 3: Write `request-chain.ts`**
 
 ```typescript
 // packages/core/src/recovery/request-chain.ts
@@ -529,12 +563,12 @@ export class RequestRecoveryChain {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/request-chain.test.ts`
 Expected: PASS, 5 tests (including the fast-check property, which itself runs 100 cases by default).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/recovery/request-chain.ts packages/core/src/recovery/request-chain.test.ts
@@ -556,7 +590,7 @@ git commit -m "feat(core): add RequestRecoveryChain (RECOV-3, RECOV-14)"
   Outcome<Response>) => Promise<Outcome<Response>>`, `class ResponseRecoveryChain`. Task 6 imports
   `ResponseRecoveryChain`; Task 5's `statusMappingStep` is typed as a `ResponseStep`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/response-chain.test.ts
@@ -756,9 +790,12 @@ describe('RECOV-12: close-on-throw while holding a Success', () => {
 
     expect(result.kind).toBe('failure');
     const wrapped = result.kind === 'failure' ? result.error : undefined;
-    expect(wrapped).toBeInstanceOf(SuppressedError);
-    expect((wrapped as SuppressedError).error).toBe(originalError);
-    expect((wrapped as SuppressedError).suppressed).toBe(closeError);
+    // Shape, not `toBeInstanceOf(SuppressedError)`: the native class does not exist on the floor
+    // runtime, so the instanceof form would assert nothing there.
+    expect(wrapped).toBeInstanceOf(Error);
+    expect((wrapped as SuppressedErrorShape).name).toBe('SuppressedError');
+    expect((wrapped as SuppressedErrorShape).error).toBe(originalError);
+    expect((wrapped as SuppressedErrorShape).suppressed).toBe(closeError);
   });
 });
 
@@ -867,16 +904,17 @@ describe('RECOV-14: steps are safe for concurrent invocation', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/response-chain.test.ts`
 Expected: FAIL — `Cannot find module './response-chain.js'`.
 
-- [ ] **Step 3: Write `response-chain.ts`**
+- [x] **Step 3: Write `response-chain.ts`**
 
 ```typescript
 // packages/core/src/recovery/response-chain.ts
 import type {Response} from '../http/response.js';
+import {suppress} from '../suppress.js';
 import {failure, success, type Outcome} from './outcome.js';
 
 /** @internal */
@@ -887,15 +925,17 @@ export type RecoveryStep = (outcome: Outcome<Response>) => Promise<Outcome<Respo
 /**
  * Shared close-on-throw handling for both phases (RECOV-12): if the outcome held at the moment of the
  * throw was a Success, its response is closed before the throwable is wrapped into a Failure. A close
- * failure is attached as `suppressed` on the ORIGINAL throwable -- constructed by hand, original first --
- * never via `using`/`await using`, whose auto-generated SuppressedError would invert that priority.
+ * failure is attached as `suppressed` on the ORIGINAL throwable -- built through `suppress()`, original first
+ * -- never via `using`/`await using`, whose auto-generated SuppressedError would invert that priority.
  */
 async function toFailureClosingSuccess(thrownError: unknown, current: Outcome<Response>): Promise<Outcome<Response>> {
   if (current.kind === 'success') {
     try {
       await current.value.close();
     } catch (closeError) {
-      return failure(new SuppressedError(thrownError, closeError, 'response close failed while handling step error'));
+      return failure(
+        suppress(thrownError, closeError, 'response close failed while handling a step error'),
+      );
     }
   }
   return failure(thrownError);
@@ -953,12 +993,12 @@ export class ResponseRecoveryChain {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/response-chain.test.ts`
 Expected: PASS, 13 tests (including the fast-check property and the RECOV-14 concurrency test).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/recovery/response-chain.ts packages/core/src/recovery/response-chain.test.ts
@@ -980,7 +1020,7 @@ git commit -m "feat(core): add ResponseRecoveryChain (RECOV-4..RECOV-9, RECOV-12
   disposition lives — if it is still a pure pass-through once Phase 5 lands, inline it there and move the
   disposition wholly into Phase 10's deviation ledger rather than keeping an abstraction with no behavior.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/cancellation.test.ts
@@ -1026,12 +1066,12 @@ describe('wrapCancellation (RECOV-11)', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/cancellation.test.ts`
 Expected: FAIL — `Cannot find module './cancellation.js'`.
 
-- [ ] **Step 3: Write `cancellation.ts`**
+- [x] **Step 3: Write `cancellation.ts`**
 
 ```typescript
 // packages/core/src/recovery/cancellation.ts
@@ -1060,7 +1100,7 @@ export function wrapCancellation(error: unknown): Outcome<never> {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/cancellation.test.ts`
 Expected: PASS, 4 tests.
@@ -1068,7 +1108,7 @@ Expected: PASS, 4 tests.
 `CancellationError` is imported by the *test* only (to prove a classified cancellation gets no special
 treatment); `cancellation.ts` itself no longer needs it, so do not add the import back to the module.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/recovery/cancellation.ts packages/core/src/recovery/cancellation.test.ts
@@ -1090,7 +1130,7 @@ git commit -m "feat(core): add wrapCancellation (RECOV-11)"
   task in this plan -- a future consumer (Phase 5 or 4c) installs it into a `ResponseRecoveryChain`'s
   response-step list.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/status-mapping.test.ts
@@ -1149,12 +1189,12 @@ describe('statusMappingStep (RECOV-15)', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/status-mapping.test.ts`
 Expected: FAIL — `Cannot find module './status-mapping.js'`.
 
-- [ ] **Step 3: Write `status-mapping.ts`**
+- [x] **Step 3: Write `status-mapping.ts`**
 
 ```typescript
 // packages/core/src/recovery/status-mapping.ts
@@ -1191,12 +1231,12 @@ statusMappingStep satisfies ResponseStep;
 `Response` is now imported (type-only) because the explicit parameter and return annotations a `function`
 declaration needs replace the inference the `: ResponseStep` annotation was supplying.
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/status-mapping.test.ts`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/recovery/status-mapping.ts packages/core/src/recovery/status-mapping.test.ts
@@ -1219,7 +1259,7 @@ git commit -m "feat(core): add statusMappingStep, wiring 3b's toHttpError into t
 - Produces: `interface DispatchConfig`, `dispatchWithRecovery(request: Request, config: DispatchConfig):
   Promise<Response>`. Terminal task of this plan -- no later task consumes this file.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/src/recovery/orchestrator.test.ts
@@ -1409,12 +1449,12 @@ describe('RECOV-11: the catch routes every throwable through wrapCancellation', 
 
 `CancellationError` is imported from `../seams/transport.js` (Phase 2) alongside the `Transport` type.
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `cd packages/core && bun test src/recovery/orchestrator.test.ts`
 Expected: FAIL — `Cannot find module './orchestrator.js'`.
 
-- [ ] **Step 3: Write `orchestrator.ts`**
+- [x] **Step 3: Write `orchestrator.ts`**
 
 ```typescript
 // packages/core/src/recovery/orchestrator.ts
@@ -1476,12 +1516,12 @@ export async function dispatchWithRecovery(request: Request, config: DispatchCon
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `cd packages/core && bun test src/recovery/orchestrator.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/recovery/orchestrator.ts packages/core/src/recovery/orchestrator.test.ts
@@ -1498,7 +1538,7 @@ git commit -m "feat(core): add dispatchWithRecovery orchestrator (RECOV-2, RECOV
 - Consumes: every preceding task.
 - Produces: nothing new; verifies the whole phase is green and the public surface did not move.
 
-- [ ] **Step 1: Run the full gate sequence**
+- [x] **Step 1: Run the full gate sequence**
 
 ```bash
 cd /home/mohammad/Projects/dexpace/nodejs-sdk
@@ -1517,7 +1557,17 @@ bun run audit
 
 Expected: all exit 0. Coverage at or above the 80% aggregate floor (`NFR-5`).
 
-- [ ] **Step 2: Verify no `node:` import crept in**
+- [x] **Step 1b: Add the Node-runtime conformance case**
+
+`test/node-conformance/README.md`'s membership rule: a phase touching a runtime-divergent surface adds a case
+there, not only to `bun test`. `SuppressedError`'s presence is exactly that divergence — Bun and current Node
+ship it, the declared 20.3 floor does not — so `test/node-conformance/recovery-chain.test.mjs` forces the
+guarded branch from real Node (including with the global deleted) and re-runs `RECOV-12`'s
+release-exactly-once over Node's own Web Streams implementation, whose `cancel()` and reader-lock timing are
+independent of Bun's. `suppress` and `recovery/` are `@internal` with no public subpath, so it imports them by
+direct `dist/` path, the way `io-byte-stream.test.mjs` does.
+
+- [x] **Step 2: Verify no `node:` import crept in**
 
 ```bash
 ! grep -rn "from 'node:" packages/core/src/recovery/
@@ -1525,7 +1575,7 @@ Expected: all exit 0. Coverage at or above the 80% aggregate floor (`NFR-5`).
 
 Expected: exit 0, no matches.
 
-- [ ] **Step 3: Verify the public API surface did not move**
+- [x] **Step 3: Verify the public API surface did not move**
 
 Step 1 already regenerated the report via `bun run api`; this only inspects the result. Run from the repo root:
 
@@ -1538,7 +1588,7 @@ Expected: **no output, exit 0.** Nothing from `src/recovery/` reached the publis
 3a's/4a's gate. If this fails, remove whatever export leaked into `packages/core/src/index.ts` rather than
 accepting the report change.
 
-- [ ] **Step 4: Add a changeset**
+- [x] **Step 4: Add a changeset**
 
 Because nothing enters the public API, this is a patch-level, no-consumer-impact change:
 
@@ -1549,7 +1599,7 @@ bun run changeset
 Select `@dexpace/core`, choose **patch**, summary:
 `Internal: recovery-chain primitives for product-spec §8.2 (RECOV-1..16). No public API change.`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .changeset/

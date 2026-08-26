@@ -10,8 +10,9 @@ Verification of the three Phase 4 implementation plans —
 **Legend:** ✅ Planned, implemented and tested — 🚫 Not built (permanent simplification, named reason) —
 ⏳ Deferred (named target phase) — N/A Not applicable in this port.
 
-**Status:** the plans are reviewed and corrected as of 2026-07-26 (see *Review findings applied*, below) but
-**not yet executed**. Every ✅ means "the plan builds and tests it," not "it is on `main`."
+**Status:** the plans are reviewed and corrected as of 2026-07-26 (see *Review findings applied*, below). **4b
+is executed as of 2026-08-26**; 4a and 4c are not. For the §8.2 table a ✅ now means "built, tested and on the
+branch"; everywhere else it still means "the plan builds and tests it."
 
 ---
 
@@ -77,7 +78,7 @@ Verification of the three Phase 4 implementation plans —
 | RECOV-9 | SHOULD | Recovery steps should return a Failure rather than throw | ✅ | Satisfied structurally — both shapes are handled identically, documented rather than enforced |
 | RECOV-10 | MUST | Unwrap: Success returns the response; Failure rethrows the throwable **unchanged** | ✅ | 4b Task 6 — asserted with `rejects.toBe(typedError)`, identity not message |
 | RECOV-11 | MUST | Wrapping a cancellation throwable re-asserts the cancellation signal | ✅ (reframed) | 4b Task 4. An `AbortSignal` is durable once fired and the SDK never holds the caller's `AbortController`, so there is nothing to re-assert; the helper is `failure(error)` and **never throws**, which is what keeps RECOV-2 absolute. Ledgered |
-| RECOV-12 | MUST | A step throwing while holding a Success closes that response exactly once, close error `suppressed`, original primary | ✅ | 4b Task 3 (`toFailureClosingSuccess`, hand-built `SuppressedError` — never `using`, whose auto-generated one inverts the priority). Close observed via the body stream's `cancel()` hook, since `Response` is frozen |
+| RECOV-12 | MUST | A step throwing while holding a Success closes that response exactly once, close error `suppressed`, original primary | ✅ | 4b Task 3 (`toFailureClosingSuccess`) over Task 1b's guarded `suppress()` — never `using`, whose auto-generated `SuppressedError` inverts the priority, and never `new SuppressedError(...)`, which is absent on the declared floor. Close observed via the body stream's `cancel()` hook, since `Response` is frozen. Re-forced from real Node in `test/node-conformance/recovery-chain.test.mjs` |
 | RECOV-13 | MUST | A deliberately *returned* different outcome is never auto-closed | ✅ | 4b Task 3 — only a caught throw reaches the close path; asserted for both a substitute Failure and a substitute Success |
 | RECOV-14 | MUST | Step lists immutable; response chain copies both | ✅ | 4b Tasks 2 and 3 — the request chain is copied too, which the reference does not do and the requirement's own text recommends. Ledgered |
 | RECOV-15 | MUST | Only 400..599 map to the typed exception; every other status passes through | ✅ | 4b Task 5, delegating to Phase 3b's unchanged `toHttpError()` |
@@ -155,6 +156,7 @@ Verification of the three Phase 4 implementation plans —
 | Negative-space assertions | styleguide 11.9 | ✅ | Duplicate-key install, no-op closes, cross-stage edits, missing anchors, reserved SEND, continuation reuse, transport `close()` never called |
 | Options object over positional params | `max-params: 3` | ✅ | `ContextInit` (4a), `DispatchConfig` (4b), `CursorInit` (4c). No `eslint-disable` anywhere in Phase 4 |
 | Fakes over mocks; no owned interface mocked | styleguide 11.3 | ✅ | File-local `Transport` stubs throughout; no `FakeTransport`, no `mock.module`, and (as of the 2026-07-26 review) no patched `Response` method and no patched `contextStore` singleton |
+| A runtime-divergent surface gets a `test/node-conformance/` case | `test/node-conformance/README.md` membership rule | ✅ | 4b: `recovery-chain.test.mjs` — `SuppressedError`'s presence is the divergence (Bun and current Node have it, the 20.3 floor does not), plus `RECOV-12`'s release-exactly-once over Node's own Web Streams |
 | Every test file cites its requirement IDs | Phase 1 convention, for Phase 9 | ✅ | Top-of-file comment in every test file across all three plans |
 | 80% aggregate coverage floor | `NFR-5` | ✅ | Each phase's gate task |
 
@@ -194,6 +196,34 @@ stay accurate except where noted here. Full text in the roadmap's *Open Findings
   shared across forks, but "readable by any step" waits on 5a Task 1's `StepContext.options`/`.signal`. Both 4c
   documents now name that target.
 - **Open:** whether `Cursor` checks the caller's `AbortSignal` between steps, and as which error type (F9).
+
+---
+
+## Phase 4b execution (2026-08-26)
+
+Both of 4b's open decisions closed before execution; neither changed a `RECOV-*` disposition above.
+
+| Item | Resolution |
+|---|---|
+| **F1 (blocker, cross-phase):** `SuppressedError` absent on the declared floor | Branch (b) — `packages/core/src/suppress.ts` ships `suppress(error, suppressed, message)`, native class where the runtime has one and a shape-compatible stand-in where it does not, global read per call. Branch (a) was disqualified on evidence: `SuppressedError` reached Node in **24.0.0**, so raising the floor means dropping Node 18, 20 and 22 for one error class, against a floor of `>=20.3` set by `AbortSignal.any()`. The helper discharges the obligation for 5a, 6a, 6b and 6c too — they substitute the call when they execute |
+| **F2:** zero `invariant()` assertions across `recovery/` | Deviation Ledger row in 4b's design, naming the concrete cost (a step returning `undefined` poisons the fold silently). Project-wide inconsistency — 1/2/3b/4a ship zero, 4c ships fifteen — so Phase 10 settles the density rule once rather than 4b becoming the one module that differs |
+| Merge residue | The phase-3 merge left `bunfig.toml` with a duplicated `[test] root` key, which TOML rejects — `bun test` failed to load bunfig at all on this branch. Fixed in its own commit before any 4b work |
+
+**Gate evidence (all exit 0), every step both CI jobs run, in order:** `bun install --frozen-lockfile`,
+`typecheck`, `lint`, `build`, `bun test --coverage` (588 tests across 50 files; 98.68% funcs / 99.73% lines
+against the 80% floor), `api` with `packages/core/etc/core.api.md` byte-identical, `lint:publish`,
+`verify:dual-consumption`, `verify:consumer-types`, `verify:seam-1`, `verify:runtime-floor`, `audit`, and the
+`node-conformance` job's `test:node` (36 cases, 35 before this phase). Also `test:knowledge`, which CI does not
+run. Structural: no `node:` import, no `enum`, no `recovery/index.ts`, SPDX on line 1 of all 15 new files, no
+import cycle anywhere under `packages/core/src`.
+
+**Three review passes ran before this was called done.** Pass 1 (corpus-driven) found a dead `satisfies`
+statement reaching the published `dist/`, two test files that could not survive parallel execution, a missing
+type-level test for the exported generic `Outcome<T>`, an untranscribed `RECOV-15` conformance clause, and two
+step-down-rule violations. Pass 2 (normative-text-driven) found a **`RECOV-8` violation**: `apply()` could
+throw a `TypeError` when a step returned a non-outcome, against "MUST NOT throw under any input" — closed by
+making `toFailureClosingSuccess` total; plus an unguarded `String()` in `assertNever`'s default message. Pass 3
+re-ran every CI step and swept the structure. What survives is in `docs/open-items.md` under Phase 4b.
 
 ---
 
