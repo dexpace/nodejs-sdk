@@ -16,6 +16,7 @@
     "fast-check": "^3",
     "globals": "^17.8.0",
     "gts": "^7",
+    "mitata": "^1",
     "publint": "^0.3",
     "typescript": "^5.8",
     "typescript-eslint": "^8"
@@ -28,12 +29,15 @@
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
     "test:knowledge": "node --test 'scripts/*.test.mjs'",
+    "test:node": "node --test test/node-conformance/*.test.mjs",
+    "bench": "bun run packages/core/src/io/byte-queue.bench.ts",
     "api": "cd packages/core && bun run api:ci",
     "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm",
     "audit": "bun audit --audit-level=high --prod",
+    "changeset": "node scripts/changeset.mjs",
     "verify:dual-consumption": "node scripts/verify-dual-consumption.mjs",
+    "verify:consumer-types": "node scripts/verify-consumer-types.mjs",
     "verify:seam-1": "node scripts/verify-seam-1.mjs",
-    "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs",
-    "verify:node-floor": "node scripts/verify-node-floor.mjs"
+    "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs"
   }
 }

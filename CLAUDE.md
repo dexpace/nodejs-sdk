@@ -23,7 +23,14 @@ bun run lint             # gts lint . — formatting AND type-aware rules; fatal
 bun run fix              # gts fix . — autofixes formatting/lint
 bun run build            # tsc -p packages/core/tsconfig.build.json → dist/
 bun test                 # coverage is on by default (bunfig.toml), 80% line floor
+bun run test:node        # Node-runtime conformance against the BUILT artifact; needs `build` first
 ```
+
+`bun test` runs the unit suite on **Bun** and is scoped to `packages/` (`bunfig.toml`'s `[test] root`).
+`test:node` is a separate, thin layer under `test/node-conformance/` that runs the same built package under
+`node --test`, because Bun's Web Streams / `AbortSignal` / `Uint8Array` behavior is an independent
+implementation of Node's and `src/io/` is where they diverge. **A phase that touches a runtime-divergent
+surface adds a case there, not only to `bun test`** — see `test/node-conformance/README.md`.
 
 Single test file or single test:
 
@@ -44,6 +51,8 @@ Release-shape and invariant gates:
 ```bash
 bun run lint:publish              # publint + attw against the built package
 bun run verify:dual-consumption   # plain `node` imports the built package and runs it
+bun run verify:consumer-types     # the built .d.ts compiles on the declared `lib` with types: []
+bun run test:node                 # CI runs this as a matrix over engines.node's floor and current LTS
 bun run verify:seam-1             # asserts @dexpace/core has zero runtime dependencies
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run audit                     # bun audit --audit-level=high --prod
@@ -151,7 +160,12 @@ Anything the barrel exports needs a TSDoc block with `@public`, plus `@throws` n
 class on operations that throw. `api-extractor` will otherwise flag it, and the committed report records it as
 `(undocumented)`. After changing exports: rebuild, run `api:local`, and commit the regenerated report.
 
-Consumer-facing changes need a changeset (`bunx changeset`).
+Consumer-facing changes need a changeset — `bun run changeset`, not `bunx changeset`. The wrapper
+(`scripts/changeset.mjs`) forwards every argument to the CLI, then renames the file it generates from
+`@changesets/write`'s random `human-id` name to `YYYY-MM-DD-<slug>.md`, matching
+`docs/superpowers/{specs,plans}`. The slug is prompted for, defaulting to the changeset's own first
+sentence. Nothing reads the filename back — the CLI globs `.changeset/*.md` and decides from the
+frontmatter — so a hand-written changeset just needs to be named the same way.
 
 ## Phase workflow
 

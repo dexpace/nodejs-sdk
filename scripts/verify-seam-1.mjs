@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // scripts/verify-seam-1.mjs
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';

@@ -47,6 +47,9 @@ jobs:
       - name: Dual JS/TS consumption check
         run: bun run verify:dual-consumption
 
+      - name: Consumer typecheck against the published .d.ts
+        run: bun run verify:consumer-types
+
       - name: SEAM-1 zero-dependency check
         run: bun run verify:seam-1
 
@@ -56,9 +59,19 @@ jobs:
       - name: Dependency audit
         run: bun run audit
 
-  node-floor-conformance:
+  node-conformance:
     needs: ci
     runs-on: ubuntu-latest
+    strategy:
+      # Report both versions rather than stopping at the first failure: "broken on the floor" and
+      # "broken on LTS" are different diagnoses and the matrix exists to tell them apart.
+      fail-fast: false
+      matrix:
+        # The declared floor AND current LTS, which is the "in addition to current LTS" half of
+        # sdk-design-nodejs/09:52-54 that a floor-only pin left unexercised (checkpoint 5.9).
+        # `lts/*` resolves at run time, so this does not go stale as LTS moves.
+        node: ['20.3.0', 'lts/*']
+    name: node-conformance (${{ matrix.node }})
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +87,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18.17.0
+          node-version: ${{ matrix.node }}
 
-      - name: Verify the built artifact against the declared minimum Node version (NFR-10/NFR-17)
-        run: node scripts/verify-node-floor.mjs
+      - name: Node-runtime conformance against the built artifact (NFR-10/NFR-17)
+        run: bun run test:node

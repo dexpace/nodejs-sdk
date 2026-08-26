@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request.ts
+import type {Body} from '../body/body.js';
 import type {Builder} from './builder.js';
 import {requireField} from './builder.js';
 import {UrlConstructionError, RequestBodyNotAllowedError} from './errors.js';
@@ -21,7 +22,7 @@ let createRequest: (
   method: Method,
   url: URL,
   headers: Headers,
-  body: unknown,
+  body: Body | undefined,
 ) => Request;
 
 /**
@@ -39,7 +40,7 @@ let createRequest: (
  * const request = Request.newBuilder()
  *   .method('POST')
  *   .url('https://example.com/items')
- *   .body('payload')
+ *   .body(stringBody('payload'))
  *   .build();
  * ```
  *
@@ -49,14 +50,14 @@ export class Request {
   readonly #method: Method;
   readonly #url: URL;
   readonly #headers: Headers;
-  readonly #body: unknown;
+  readonly #body: Body | undefined;
 
   // eslint-disable-next-line max-params -- private, builder-internal; field count fixed by the wire model (HTTP-6)
   private constructor(
     method: Method,
     url: URL,
     headers: Headers,
-    body: unknown,
+    body: Body | undefined,
   ) {
     this.#method = method;
     this.#url = url;
@@ -113,13 +114,8 @@ export class Request {
     return this.#headers;
   }
 
-  /**
-   * The request body, or `undefined` when absent.
-   *
-   * Typed `unknown` on purpose: this phase only needs presence or absence to enforce HTTP-7/8. The
-   * body lifecycle — streaming, replayability, charset — is owned by a later phase.
-   */
-  get body(): unknown {
+  /** The request body, or `undefined` when absent. */
+  get body(): Body | undefined {
     return this.#body;
   }
 
@@ -128,8 +124,7 @@ export class Request {
    *
    * The URL is compared by textual external form only, never by resolving the host — native URL
    * equality on some platforms resolves DNS, which blocks and is wrong for virtual hosts sharing an
-   * IP (HTTP-46). The body is compared by reference for now; value equality arrives with the real
-   * body model in a later phase.
+   * IP (HTTP-46).
    *
    * @param other - the request to compare against.
    * @returns `true` when every compared facet is equal.
@@ -153,7 +148,7 @@ export class RequestBuilder implements Builder<Request> {
   #method: Method | undefined;
   #url: URL | undefined;
   #headers: Headers = Headers.newBuilder().build();
-  #body: unknown;
+  #body: Body | undefined;
 
   /**
    * Sets the request method.
@@ -194,12 +189,11 @@ export class RequestBuilder implements Builder<Request> {
   /**
    * Sets or clears the request body.
    *
-   * @param body - the body, or `null`/`undefined` to clear it. `null` normalizes to `undefined`:
-   * HTTP-7 rejects only a *non-null* body, so passing `null` clears exactly like `undefined`.
+   * @param body - the body, or `undefined` to clear it.
    * @returns this builder, for chaining.
    */
-  body(body: unknown): this {
-    this.#body = body ?? undefined;
+  body(body: Body | undefined): this {
+    this.#body = body;
     return this;
   }
 

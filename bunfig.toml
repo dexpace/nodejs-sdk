@@ -1,8 +1,11 @@
 [test]
+# Scope discovery to the workspace packages. Without this, `bun test` also collects
+# test/node-conformance/*.test.mjs -- the Node-only layer that exists precisely because it must NOT
+# run on Bun (checkpoint 5.9). Running it under both runners would inflate the unit count and quietly
+# erase the distinction the suite was added to draw. It also keeps `scripts/*.test.mjs` — repo
+# tooling, run via `bun run test:knowledge` (`node --test`) — out of both the run and the 80% floor,
+# which is a statement about `packages/core`.
+root = "packages"
 coverage = true
 coverageThreshold = 0.8
 coverageSkipTestFiles = true
-# The 80% floor is a statement about `packages/core`. Scoping discovery to
-# `packages` keeps `scripts/*.test.mjs` — repo tooling, run via
-# `bun run test:knowledge` (`node --test`) — out of both the run and the floor.
-root = "packages"
