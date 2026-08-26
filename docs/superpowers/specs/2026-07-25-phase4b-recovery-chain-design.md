@@ -1,17 +1,19 @@
 # Phase 4b — Recovery-Chain Primitives — Design
 
-**Status:** Draft, approved for planning. **⛔ Two open decisions block execution** — see the blocking notice at
-the top of `docs/superpowers/plans/2026-07-25-phase4b-recovery-chain.md`. In short: `RECOV-12`'s
-`SuppressedError` does not exist on the declared `engines.node` floor (a cross-phase problem shared with 5a, 6b
-and 6c), and this phase's zero-assertion module contradicts the corpus's 2-per-function average. Both are
-tracked in the roadmap's "Open Findings — Phase 4b Validation Review (2026-07-28)" section. The rest of that
-review's findings are applied to this document.
+**Status:** Implemented 2026-08-26. **Both open decisions are closed.** `RECOV-12`'s `SuppressedError` is
+reached through a runtime-guarded `suppress()` helper — branch (b) of the cross-phase F1 decision, which the
+roadmap resolved on the verified version facts (`SuppressedError` reached Node only in 24.0.0; branch (a) would
+mean `>=24`, dropping Node 18/20/22 outright). F2 (this phase's zero `invariant()` assertions) is recorded as a
+Deviation Ledger row for Phase 10's project-wide pass, the disposition F2 itself named as the alternative to
+fold-site postconditions. Both are tracked in the roadmap's "Open Findings — Phase 4b Validation Review
+(2026-07-28)" section.
 
 **Purpose:** Implement the recovery-chain primitives — `Outcome<T>`, the request and response recovery chains,
 the unified dispatch orchestrator, the cancellation-wrapping helper, and the status→typed-exception mapping step
 — satisfying `docs/product-spec/08-execution-pipelines.md` §8.2 (`RECOV-1`–`RECOV-16`). This is the second of
 three sub-phases the roadmap's Phase 4 ("Execution Context & Pipelines") splits into: 4a (execution context,
-done), **4b** (this document, `§8.2`), 4c (stage-based pipeline, `§8.1`, built on 4a+4b).
+**not yet implemented** — 4b turned out not to depend on it; see `docs/open-items.md` F8), **4b** (this
+document, `§8.2`), 4c (stage-based pipeline, `§8.1`, which does depend on both 4a and 4b).
 
 **Governing documents:** `docs/product-spec/08-execution-pipelines.md` §8.2/§8.3 (normative, cited by ID
 throughout), `docs/sdk-design-nodejs/05-pipeline-architecture.md` (Node-port mapping for both pipeline layers),
@@ -113,8 +115,16 @@ declared order within each group.
   than throw; both are handled identically by `apply()`.
 - **`RECOV-12`:** when a step throws while the current outcome is a `Success` holding a response, `apply()`
   closes that response (`response.close()`, from Phase 3b) before wrapping the throwable into a `Failure`,
-  attaching any close error as `suppressed` via a manually-constructed `SuppressedError` so a close failure never
-  masks the primary throwable. The response is released exactly once.
+  attaching any close error as `suppressed` through the `suppress()` helper so a close failure never masks the
+  primary throwable. The response is released exactly once.
+
+  **`SuppressedError` is not a global on the declared floor.** It belongs to the full Explicit Resource
+  Management proposal, which reached Node only in **24.0.0**; `engines.node` is `>=20.3` and this package's
+  `lib` (`ES2023`, `DOM`, `DOM.AsyncIterable`) does not even supply the *type*. `packages/core/src/suppress.ts`
+  wraps that gap: `suppress(error, suppressed, message)` constructs the native class when
+  `globalThis.SuppressedError` exists and a shape-compatible stand-in (`name`, `error`, `suppressed`) when it
+  does not, reading the global per call rather than at module load. Callers never branch on which one they got,
+  and assertions are written against the shape, never `instanceof SuppressedError`.
 
   **This must be a hand-written `try`/`catch` around the `close()` call, not `using`/`await using`.** Native
   disposal's own `SuppressedError` construction puts the *later* error first — when a body already threw and
@@ -133,7 +143,7 @@ declared order within each group.
         await current.value.close();   // Response.close() is Promise<void> (3b) -- must be awaited to be catchable
       } catch (closeError) {
         return failure(
-          new SuppressedError(originalError, closeError, 'response close failed while handling step error'),
+          suppress(originalError, closeError, 'response close failed while handling a step error'),
         );
       }
     }
@@ -287,6 +297,7 @@ the violation — retrofit it before Phase 3b is executed, or record it in Phase
 
 ```
 packages/core/src/invariant.ts   # MODIFY: add assertNever()
+packages/core/src/suppress.ts    # NEW: suppress(), the runtime-guarded SuppressedError (F1 branch (b))
 
 packages/core/src/recovery/
   outcome.ts          # Outcome<T>, success(), failure(), fold()
@@ -297,7 +308,7 @@ packages/core/src/recovery/
   status-mapping.ts   # statusMappingStep()
 ```
 
-`invariant.ts` is the one file outside `recovery/` this sub-phase touches. `docs/knowledge/data-modeling.md`
+`invariant.ts` and `suppress.ts` are the two files outside `recovery/` this sub-phase touches. `docs/knowledge/data-modeling.md`
 requires every discriminated-union `switch` to close with `default: return assertNever(x)`, "defined once and
 imported everywhere," and no prior phase plan actually adds it — `fold()` is the codebase's first such `switch`,
 so `assertNever` lands here as a small addition alongside the `invariant()`/`InvariantViolation` that module
@@ -317,6 +328,9 @@ see its section above for why an `invariant()` there would violate `RECOV-2`.
 | No new per-status typed-exception hierarchy for `RECOV-15` | `RECOV-15`'s "matching typed exception" (which some ports read as a per-status class family) | Phase 3b's flat `HttpStatusError` (carrying `status` + buffered body) already satisfies this, and the corpus caps custom error hierarchies at two levels; a per-status class family would violate that cap |
 | No default/preset recovery chain shipped in 4b | none — scope decision | Matches 4a's "primitives only" discipline; Phase 5 (retry) is the first real consumer and decides its own composition |
 | `#private` fields and methods on both chain classes (`#steps`, `#responseSteps`, `#recoverySteps`, `#runResponsePhase`, `#runRecoveryPhase`) | `docs/knowledge/data-modeling.md:20-23` — `private` is the default; `#private` requires a comment justifying a genuine runtime-privacy requirement | **No runtime-privacy claim is made.** These classes are unfrozen holders of a readonly array, unlike 3b's `Response`, whose `#closed` genuinely must survive `Object.freeze(this)`. `#private` is the established package-wide field style (Phase 1, 3b, and 4a's `ContextStore` all use it), so switching 4b alone would fragment the package and trip the corpus's own "never mix two styles within a module/package" rule. Recorded as a project-wide deviation for Phase 10 to reconcile in one pass, not fixed here |
+| `RECOV-12`'s suppressed-error pairing goes through a runtime-guarded `suppress()` helper rather than `new SuppressedError(...)` | none — a runtime-floor constraint, not a spec deviation. Listed so Phase 10 sees the shape | `SuppressedError` reached Node in 24.0.0; `engines.node` is `>=20.3` and `lib` does not supply the type. Raising the floor to reach one error class would drop Node 18, 20 and 22. The helper returns the native class where it exists and a shape-compatible stand-in where it does not, so nothing downstream branches. Phases 5a, 6a, 6b and 6c share the helper |
+| `RequestRecoveryChain` / `ResponseRecoveryChain` are classes holding an immutable step array | `docs/knowledge/data-modeling.md:10` — classes are reserved for things that own a lifecycle or hold mutable runtime state behind an invariant; everything else is plain data transformed by free functions | Neither chain owns a lifecycle or mutable state — a free `applyRequestChain(steps, request)` would satisfy the corpus directly. Kept as classes because `RECOV-14`'s second clause is written about the *step instance* and the chain instance ("per-request state never on the step instance"), and because the defensive copy has to happen once at a construction boundary rather than on every call. Recorded rather than corrected: the shape is what `§8.2` describes and what Phase 5's retry step will compose against |
+| Zero `invariant()` assertions across `recovery/` | `docs/knowledge/assertions.md:6-7`'s 2-per-function module average (Rule 8) | F2, deliberately not closed here. The concrete cost is named: no `apply()` postcondition checks that a step returned a value at all, so a step returning `undefined` poisons the fold silently and surfaces layers away. It is a project-wide inconsistency rather than 4b's — Phases 1/2/3b/4a ship zero, 4c ships fifteen — so adding assertions to 4b alone would deepen the split rather than close it. Phase 10 settles the density rule once and applies it everywhere |
 | `fold(outcome, onSuccess, onFailure)` takes three positional parameters | `docs/knowledge/function-design.md:22-23` — "an options object when it has 3 or more parameters" | The prose rule is one parameter stricter than its own stated enforcement (`max-params: ['error', 3]` errors at four), so this passes lint while violating the corpus text — flagged as a corpus conflict in the roadmap, not silently ignored. Three positional parameters match Phase 2's already-shipped `Transport.send(request, options?, signal?)`; `fold(outcome, {onSuccess, onFailure})` would make 4b the only module in the package reading differently for a canonical two-branch fold |
 
 ## Testing
@@ -349,6 +363,19 @@ close-failure attached as `suppressed` (`RECOV-12`); a recovery step returning a
 trigger an auto-close of the original (`RECOV-13`); `dispatchWithRecovery` rethrows a `Failure`'s error
 byte-for-byte unchanged, no wrapping (`RECOV-10`); a transport-raised `CancellationError` with no caller signal
 still reaches the recovery steps rather than escaping the orchestrator (`RECOV-2`/`RECOV-11`).
+
+**Type-level tests.** `Outcome<T>` is an exported generic type, so it ships `expectTypeOf` assertions
+(styleguide 11.6): the `kind` union is closed, each variant's payload is reachable only after narrowing, and two
+`@ts-expect-error` lines prove the negative — a narrowed `Success` has no `error` and a narrowed `Failure` has
+no `value`. `statusMappingStep`'s conformance to `ResponseStep` is asserted the same way, in the test file
+rather than as a module-level `satisfies` statement: `satisfies` erases to its operand, not to nothing, so the
+module-level form leaves a dead `statusMappingStep;` expression statement in the published `dist/`.
+
+**Node-runtime conformance.** `SuppressedError`'s presence is exactly the kind of runtime divergence
+`test/node-conformance/`'s membership rule exists for — Bun and current Node ship it, the declared floor does
+not — so `recovery-chain.test.mjs` forces the guarded branch from real Node and re-runs `RECOV-12`'s
+release-exactly-once over Node's own Web Streams. `bun test` alone would only ever exercise whichever branch
+Bun's runtime happens to take.
 
 **A `Response` is frozen** (Phase 1's `Object.freeze(this)`, preserved by 3b's retrofit), so no test may patch
 `response.close` — the assignment throws `TypeError` under an ES module's strict mode. `RECOV-12`/`RECOV-13`'s

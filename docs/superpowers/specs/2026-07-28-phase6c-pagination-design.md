@@ -197,7 +197,7 @@ one of them would get an error instead of a walk. So `pages()` mints a fresh sin
 `items()` is deliberately not single-use at either level: `PAGE-14` scopes the restriction to the page-level view,
 and `PAGE-8` requires two independent iterations to work.
 
-`PAGE-15`'s two-close-failures case uses native `SuppressedError`, the same mechanism 5a and 6b use — and it
+`PAGE-15`'s two-close-failures case uses Phase 4b's guarded `suppress()` helper (never native `SuppressedError`, which reached Node only in 24.0.0 against a `>=20.3` floor), the same mechanism 5a and 6b use — and it
 applies to the walk's *own* failure paths too, not only to back-to-back close failures. A generator whose body
 throws and whose `finally` then fails to close the held page would surface the close error and lose the transport
 or parse failure the caller actually needs. So the drive routine catches, releases with the walk's failure kept
@@ -377,7 +377,7 @@ async generator *is* the engine.**
 | `Transport` | 2 | `PAGE-25`'s transport-agnosticism; `Runtime` (4c) satisfies it, so a resilience pipeline drops in unchanged |
 | `RequestOptions` | 1 | `PAGE-36` threads the caller's instance; the engine never constructs one |
 | `FakeTransport`, `countingResponse()` | 5a | Scripted multi-response sequences, wire-send counting, and per-response close observation are exactly what `PAGE-6`/`PAGE-9`/`PAGE-27` need. 5a's design names `countingResponse()`'s `cancel()` hook as the **only** sanctioned way to observe a close — responses are frozen, so a spy assignment throws |
-| `SuppressedError` usage pattern | 5a, 6b | `PAGE-13` and `PAGE-15` both need primary-plus-suppressed |
+| `suppress()` usage pattern (never native `SuppressedError`) | 4b, 5a, 6b | `PAGE-13` and `PAGE-15` both need primary-plus-suppressed |
 
 ## File Layout
 
@@ -442,7 +442,7 @@ implementation details; publishing them would publish a second URL-manipulation 
 - The same iterator-level single-use assertion on `paginateWithFetchers()`' returned view, paired with a
   `firstCalls === 1` check — an unguarded view re-runs the first-page fetcher and breaks `PAGE-34` outright.
 - A transport failure surfacing unwrapped (`PAGE-28`), and a transport failure whose held-page release *also*
-  fails surfacing as `SuppressedError` with the transport failure primary (`PAGE-15`).
+  fails surfacing as a `suppress()` pairing with the transport failure primary (`PAGE-15`).
 - The capped fetcher walk asserting the next-page fetcher ran `N-1` times, not `N`, and that every page fetched
   was also closed — a cap checked at the wrong end of the loop over-fetches by one and leaks the page it refuses
   to deliver.
