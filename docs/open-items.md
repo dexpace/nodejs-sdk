@@ -1,9 +1,10 @@
 # Open Items
 
 Running register of everything known to be unmet, unverified, misreported, or deliberately deferred across the
-implemented portion of this project. Reviewed state: **scaffold milestone** (committed, `0ebdc79`) and
+implemented portion of this project. Reviewed state: **scaffold milestone** (committed, `0ebdc79`),
 **Phase 1 — Core HTTP Domain Model** (branch `2-phase-1-core-http-domain-model`, uncommitted at time of
-review). Last reviewed **2026-07-30**.
+review), and **Phase 4a — Execution Context** (branch `7-phase-4a-execution-context`, three review passes).
+Last reviewed **2026-08-26**.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is either scheduled against a named phase or
@@ -84,6 +85,63 @@ add an import scan over `packages/core/src` allowing only relative specifiers an
 
 ---
 
+### A5 — CTX-8: the duplicate-key error's *message* does not identify the key — **DECIDE**
+
+Appendix C states CTX-8 more strictly than `product-spec/07` §7.3 does. §7.3 says the reject-on-duplicate
+insert "fails all others with an error naming the key"; appendix C
+(`appendix-c-consolidated-normative-requirement-index.md:176`) says "an error **whose message** identifies the
+key."
+
+`DuplicateContextKeyError`'s message is `` `context key already registered: ${String(key)}` ``. Call keys are
+`Symbol()`s whose description is the flavor, not the identity, so every default-constructed context of a given
+flavor renders identically:
+
+```
+context key already registered: Symbol(dispatch-context)
+```
+
+The message therefore names the *kind* of key, not *which* key. The error does carry the offending symbol as a
+`readonly key: symbol` field — strictly more identifying than any string, and asserted in
+`store.test.ts` — so the requirement's intent is met by the field while its letter is not met by the message.
+
+Phase 4a's design already ledgers the `Symbol()` key choice with the cost "debuggability (opaque when logged or
+printed)", but that row does not connect itself to CTX-8's message clause, so nothing currently records this as
+a known partial deviation.
+
+Two ways out, both defensible:
+1. **Give default keys a distinguishing description** — `Symbol('dispatch-context#' + n)` from a module-scoped
+   counter. The counter would label only the description; `Symbol()` remains the identity, so CTX-4/5/6's
+   uniqueness is untouched and the ledger's rejection of a `traceId:spanId`+counter *string key* still stands.
+   Costs a second module-level mutable binding (`docs/knowledge/variables-and-declarations.md:22`), on top of
+   the `contextStore` singleton that already takes that deviation.
+2. **Record a deliberate partial deviation** in the Phase 4a design's Deviation Ledger, on the grounds that a
+   symbol has no unique rendering and the typed `.key` field identifies the key more precisely than a message
+   can.
+
+Either way the Phase 4 checklist's CTX-8 row should stop reading as an unqualified ✅.
+
+### A6 — CTX-12 / XCUT-14: the drain **loop**'s shape is unverifiable, and untested — **WATCH**
+
+`ContextStore.#drain` is a post-insert loop, as CTX-12 (SHOULD) and XCUT-14 (MUST) require. No test proves it
+is a loop, and none can: `install` and `installIfAbsent` each set exactly one key before draining, so the map
+is never more than one over the cap at drain entry and a second pass is unreachable. Replacing the loop body
+with a single check-then-evict breaks nothing — confirmed by mutation testing across the module (that mutant is
+the only meaningful survivor of 23).
+
+The Phase 4a plan's Self-Review claims CTX-12 is covered by "a property-style burst test [that] asserts the
+size never overshoots after any single insert". That test is real and passing, but it pins the **bound**, not
+the drain's shape.
+
+Not a defect today: the loop is present, the bound holds, and on a single-threaded runtime the two shapes are
+behaviorally identical. `#drain` and the drain `describe` block both now carry a note saying so, so the loop is
+not "simplified" away by a later reader.
+
+**Trigger:** a runtime where inserts can stack more than one overshoot before a drain runs (worker threads, a
+future concurrent store), or any change that lets the map exceed `cap + 1`. At that point the shape becomes
+observable and owes a real test.
+
+---
+
 ## B. Gates and tooling
 
 ### B1 — NFR-10 / NFR-17: CI never runs on the declared minimum runtime — **ACT** (trigger has now fired)
@@ -144,6 +202,21 @@ not deliberate reflection abuse (`Object.create(Request.prototype)`), and states
 `sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` when that phase is reached." Listed
 here so the promise survives until then.
 
+### C3 — The Phase 4 checklist under-reports Phase 4a — **ACT**
+
+`docs/superpowers/plans/2026-07-26-phase4-execution-context-and-pipelines-checklist.md` still carries its
+banner: "the plans are reviewed and corrected as of 2026-07-26 but **not yet executed**. Every ✅ means 'the
+plan builds and tests it,' not 'it is on `main`.'" Phase 4a's rows are now built, tested, and committed on
+`7-phase-4a-execution-context`, so the banner understates them while 4b and 4c remain unbuilt.
+
+The same checklist maps only `CTX-*`. It has no `XCUT-14` row, even though
+`docs/superpowers/specs/2026-07-28-phase9-cross-cutting-conformance-design.md:66` names "4a's context registry"
+as an XCUT-14 site and appendix B's only conformance row that `ContextStore` satisfies is B.8's
+"Caller/server-keyed maps bounded with drain-to-cap loop (XCUT-14)" — appendix B has no CTX section at all. The
+ID is now cited in `store.ts` and `store.test.ts`; the checklist is the remaining gap.
+
+Split the banner per sub-phase, and add an `XCUT-14` row pointing at 4a Task 4 (qualified by A6 above).
+
 ---
 
 ## D. Scheduled deferrals
@@ -161,7 +234,11 @@ No action now. Each is already owned by a named phase; this table exists so none
 | Seam contracts (byte-stream, transport, codec, projection) | SEAM-2 – SEAM-30 | 2–8 | |
 | Adapter packages, peer-dependency dedup | NFR-2 | 8 | |
 | Shrink-survival regression guard | NFR-9 | 9 | |
-| Concurrency-model agnosticism check | NFR-11 | 4 | No async code exists yet |
+| Concurrency-model agnosticism check | NFR-11 | 4c | Retargeted from "Phase 4" by the 4a design: everything in 4a is synchronous, and 4c's stage pipeline is where async-facing surface appears |
+| `CTX-17`'s positive half — the first store entry installed by the first promotion | CTX-17 | 4c | 4a satisfies only the negative half (constructing a head context must not auto-register it), which holds structurally because `context.ts` never imports `store.ts`. Wiring the store into the promotions would invert the layering and make every promotion a global side effect |
+| Real W3C Trace Context generation behind `InstrumentationBundle` | CTX-14, CTX-15 | 7 | 4a ships the bundle's frozen shape and the no-op default only. `activeSpan`/`tracerFactory` stay typed `unknown`, and `activeSpan` is `undefined` rather than a no-op span object, until a tracing adapter defines `Span` |
+| `contextsEqual()`, value equality over `ExecutionContext` | CTX-5 (equality framing) | none | Built only if 4b or 4c needs one. `CTX-5`'s operative half — pinning an explicit shared key — ships via `ContextInit.key` |
+| `FakeTransport` test double | — | 4c | 4a never touches `Transport`; `PIPE-9`'s empty-pipeline dispatch is the likely first real consumer |
 | Self-identifying version metadata (real `User-Agent`) | NFR-15 | 7/8 | |
 | Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet |
 | NFR-8 re-confirmed as a documented non-applicability | NFR-8 | 10 | No reflection-driven discovery surface exists by design |
