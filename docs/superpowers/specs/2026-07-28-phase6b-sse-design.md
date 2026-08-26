@@ -193,9 +193,9 @@ internal release routine, not inferred from context:
   consumer already received, which is the specific harm `SSE-30` names.
 - Release on an **explicit `close()`** — a failing close propagates. The caller asked; the caller hears.
 - Release with **an error already in flight** (`SSE-29`, `SSE-36`) — the primary error propagates with the close
-  failure attached via native `SuppressedError`, the same mechanism 5a uses.
+  failure attached via Phase 4b's guarded `suppress()` helper, the same mechanism 5a uses.
 
-> **`SuppressedError` is blocked on a cross-phase decision, and 6b does not get to make it.**
+> **`SuppressedError` was blocked on a cross-phase decision; it is now closed and 6b just calls the helper.**
 > `plans/2026-07-25-phase4b-recovery-chain.md:24-48` establishes that `SuppressedError` is a V8 global from the
 > full Explicit Resource Management proposal, absent on every 18.x runtime — Node backported
 > `Symbol.dispose`/`Symbol.asyncDispose` alone — while `engines.node` is `">=18.17"` and `verify:node-floor`
@@ -325,7 +325,7 @@ Phase 9's sweep reads this table rather than re-deriving it.
 |---|---|---|
 | `BufferedSource` (`overStream`, `exhausted`, `readByte`, `readExactly`, `peek`, `close`) | 3a | `peek()` is `SSE-12`'s lookahead; `close()` is already idempotent and already rejects later reads, covering most of `SSE-27`/`SSE-28`. `exhausted()` — not a sentinel from `readByte()` — is how end of stream is detected, because `readByte()` rejects rather than returning one |
 | `IoError` | 3a | Every read-path failure surfaces as one shape, including the torn-down-mid-read case |
-| `SuppressedError` usage pattern | 5a | `SSE-29`/`SSE-36`'s "close failure attached to the primary" is the identical mechanism — **and inherits 5a's unresolved blocker**, see below |
+| `suppress()` usage pattern | 4b, 5a | `SSE-29`/`SSE-36`'s "close failure attached to the primary" is the identical mechanism, over 4b's guarded helper. The former cross-phase blocker is closed |
 | `Response.body` / `Response.close()` | 3b | `sseStreamFrom` binds to them; it does not reach for a transport — which is also half of why `SSE-38` holds by construction |
 | The `kind`-discriminated union idiom | 4b | `MapperOutcome<T>` mirrors `Outcome<T>`'s shape without extending its type |
 
@@ -408,4 +408,4 @@ would publish a way to violate `SSE-17`'s non-ownership contract by accident.
 | `SSE-37` and `SSE-38` enforced by a build script, not by module-graph structure | `SSE-37`, `SSE-38` | The reference gets it free from package boundaries; this port puts serde in the same package, so the invariant needs a mechanical guard or it is only a convention. The script strips comments before the `SSE-38` marker scan and skips `*.test.ts` for markers only — a gate that failed on a TSDoc *documenting* the absence of reconnection would be deleted rather than obeyed |
 | `[Symbol.asyncDispose]` on `SseStream` is optional and runtime-guarded, not an `implements AsyncDisposable` | `styleguide/typescript/13` §13.1–13.2 | The symbol postdates the declared `>=18.17` floor that `verify:node-floor` pins, and TypeScript does not polyfill it for a declaring library. `close()` stays the supported path everywhere; dispose delegates to it. Cost: `await using` does not type-check against an optional member. Unconditional once the floor moves past 18.18 |
 | Byte-at-a-time line framing via `readByte()` | `docs/knowledge/performance.md:16-17` | `readByte()` is `readExactly(1)` underneath, so framing allocates per byte on the parse path. Deferred deliberately on the guide's own terms (`performance.md:4,24` — no micro-fix before a profile names the bottleneck) and recorded so Phase 10 revisits it with a `*.bench.ts` instead of rediscovering it. A bulk-`read()` framing is the fix if a profile calls for one; no observable contract changes |
-| `SSE-29`/`SSE-36` construct a native `SuppressedError` | `NFR-10` / the declared `>=18.17` floor | Not 6b's deviation to take or reverse — inherited from the cross-phase blocker at `plans/2026-07-25-phase4b-recovery-chain.md:24-48`, which must resolve across 4b/5a/6a/6b/6c together. Listed here so Phase 10 sees 6b in that set |
+| `SSE-29`/`SSE-36` pair errors through `suppress()` rather than native `SuppressedError` | none — a runtime-floor constraint, not a spec deviation | Inherited from 4b's F1 resolution (branch (b), 2026-08-26): the native class reached Node in 24.0.0, against a `>=20.3` floor. Listed here so Phase 10 sees 6b in that set |
