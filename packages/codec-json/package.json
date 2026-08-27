@@ -1,0 +1,46 @@
+{
+  "name": "@dexpace/codec-json",
+  "version": "0.0.0",
+  "description": "Reference JSON wire codec for the dexpace SDK: JSON.parse/JSON.stringify plus Tristate wiring and schema decode glue.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "dependencies": {},
+  "peerDependencies": {
+    "@dexpace/core": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@dexpace/core": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@dexpace/core": "workspace:*",
+    "@microsoft/api-extractor": "catalog:",
+    "expect-type": "catalog:",
+    "fast-check": "catalog:",
+    "typescript": "catalog:"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "api:local": "api-extractor run --local",
+    "api:ci": "api-extractor run",
+    "prepublishOnly": "bun run build && bun run api:ci && publint . && attw --pack . --ignore-rules cjs-resolves-to-esm"
+  }
+}

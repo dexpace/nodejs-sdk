@@ -20,9 +20,11 @@
  */
 export * from './http/index.js';
 
-// Deliberately NOT `export * from './seams/index.js';` — that barrel also carries the internal-only,
-// provisional Serde<T> (SEAM-21 will reshape it in Phase 6). Naming each public export here instead keeps
-// Serde<T> unreachable from the package's public entry point and out of the api-extractor surface.
+// Deliberately NOT `export * from './seams/index.js';`. That file is a folder-level barrel, which
+// docs/knowledge/module-organization.md:18 bans outright and api-design.md:6 makes this file the sole
+// one of; nothing imports it and the right end state is deleting it (docs/open-items.md H12). Naming
+// each public export here keeps the package's surface a decision made in one place rather than a
+// consequence of what a folder happens to re-export.
 export type {Transport} from './seams/transport.js';
 export {
   composeSignal,
@@ -150,3 +152,88 @@ export {
   createBearerToken,
 } from './auth/credential.js';
 export {AuthResolutionError, PlaintextCredentialError} from './auth/errors.js';
+
+// ---------------------------------------------------------------------------------------------
+// The serde seam, promoted in Phase 6a.
+//
+// Public because `@dexpace/codec-json` is a SEPARATE PACKAGE and can reach core only through this
+// entry point — which is what settles the promotion question by force. Phase 2 kept `Serde<T>`
+// package-private precisely so SEAM-21's reshape would not be a breaking change; the reshape has
+// landed, so that marking comes off here.
+//
+// The phrase "package-private" is deliberate: `stripInternal` is on, and TypeScript tests a
+// declaration's WHOLE leading comment range for the release tag as a SUBSTRING — spelling that tag
+// out in prose here silently deletes the export below from the emitted `.d.ts`. It did, once.
+// ---------------------------------------------------------------------------------------------
+export type {Deserializer, Schema, Serde, Serializer} from './seams/serde.js';
+export {
+  DeserializationError,
+  isSerdeError,
+  SerializationError,
+} from './serde/errors.js';
+export type {
+  DeserializationErrorOptions,
+  SerdeErrorOptions,
+} from './serde/errors.js';
+export {
+  absent,
+  foldTristate,
+  isAbsent,
+  isNull,
+  isPresent,
+  isTristate,
+  nullValue,
+  ofNullable,
+  present,
+  TRISTATE_BRAND,
+  tristateToString,
+  valueOrNull,
+} from './serde/tristate.js';
+export type {Tristate, TristateBranches} from './serde/tristate.js';
+export {
+  decodeResponse,
+  decodeSuccessResponse,
+} from './serde/response-handlers.js';
+export type {DecodeTarget} from './serde/response-handlers.js';
+export {serdeBody} from './body/serde-body.js';
+
+// SSE (Phase 6b). The parser and line reader stay internal: they are driven only through the facade, and
+// exposing them would expose a way to violate SSE-17's non-ownership contract by accident.
+export type {SseEvent, SseEventFields} from './sse/event.js';
+export {
+  isSseEventEmpty,
+  makeSseEvent,
+  sseEventToString,
+  sseEventsEqual,
+} from './sse/event.js';
+export {SseLineTooLongError} from './sse/line-reader.js';
+export {SseStreamError} from './sse/errors.js';
+export {SseStream, sseStreamFrom} from './sse/stream.js';
+export type {SseStreamFromOptions, SseStreamOptions} from './sse/stream.js';
+export {
+  MAPPER_DONE,
+  MAPPER_SKIP,
+  mapperValue,
+  typedSseStream,
+} from './sse/typed.js';
+export type {MapperOutcome, SseMapper} from './sse/typed.js';
+
+// Pagination (Phase 6c). The query splice and link tokenizer stay internal: publishing them would put a second
+// URL-manipulation surface next to Phase 1's QueryParams, which is the confusion the one-encoder rule avoids.
+export {Page, pageInfo} from './pagination/page.js';
+export type {PageInfo} from './pagination/page.js';
+export type {PaginationStrategy} from './pagination/strategy.js';
+export {Paginator} from './pagination/paginator.js';
+export type {PaginatorInit} from './pagination/paginator.js';
+export {
+  cursorStrategy,
+  linkHeaderStrategy,
+  pageNumberStrategy,
+} from './pagination/strategies.js';
+export {paginateWithFetchers} from './pagination/fetchers.js';
+export type {
+  FetcherPage,
+  FetcherPaginationInit,
+  PagingOptions,
+} from './pagination/fetchers.js';
+export {PaginationError} from './pagination/errors.js';

@@ -213,7 +213,7 @@ Both of 4b's open decisions closed before execution; neither changed a `RECOV-*`
 `typecheck`, `lint`, `build`, `bun test --coverage` (588 tests across 50 files; 98.68% funcs / 99.73% lines
 against the 80% floor), `api` with `packages/core/etc/core.api.md` byte-identical, `lint:publish`,
 `verify:dual-consumption`, `verify:consumer-types`, `verify:seam-1`, `verify:runtime-floor`, `audit`, and the
-`node-conformance` job's `test:node` (36 cases, 35 before this phase). Also `test:knowledge`, which CI does not
+`node-conformance` job's `test:node` (36 cases, 35 before this phase). Also `test:scripts` (named `test:knowledge` at the time), which CI does not
 run. Structural: no `node:` import, no `enum`, no `recovery/index.ts`, SPDX on line 1 of all 15 new files, no
 import cycle anywhere under `packages/core/src`.
 

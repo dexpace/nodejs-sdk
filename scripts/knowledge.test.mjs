@@ -1,6 +1,6 @@
 // scripts/knowledge.test.mjs
 //
-// Run with `bun run test:knowledge` (`node --test 'scripts/*.test.mjs'` — Node
+// Run with `bun run test:scripts` (`node --test 'scripts/*.test.mjs'` — Node
 // 26 no longer accepts a bare directory there). Deliberately outside `bun test`,
 // which `bunfig.toml` scopes to `packages`: the 80% line-coverage floor is a
 // statement about `packages/core`, not about repo tooling.

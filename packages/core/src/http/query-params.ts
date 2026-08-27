@@ -3,7 +3,24 @@
 import type {Builder} from './builder.js';
 import {encodeRfc3986Component} from './rfc3986.js';
 
-function safeDecodeComponent(value: string): string {
+/**
+ * @internal
+ * RFC 3986 component encoding (HTTP-29): space → `%20` (never `+`), literal `+` → `%2B`, everything outside
+ * the unreserved set `A–Z a–z 0–9 - . _ ~` percent-encoded.
+ *
+ * Exported so `src/pagination/query-splice.ts` can reuse it. `PAGE-22` restates this exact rule, and two
+ * encoders in one codebase is a drift bug waiting to happen — there is exactly one.
+ */
+export function encodeQueryComponent(value: string): string {
+  return encodeRfc3986Component(value);
+}
+
+/**
+ * @internal
+ * RFC 3986 component decoding (HTTP-29/HTTP-31): a literal `+` reads back as `+`, `%20` as a space, and
+ * malformed percent-encoding falls back to raw text rather than throwing.
+ */
+export function decodeQueryComponent(value: string): string {
   try {
     return decodeURIComponent(value);
   } catch {
@@ -99,7 +116,10 @@ export class QueryParams {
       const eqIndex = segment.indexOf('=');
       const rawName = eqIndex === -1 ? segment : segment.slice(0, eqIndex);
       const rawValue = eqIndex === -1 ? '' : segment.slice(eqIndex + 1);
-      builder.add(safeDecodeComponent(rawName), safeDecodeComponent(rawValue));
+      builder.add(
+        decodeQueryComponent(rawName),
+        decodeQueryComponent(rawValue),
+      );
     }
     return builder.build();
   }

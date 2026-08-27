@@ -9,11 +9,8 @@ import {ConsumedBodyError} from './errors.js';
 /**
  * A lazily-draining, bounded capture wrapper over a raw response body stream (BODY-22..29).
  *
- * Teardown is `close()` only. `[Symbol.asyncDispose]` is deliberately absent: it postdates the declared
- * `engines.node` floor (`>=18.17`), where the computed key evaluates to `undefined` and binds the method
- * to the string `"undefined"` instead -- wrong, silent, and only at run time. This matches the decision
- * every Phase 3a resource already ships with. Revisit when the checkpoint's floor bump lands and adds it
- * to all of them at once, rather than to two classes out of seven.
+ * Teardown is `close()` only. Revisit when a project-wide explicit resource management pass lands
+ * across all Phase 2/3a resource classes.
  *
  * @internal
  */

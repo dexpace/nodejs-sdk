@@ -7,27 +7,51 @@
       "devDependencies": {
         "@arethetypeswrong/cli": "^0.18",
         "@changesets/cli": "^2",
+        "@dexpace/codec-json": "workspace:*",
         "@dexpace/core": "workspace:*",
         "@eslint-community/eslint-plugin-eslint-comments": "^4",
-        "@microsoft/api-extractor": "^7",
+        "@microsoft/api-extractor": "catalog:",
         "@types/bun": "latest",
         "eslint": "^9",
-        "fast-check": "^3",
+        "fast-check": "catalog:",
         "globals": "^17.8.0",
         "gts": "^7",
         "mitata": "^1",
         "publint": "^0.3",
-        "typescript": "^5.8",
+        "typescript": "catalog:",
         "typescript-eslint": "^8",
+      },
+    },
+    "packages/codec-json": {
+      "name": "@dexpace/codec-json",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
       },
     },
     "packages/core": {
       "name": "@dexpace/core",
       "version": "0.0.0",
       "devDependencies": {
-        "expect-type": "^1.4.0",
+        "expect-type": "catalog:",
       },
     },
+  },
+  "overrides": {
+    "fast-uri": "^3.1.5",
+  },
+  "catalog": {
+    "@microsoft/api-extractor": "^7",
+    "expect-type": "^1.4.0",
+    "fast-check": "^3",
+    "typescript": "^5.8",
   },
   "packages": {
     "@andrewbranch/untar.js": ["@andrewbranch/untar.js@1.0.3", "", {}, "sha512-Jh15/qVmrLGhkKJBdXlK1+9tY4lZruYjsgkDFj08ZmDiWVBLJcqkok7Z0/R0In+i1rScBpJlSvrTS2Lm41Pbnw=="],
@@ -79,6 +103,8 @@
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
+
+    "@dexpace/codec-json": ["@dexpace/codec-json@workspace:packages/codec-json"],
 
     "@dexpace/core": ["@dexpace/core@workspace:packages/core"],
 
@@ -334,7 +360,7 @@
 
     "fast-levenshtein": ["fast-levenshtein@2.0.6", "", {}, "sha512-DCXu6Ifhqcks7TZKY3Hxp3y6qphY5SJZmrWMDrKcERSOXWQdMhU9Ig/PYrzyw/ul9jOIyh0N4M0tbC5hodg8dw=="],
 
-    "fast-uri": ["fast-uri@3.1.4", "", {}, "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw=="],
+    "fast-uri": ["fast-uri@3.1.6", "", {}, "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q=="],
 
     "fastq": ["fastq@1.20.1", "", { "dependencies": { "reusify": "^1.0.4" } }, "sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw=="],
 

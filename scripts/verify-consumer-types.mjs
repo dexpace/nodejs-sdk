@@ -39,6 +39,13 @@ assert.ok(
 );
 
 const built = join(repoRoot, 'packages', 'core', 'dist', 'index.js');
+const builtCodecJson = join(
+  repoRoot,
+  'packages',
+  'codec-json',
+  'dist',
+  'index.js',
+);
 const tsc = join(repoRoot, 'node_modules', '.bin', 'tsc');
 
 // Checked up front, not left to the catch below. A missing prerequisite reported through the
@@ -48,10 +55,12 @@ assert.ok(
   existsSync(tsc),
   `tsc not found at ${tsc} — run \`bun install\` before this gate`,
 );
-assert.ok(
-  existsSync(built),
-  `built package not found at ${built} — run \`bun run build\` before this gate`,
-);
+for (const artifact of [built, builtCodecJson]) {
+  assert.ok(
+    existsSync(artifact),
+    `built package not found at ${artifact} — run \`bun run build\` before this gate`,
+  );
+}
 const workDir = mkdtempSync(join(tmpdir(), 'dexpace-consumer-types-'));
 
 // Exercises the surface most likely to reference a declaration the consumer's lib cannot resolve:
@@ -66,17 +75,18 @@ const workDir = mkdtempSync(join(tmpdir(), 'dexpace-consumer-types-'));
 // that class of silent elision loud.
 const consumer = `
 import {
+  absent,
   ApiKeyCredential,
   type ApiKeyCredentialConfig,
-  AuthResolutionError,
   type AuthCredentialSet,
   type AuthDescriptor,
   type AuthRequirement,
+  authRequirementsEqual,
+  AuthResolutionError,
   type AuthScheme,
+  authStep,
   type AuthStepSettings,
   type AuthTiers,
-  authRequirementsEqual,
-  authStep,
   type BackoffSettings,
   type BasicCredential,
   type BearerCredential,
@@ -89,18 +99,33 @@ import {
   createAuthDescriptor,
   createAuthRequirement,
   createBearerToken,
+  decodeResponse,
+  decodeSuccessResponse,
+  type DecodeTarget,
+  DeserializationError,
+  type DeserializationErrorOptions,
+  type Deserializer,
   type DigestAlgorithm,
   type DigestCredential,
   type DispatchContext,
   type ExchangeContext,
   type ExecutionContext,
+  foldTristate,
   type InstrumentationBundle,
+  isAbsent,
+  isNull,
+  isPresent,
+  isSerdeError,
+  isTristate,
   materialize,
   NameKeyCredential,
   type Next,
+  nullValue,
+  ofNullable,
   PILLAR_STAGES,
   PipelineBuilder,
   PlaintextCredentialError,
+  present,
   type RedirectCondition,
   type RedirectPredicate,
   type RedirectSettings,
@@ -109,13 +134,19 @@ import {
   type RequestContext,
   Response,
   type RetrySettings,
-  type RetryStepOptions,
   retryStep,
+  type RetryStepOptions,
   Runtime,
+  type Schema,
+  type Serde,
+  serdeBody,
+  type SerdeErrorOptions,
+  SerializationError,
+  type Serializer,
   type Stage,
   STAGE_ORDER,
-  type StandardResilienceOptions,
   standardResilience,
+  type StandardResilienceOptions,
   Status,
   type Step,
   type StepContext,
@@ -123,8 +154,20 @@ import {
   toHttpError,
   type TokenProvider,
   type Transport,
+  type Tristate,
+  TRISTATE_BRAND,
+  type TristateBranches,
+  tristateToString,
   TypedResponse,
+  valueOrNull,
 } from ${JSON.stringify(built)};
+import {
+  jsonSerde,
+  type JsonSerdeOptions,
+  tristate,
+  tristateObject,
+  tristateReplacer,
+} from ${JSON.stringify(builtCodecJson)};
 
 export function readBody(response: Response): Promise<string> {
   return response.text();
@@ -248,6 +291,83 @@ export function clockNow(c: Clock): number {
 export function conditionOf(c: RedirectCondition): number {
   return c.redirectsFollowed;
 }
+
+// --- the serde seam promoted in Phase 6a ---
+export function mediaTypeOf(serde: Serde): string {
+  return serde.mediaType;
+}
+export function encodeInto(s: Serializer, value: unknown, buf: Uint8Array): number {
+  return s.serializeInto(value, buf, 0);
+}
+export function decodeOne<T>(d: Deserializer, data: Uint8Array, schema: Schema<T>): T {
+  return d.deserialize(data, schema, 'T');
+}
+export function decodeTarget<T>(schema: Schema<T>): DecodeTarget<T> {
+  return {schema, typeName: 'T'};
+}
+export function decodeBoth<T>(
+  response: Response,
+  d: Deserializer,
+  target: DecodeTarget<T>,
+): [Promise<T>, Promise<T>] {
+  return [decodeResponse(response, d, target), decodeSuccessResponse(response, d, target)];
+}
+export function bodyFromSerde(serde: Serde): Body {
+  return serdeBody({a: 1}, serde, 'application/merge-patch+json');
+}
+export function serdeErrorContext(e: unknown): number | undefined {
+  // Direction is narrowed first: response context lives on the read leaf, not on the union.
+  if (!isSerdeError(e)) return undefined;
+  return e instanceof DeserializationError ? e.status : undefined;
+}
+export function newSerdeErrors(
+  write: SerdeErrorOptions,
+  read: DeserializationErrorOptions,
+): [SerializationError, DeserializationError] {
+  return [new SerializationError('w', write), new DeserializationError('r', read)];
+}
+export function readLeafContext(e: DeserializationError): [number | undefined, string | null] {
+  return [e.status, e.etag];
+}
+export function tristateBranches<T>(t: Tristate<T>): string {
+  const branches: TristateBranches<T, string> = {
+    onAbsent: () => 'absent',
+    onNull: () => 'null',
+    onPresent: (value) => tristateToString(present<T>(value as NonNullable<T>)),
+  };
+  return foldTristate(t, branches);
+}
+export function tristateStates(): readonly [Tristate<number>, Tristate<number>, Tristate<number>] {
+  return [absent(), nullValue(), present(1)];
+}
+export function tristateNarrowing(t: Tristate<string>): string | null {
+  if (isAbsent(t) || isNull(t)) return valueOrNull(t);
+  if (isPresent(t)) return t.value;
+  return null;
+}
+export function tristateFromNullable(v: string | null): Tristate<string> {
+  return ofNullable(v);
+}
+export function brandedRecognition(v: unknown): boolean {
+  return isTristate(v) && TRISTATE_BRAND in (v as object);
+}
+
+// --- @dexpace/codec-json, the workspace's second publishable package ---
+export function jsonBundle(options: JsonSerdeOptions): Serde {
+  return jsonSerde(options);
+}
+export function defaultJsonBundle(): Serde {
+  return jsonSerde();
+}
+export function tristateField(inner: Schema<number>): Schema<Tristate<number>> {
+  return tristate(inner);
+}
+export function tristateShape(inner: Schema<number>): Tristate<number> {
+  return tristateObject({age: inner}).parse({}).age;
+}
+export function replacerRoundTrip(value: unknown): string {
+  return JSON.stringify(value, tristateReplacer);
+}
 `;
 
 const tsconfig = {
@@ -294,5 +414,6 @@ try {
 
 console.log(
   `consumer-types check passed: dist/*.d.ts compiles on lib [${lib.join(', ')}] with types: [],\n` +
-    'including every symbol the pillar-authoring surface promotes.',
+    'including every symbol the pillar-authoring surface and the Phase 6a serde seam promote, plus\n' +
+    "@dexpace/codec-json's own entry point.",
 );

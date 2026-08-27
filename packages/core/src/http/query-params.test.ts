@@ -4,7 +4,11 @@
 // HTTP-30 (order-sensitive equality, empty-list dropped), HTTP-31 (lenient parse)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
-import {QueryParams} from './query-params.js';
+import {
+  QueryParams,
+  decodeQueryComponent,
+  encodeQueryComponent,
+} from './query-params.js';
 
 describe('case-sensitive names and multi-value (HTTP-28)', () => {
   test('page and Page are distinct names', () => {
@@ -123,4 +127,25 @@ describe('newBuilder derivation (HTTP-3)', () => {
     expect(derived.get('y')).toBe('3');
     expect(original.getAll('x')).toEqual(['1', '2']);
   });
+});
+
+// PAGE-22 restates HTTP-29's rule. These assertions pin the shared function so the pagination splice can rely
+// on it instead of restating the rule and drifting.
+test('the component encoder is directly reachable and follows RFC 3986 (HTTP-29, reused by PAGE-22)', () => {
+  expect(encodeQueryComponent('a b')).toBe('a%20b');
+  expect(encodeQueryComponent('a+b')).toBe('a%2Bb');
+  expect(encodeQueryComponent('a/b')).toBe('a%2Fb');
+  expect(encodeQueryComponent('a=b')).toBe('a%3Db');
+  expect(encodeQueryComponent('a*b')).toBe('a%2Ab');
+  expect(encodeQueryComponent('AZaz09-._~')).toBe('AZaz09-._~');
+});
+
+test('the component decoder treats a literal + as data, not a space (HTTP-29, PAGE-22)', () => {
+  expect(decodeQueryComponent('a+b')).toBe('a+b');
+  expect(decodeQueryComponent('a%20b')).toBe('a b');
+  expect(decodeQueryComponent('a%2Bb')).toBe('a+b');
+});
+
+test('the decoder falls back to raw text on malformed percent-encoding (HTTP-31)', () => {
+  expect(decodeQueryComponent('a%zzb')).toBe('a%zzb');
 });
