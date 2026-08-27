@@ -2,37 +2,50 @@
   "name": "nodejs-sdk",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ],
+    "catalog": {
+      "@microsoft/api-extractor": "^7",
+      "expect-type": "^1.4.0",
+      "fast-check": "^3",
+      "typescript": "^5.8"
+    }
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18",
     "@changesets/cli": "^2",
+    "@dexpace/codec-json": "workspace:*",
     "@dexpace/core": "workspace:*",
     "@eslint-community/eslint-plugin-eslint-comments": "^4",
-    "@microsoft/api-extractor": "^7",
+    "@microsoft/api-extractor": "catalog:",
     "@types/bun": "latest",
     "eslint": "^9",
-    "fast-check": "^3",
+    "fast-check": "catalog:",
     "globals": "^17.8.0",
     "gts": "^7",
     "mitata": "^1",
     "publint": "^0.3",
-    "typescript": "^5.8",
+    "typescript": "catalog:",
     "typescript-eslint": "^8"
   },
+  "overrides": {
+    "fast-uri": "^3.1.5"
+  },
   "scripts": {
-    "lint": "gts lint .",
-    "fix": "gts fix .",
-    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit",
-    "build": "tsc -p packages/core/tsconfig.build.json",
+    "lint": "bun run build:core && gts lint .",
+    "fix": "bun run build:core && gts fix .",
+    "build:core": "tsc -b packages/core/tsconfig.build.json",
+    "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit",
+    "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
-    "test:knowledge": "node --test 'scripts/*.test.mjs'",
+    "test:scripts": "node --test 'scripts/*.test.mjs'",
     "test:node": "node --test test/node-conformance/*.test.mjs",
     "bench": "bun run packages/core/src/io/byte-queue.bench.ts",
-    "api": "cd packages/core && bun run api:ci",
-    "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm",
+    "api": "cd packages/core && bun run api:ci && cd ../codec-json && bun run api:ci",
+    "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm && publint packages/codec-json && attw --pack packages/codec-json --ignore-rules cjs-resolves-to-esm",
     "audit": "bun audit --audit-level=high --prod",
     "changeset": "node scripts/changeset.mjs",
     "verify:dual-consumption": "node scripts/verify-dual-consumption.mjs",

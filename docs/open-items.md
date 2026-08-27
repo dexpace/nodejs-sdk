@@ -16,7 +16,7 @@ and says nothing about them beyond what 5b's own work touched — the one 5a fil
 (`retry/engine.ts`) is recorded at G9.
 
 Sections A–E below were written against Phase 1 and are re-verified at each review; section F is Phase 4b's,
-section G is Phase 5b's.
+section G is Phase 5b's, and section H is Phase 6a's.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is either scheduled against a named phase or
@@ -578,6 +578,441 @@ review pass into a refactor of earlier phases.
    is identical in all three. One `#requireBucket(stage)` collapses them.
 
 **Trigger:** whichever phase next edits `ascii-validation.ts` (1) or `pipeline/builder.ts` (2).
+
+---
+
+## Section H — Phase 6a (Serde)
+
+Recorded at implementation time, before the three review passes. Everything here is either a deliberate
+deviation from the phase plan, a requirement clause satisfied by delegation rather than by code, or work the
+phase surfaced and deliberately left out of scope.
+
+### H1 — `@dexpace/codec-json` buffers the whole decoded body before parsing — **ACCEPTED DEVIATION**
+
+`SERDE-27` requires a response-decoding handler to stream the body through the deserializer "without first
+materializing the whole body as a string/byte array". `decodeResponse` itself honors that — it hands the live
+`ReadableStream` to `Deserializer.deserializeFrom` and never buffers. `@dexpace/codec-json` cannot: `JSON.parse`
+has no incremental form, so `deserializeFrom` accumulates the decoded text of the entire body before parsing it.
+A codec with a streaming parser satisfies `SERDE-27` fully behind the same interface, so this is a property of
+this format, not of the seam.
+
+No byte cap is imposed on the accumulator, deliberately: truncating a legitimate large payload is a worse
+failure than the memory it would save, and a caller who needs a bound imposes it on the transport, where the
+whole response is bounded at once.
+
+**Trigger:** none. Recorded so Phase 9's sweep does not read the handler's compliance as end-to-end compliance.
+
+### H2 — `SERDE-23` (ignore unknown fields) is satisfied by delegation, not enforcement — **ACCEPTED DEVIATION**
+
+Whether an extra wire key is stripped or rejected is a property of the caller's schema (Zod's `.parse()` strips,
+`.strict()` rejects). Core cannot override it without defeating the point of caller-supplied schemas. The
+requirement's *intent* holds — the default path every mainstream schema library takes is the permissive one —
+but nothing in this repository enforces it. Documented as a recommendation in `jsonSerde`'s TSDoc.
+
+**Trigger:** none.
+
+### H3 — no serde-specific error base class — **ACCEPTED DEVIATION**
+
+`SEAM-23`/`SERDE-9`/`SERDE-10` describe write- and read-path failures as subtypes "of a common serde exception
+root". This port ships two flat leaves under `DexpaceError` plus an exported `isSerdeError` guard, because the
+checkpoint's §5.2 two-level cap is why Phase 3b retrofitted `IoError`'s tier away and a `SerdeError` base would
+be the third instance of the banned shape. `DexpaceError` is the common root; `isSerdeError` is the
+catch-one-category mechanism. The intent holds, the structure does not.
+
+How a caller reaches response context, since there is no base class to hang it on: direction is narrowed
+first. `isSerdeError(e)` groups the two leaves for a catch-one-category `catch`; `e instanceof
+DeserializationError` then reaches `status`/`etag`/`location`, which live on the **read leaf only**. An earlier
+implementation declared those three on both leaves so that reading `e.status` straight off the union would
+compile — that put three permanently-empty fields on a published class, and a public constructor that accepted
+a `status` it could never mean anything by, in exchange for saving callers one `instanceof` they were going to
+write anyway. Corrected in review: `SerdeErrorOptions` now carries only `cause`, and
+`DeserializationErrorOptions extends SerdeErrorOptions` adds the response context.
+
+**Trigger:** none.
+
+### H4 — plan deviations taken during implementation — **RECORDED**
+
+Six places where the shipped code departs from `plans/2026-07-28-phase6a-serde.md` as written:
+
+1. **`packages/codec-json` declares `engines.node: ">=20.3"`, not the plan's `">=18.17"`.** The plan also told
+   Task 8 to copy `target`/`lib` verbatim from core (ES2023) and to stop if the two disagreed. They did:
+   `scripts/verify-runtime-floor.mjs` pairs `es2023` with `>=20.3`, and a package peer-depending on
+   `@dexpace/core` cannot honestly declare a floor below core's own. Raised to match.
+2. **`decodeResponse`'s `closingAfter` is built on Phase 4b's `releaseQuietly`/`withReleaseFailure`, not on a
+   fresh `SuppressedError` construction.** The plan's blocking notice resolved to the guarded `suppress()`
+   helper; 4b already wraps that helper in a pair that also carries the identity guard `Response.close()`'s
+   memoized rejection needs. Reusing it keeps one suppression mechanism across retry, redirect, auth, and serde.
+3. **The codec's `SERDE-12` test asserts with a plain sentinel `Error`, not `IoError`.** The plan's Task 10 test
+   imports `IoError` from `@dexpace/core`; that class is deliberately package-private (Phase 3b froze `io/` as
+   unexported), so the import does not resolve. A sentinel proves the stronger property anyway: the codec
+   re-wraps *nothing* coming off the stream.
+4. **No workspace-root `tsconfig.json` solution file was created.** The plan's Task 8 said to add a project
+   reference to it; this repo has never had one — `typecheck` and `build` name each package's tsconfig
+   directly, and those two root scripts were extended instead. `packages/codec-json/tsconfig.json` still
+   carries the `references: [{"path": "../core"}]` entry, which is what lets it typecheck against core's
+   *source* before core's `dist/` exists.
+5. **`MISSING` is module-private, not a package export, and is a plain `Symbol`.** An earlier implementation
+   put it on `@dexpace/codec-json`'s barrel. The plan's Task 12 "Produces" block names only `tristate` and
+   `tristateObject`, and its own test declares the sentinel locally — so the promotion was drift, not a
+   decision. No caller has to construct one: `tristate()` also accepts plain `undefined` for Absent, and
+   `tristateObject` feeds the sentinel itself. `Symbol.for` was likewise dropped for a plain `Symbol`, because
+   unlike `TRISTATE_BRAND` nothing crosses a package boundary on this identity, so the cross-realm registry
+   bought nothing. Corrected in review.
+6. **`SERDE-30` ships as the `tristateToString()` free function, not as a `toString()` on the sentinels.** The
+   design's Requirement Coverage row says "`Absent`/`Null` sentinels carry a stable `toString()`"; the
+   implementation exports a free function over the whole union instead. `SERDE-30` is a MAY and is satisfied
+   either way — this is a design-table mismatch, not a requirement gap. Deliberately **not** changed in review:
+   giving `absent()` and `nullValue()` a `toString` that `present()`'s result did not have would make the
+   discriminated union structurally inconsistent, and a free function is what the
+   discriminated-union-over-classes pattern asks for.
+
+**Trigger:** none — these are settled. Listed so a Phase 9 sweep reading the plan against the code does not
+read them as drift.
+
+### H5 — `NFR-8`/`NFR-9` shrinker keep-configuration — **DEFERRED to Phase 9**
+
+`NFR-8` names "the runtime-wired SPI seams … (serde)" and "the Tristate type" among the surfaces a shipped
+keep-configuration must cover. Both are created in this phase, and neither is keep-configured here: the
+keep-config and its shrink-and-run guard are one workspace-wide deliverable, and
+`plans/2026-07-28-phase9-cross-cutting-conformance.md` ships `@dexpace/shrink-test` with `@dexpace/codec-json`
+and `jsonSerde` already listed in `participatingPackages`. 6a's only obligation is that both surfaces stay
+reachable through the public barrels, which `index.public.test.ts` and `cross-package.test.ts` prove.
+
+**Trigger:** Phase 9.
+
+### H6 — assertion density — **DEFERRED to Phase 10, project-wide**
+
+This phase ships one `invariant()` call across roughly fifteen functions, against
+`docs/knowledge/assertions.md:6-7`'s 2-per-function module average. Phase 4b raised the identical gap and
+resolved it to a ledger row rather than fixing 4b alone, on the grounds that the split is project-wide
+(Phases 1/2/3b/4a ship zero, 4c ships fifteen) and half-migrating it is what
+`docs/knowledge/styleguide-overview.md:32-33` forbids. 6a follows 4b, deliberately.
+
+**Trigger:** Phase 10, which settles the density rule once.
+
+### H7 — coverage now excludes `**/dist/**` — **RECORDED**
+
+`bunfig.toml` gained `coveragePathIgnorePatterns = ["**/dist/**"]`. From this phase on, `@dexpace/codec-json`'s
+tests reach core through its public entry point, which Bun resolves to `packages/core/dist/index.js` — so
+without the exclusion the suite instruments core twice and the reported figure halves without a line of real
+coverage changing. The 80% floor is a statement about `packages/*/src`, and now says so.
+
+**`bun test` is build-dependent from this phase on**, which is the same fact seen from the other side. Bun
+resolves `@dexpace/core` through the workspace symlink and that package's `exports` map, i.e. to
+`packages/core/dist/index.js` — verified: `import.meta.resolve('@dexpace/core')` returns exactly that. So on a
+fresh clone `bun test` cannot resolve core for the codec's six test files until `bun run build` has run, and
+against a **stale** `dist/` the codec suite reports green over yesterday's core. CI is safe (its Build step
+precedes its Test step); local runs are not. The root `test` script was deliberately **not** changed to build
+first — that would slow the inner loop and change a documented command's meaning — so `CLAUDE.md`'s Commands
+section now marks `bun test` build-dependent instead.
+
+**Trigger:** none.
+
+### H8 — `SERDE-12`'s discrimination: one bug fixed, one residual limit — **PARTLY RESOLVED / OPEN**
+
+*Rewritten after the Phase 6a adversarial review (G1/G2). The previous text asserted "`decodeResponse`
+implements `SERDE-12` correctly" and framed the whole gap as nominal-vs-structural. That was wrong on the
+behaviour, and the correction is larger than the original entry.*
+
+**What was actually broken.** The guard read `e instanceof IoError || e instanceof DeserializationError`.
+`packages/core/src/io/errors.ts` is a **flat** tree — `EndOfStreamError`, `SourceContractViolationError`,
+`ClosedResourceError` and `AllocationLimitError` all extend `DexpaceError` *directly*, not `IoError` — so the
+guard whitelisted one of five I/O classes and re-stamped the other four, plus every foreign stream error, as
+`DeserializationError`. Reproduced against the built artifacts on both Bun and Node:
+
+| body stream errored with | caller received (before) | `isSerdeError(e)` |
+|---|---|---|
+| `IoError` | `IoError`, identity preserved | `false` ✅ |
+| `EndOfStreamError` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+| `ClosedResourceError` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+| `AllocationLimitError` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+| `SourceContractViolationError` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+| plain `Error('ECONNRESET')` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+| `TypeError('terminated')` (undici) | `DeserializationError` | **`true`** ❌ |
+| `DOMException` `'AbortError'` | `SuppressedError{.error: DeserializationError}` | `false` ❌ |
+
+The `SuppressedError` rows are a second-order effect worth recording: `Response.close()` cancels the body, and
+`cancel()` on an *already-errored* stream replays that stream's stored error. `withReleaseFailure`'s identity
+guard normally collapses that — but once the primary had been replaced by a fresh `DeserializationError` the
+two objects differed, so the pair was suppressed together and a `SuppressedError` became the top-level
+throwable. The abort case is the sharp one: a caller writing `if (e.name === 'AbortError')` saw
+`'SuppressedError'`.
+
+**Fixed.** The guard is now a single `e instanceof DexpaceError` pass-through: anything already in this SDK's
+typed tree is never re-typed. That subsumes all five I/O leaves, `DeserializationError`, and `HttpStatusError`
+in one check, and it collapses the `SuppressedError` rows too, because the primary is once again the same
+object `cancel()` replays. One test per leaf, plus an `HttpStatusError` case, in
+`packages/core/src/serde/response-handlers.test.ts`.
+
+**The residual, which is irreducible here.** A *foreign* stream error — a `fetch`/undici body's
+`TypeError('terminated')`, a hand-built `ReadableStream` errored with a bare `Error`, an aborted body's
+`DOMException` — is still wrapped as `DeserializationError`. Core hands the live stream to the codec and never
+reads it, so at the point of the catch a transport's raw error and a non-conforming codec leaking one are the
+same shape, and `SERDE-27` requires the codec case be surfaced as a serde exception. Removing the wrap would
+breach `SERDE-27`; keeping it mis-types foreign transport errors. Resolving it needs the transport to **tag**
+its stream errors (a wrapping `TransformStream` at the transport seam), which is new machinery and was out of
+scope for a review pass. Documented on `decodeResponse`'s TSDoc naming the affected transports, and pinned by
+a test that asserts the limitation rather than the ideal — so when tagging lands, that test is the one that
+changes.
+
+**Two open promotion questions, both deliberately not taken here.**
+
+1. `IoError`/`isIoError` are still not on `@dexpace/core`'s public barrel, so the nominal discriminator a
+   caller would `instanceof` does not exist. The original entry's reasoning stands: the 6a design's "Public
+   Barrel" section does not list them, and promoting them reopens a Phase 3b decision.
+2. `SuppressedError`/`SuppressedErrorLike` are likewise unexported, and one can still reach a caller (a decode
+   failure whose release *also* fails — the 304 case has a passing test). Both handlers' `@throws` now
+   document the shape: `name` is `'SuppressedError'`, `.error` is primary, `.suppressed` rides along, and
+   `instanceof SuppressedError` is **not** a valid test because the class is absent on the declared
+   `engines.node >=20.3` floor. Exporting a *type* for it is the narrowest possible fix.
+
+**Trigger:** Phase 9 or Phase 10, whichever next audits the public barrel, for both promotion questions. The
+foreign-stream-error residual triggers on the phase that builds the transport adapter, which is the only layer
+that can tag a stream error at its source.
+
+### H9 — every decode target is treated as non-null — **OPEN**
+
+`SERDE-13` says a wire `null` decoded into a **non-null** target must fail. An implementation sees a schema
+*value*, which carries no nullability it could read, so `@dexpace/codec-json`'s `decodeText` rejects a
+top-level wire `null` unconditionally, before the schema runs — and the `Deserializer` TSDoc raises that to a
+contract obligation on every implementor, since no implementor can do better.
+
+Two consequences, named so a later phase does not rediscover them as bugs:
+
+1. A `200` whose entire body is the literal `null` does not decode. A legitimately nullable top-level target is
+   outside this contract.
+2. `tristate(inner)` cannot serve as a **top-level** decode target for the explicit-null case `SERDE-16`
+   describes. It works exactly as documented as a *field* combinator inside `tristateObject`, which is the
+   documented use and what every test exercises.
+
+The check is deliberate and should not be casually relaxed: moving it after the schema would let a permissive
+schema such as `{parse: (i) => i}` return the wire `null` as a non-null `T`, which is precisely the heap
+pollution `SERDE-5` and `SERDE-13` exist to prevent. Both consequences are now stated on `Deserializer`'s and
+`jsonSerde`'s TSDoc. Raised in the Phase 6a shape review as F3.
+
+**Trigger:** the first phase that needs a nullable top-level decode target. Deliberately **no** opt-in flag was
+invented here — new public surface needs design sign-off, not a review pass. The open question is whether
+`DecodeTarget` should carry an explicit "this target admits null" opt-in.
+
+### H10 — one concept, two spellings across the seam and the handler layer — **OPEN**
+
+`Deserializer.deserialize(data, schema, typeName?)` takes the schema and its diagnostic label positionally;
+`decodeResponse`/`decodeSuccessResponse` bundle the identical pair as `DecodeTarget<T>`. Both ship public in
+this phase, in the same api-extractor report.
+
+The positional form is what the plan's Task 2 Interfaces block specifies and it is defensible on its own terms
+— three parameters, inside `max-params`, and an SPI a third-party codec *implements*, where a positional shape
+is the smaller burden. The object form exists because positionally the handlers would be four parameters, which
+is a lint error. So each layer's choice is locally right and the pair is globally inconsistent: a codec author
+implements one spelling, a caller uses the other. `docs/knowledge/api-design.md:14` ("optional parameters
+collected into a single options object rather than a positional list past two parameters") points at the object
+form for both.
+
+Not reshaped here: `Deserializer` is a seam this phase is publishing, and reshaping a seam without design
+sign-off is out of scope for a review pass. The rationale is now stated on `Deserializer`'s TSDoc so the
+inconsistency is deliberate and legible rather than accidental. Raised in the Phase 6a shape review as F5.
+
+**Trigger:** the phase that next reshapes this seam. Unifying on `DecodeTarget<T>` would be a breaking change
+to a published SPI, so it happens then or not at all.
+
+### H11 — `tristate()`/`tristateObject()` are format-agnostic but ship in a format-specific package — **OPEN**
+
+`packages/codec-json/src/tristate-schema.ts` imports nothing but `@dexpace/core` and operates on already-parsed
+JavaScript values. Nothing in it is JSON-specific: the same combinators would work unchanged behind a CBOR or
+msgpack codec, because "a missing key surfaces as `undefined` on the parsed object" is true of every one of
+them.
+
+The tension runs both ways and neither direction is free:
+
+- **Against the current home:** when a second codec lands, it either duplicates this module or takes a
+  dependency on `@dexpace/codec-json` — and adapter-to-adapter dependencies are exactly what
+  `sdk-design-nodejs/02` §2's peer rule exists to prevent. Moving a public export between published packages
+  later is a breaking change for both.
+- **Against moving it to core:** the 6a design's Scope section says "Not in scope: a schema library", and
+  `tristate()`/`tristateObject()` *are* schema constructors. Core defines `Schema<T>` as a witness the caller
+  supplies and deliberately owns no surface for building one. Moving them in contradicts that boundary.
+
+No code was moved. Recorded so the second codec's phase makes this deliberately rather than discovering it
+mid-implementation. Raised in the Phase 6a shape review as F11.
+
+**Trigger:** the first phase to ship a second wire codec.
+
+### H12 — `seams/index.ts` is an unimported internal barrel — **OPEN**
+
+`docs/knowledge/module-organization.md:18` bans internal folder-level barrels outright ("never create internal
+barrels; import the specific file directly"), and `api-design.md:6` makes `index.ts` the package's *sole*
+barrel. `packages/core/src/seams/index.ts` is one, from Phase 2, and 6a grew it by three re-exports
+(`Deserializer`, `Schema`, `Serializer`).
+
+Nothing imports it. Its only reference anywhere in the workspace is the comment in `packages/core/src/index.ts`
+explaining why the public barrel deliberately does **not** re-export it.
+
+The three additions were kept rather than reverted: leaving that file re-exporting `Serde` but not the three
+interfaces that are the same seam would be a worse state than either extreme. `packages/core/src/serde/` — this
+phase's own new folder — correctly has **no** barrel, which the plan's Global Constraints required and which
+holds.
+
+**Trigger:** any phase touching `packages/core/src/seams/`. The fix is to delete the file outright, not to
+maintain it; out of scope for a review pass because it is Phase 2 surface.
+
+### H13 — `test:scripts` runs in no CI job — **OPEN**
+
+`scripts/*.test.mjs` runs only under `bun run test:scripts`, and `.github/workflows/ci.yml` has no step that
+invokes it. As of 6a that glob covers `scripts/knowledge.test.mjs` and the new `scripts/verify-seam-1.test.mjs`.
+
+The script was named `test:knowledge` until the Phase 6a reader pass renamed it: the glob had outgrown the
+name the moment `verify-seam-1.test.mjs` landed, and both places that cite it had to explain the mismatch in
+prose.
+
+Low actual risk today: `verify-seam-1.test.mjs` tests the `verify:seam-1` **gate**, and that gate is itself a
+blocking CI step, so the invariant is protected even though the test of it is not run. What is unprotected is
+the gate's own logic silently degrading — a bad glob, a swallowed assertion — which is precisely what that test
+file now exists to catch, by spawning the real script against fixture trees rather than restating its
+assertions.
+
+Not fixed here: `.github/workflows/ci.yml` was out of scope for this pass. Raised in the Phase 6a shape review
+as F9.
+
+**Trigger:** immediate — add a `bun run test:scripts` step to the `ci` job. One line.
+
+### H14 — `decodeSuccessResponse`'s 4xx/5xx branch is unprotected against a teardown failure — **OPEN**
+
+Raised by the Phase 6a adversarial review as G5; not fixed there, because the single-source fix is in Phase 3b
+surface and this phase has no mandate over it.
+
+`decodeSuccessResponse` routes its 2xx and "other status" branches through `closingAfter`, whose docblock
+explains at length why a bare `finally { await response.close() }` inverts the error that matters. Its
+**4xx/5xx branch bypasses that**, delegating to `toHttpError`
+(`packages/core/src/body/http-status-error.ts:106-110`), which *is* a bare `finally { await response.close() }`
+with no `withReleaseFailure` identity guard.
+
+`Response.close()` memoizes its release promise, so a close that already failed hands the same rejection back.
+That rejection then replaces the primary inside `toHttpError`'s `finally`. Reproduced:
+
+```
+first close failed as designed: CLOSE FAILED (memoized from an earlier close)
+decodeSuccessResponse threw:    Error "CLOSE FAILED (memoized from an earlier close)"
+is it the HttpStatusError the docs promise for a 5xx?  false
+```
+
+**Precondition, stated honestly:** the reachable trigger today is a response whose `close()` was *already
+attempted and failed* before being handed to `decodeSuccessResponse`. For a plain `ReadableStream` the read
+error and the cancel error coincide (cancel on an errored stream replays the stored error), so the two are
+indistinguishable and the read error survives — verified. What is unconditionally true is that one of three
+branches of the same function has no protection against a hazard the other two document at length.
+
+**Consequence:** `@throws HttpStatusError on 4xx/5xx` is violated, and the caller loses the status, the
+buffered error body, and `preview()`. The error is unrecoverable at the call site — `HttpStatusError` is
+constructed *after* the `finally` that throws, so it never exists.
+
+**Fix site:** `toHttpError`, switched to `releaseQuietly`/`withReleaseFailure` like every other subsystem.
+Fixing it there covers every caller at once; patching only `decodeSuccessResponse` would leave `toHttpError`'s
+other callers exposed.
+
+**Trigger:** raised separately by the coordinator. Not scheduled here.
+
+### H15 — no `AbortSignal` on any long-running async API in this phase — **OPEN**
+
+Raised by the Phase 6a adversarial review as G10. Ledgered rather than fixed: adding `{signal}` to four public
+APIs is a design decision, not a review-pass edit, and some of the sites would breach `max-params`.
+
+`docs/knowledge/concurrency-and-async.md:18` ("every long-running async API must accept an options object with
+`{ signal }`"), `:20` (accepting must be paired with honoring), and `:44` (a signal must reach the actual I/O
+primitive) all apply. Four sites accept none: `Serializer.serializeTo`, `Deserializer.deserializeFrom`
+(`packages/core/src/seams/serde.ts`), `decodeResponse` and `decodeSuccessResponse`
+(`packages/core/src/serde/response-handlers.ts`).
+
+What is true in mitigation, verified rather than assumed: **abort IS honored transitively.** A transport that
+errors the body stream on abort makes `reader.read()` reject and the read loop exits promptly —
+`deserializeFrom` surfaces the `DOMException` cleanly. What is *not* interruptible is the CPU-bound
+`JSON.parse` / `schema.parse` span after the drain completes, which no signal could cancel anyway without a
+streaming parser (see H1).
+
+The project-wide position appears to be "cancellation rides the transport": `toHttpError` and
+`Response.bytes()` take no signal either. So this is a consistency question about the whole SDK, not a 6a
+defect — but it has never been written down, which is why it is here.
+
+**Trigger:** the phase that next reshapes this seam, which is the only cheap moment to add a parameter to a
+published SPI. The decision is to add `{signal}` across all four sites, or to state "cancellation rides the
+transport" as an explicit project-wide position and cite it from each site's TSDoc.
+
+### H17 — `SERDE-20`'s array-element half is the platform's, not this codec's — **RECORDED**
+
+Found by the Phase 6a reader pass, by mutation: deleting `tristateReplacer`'s `!Array.isArray(this)` conjunct
+left all 100 codec-json tests green, and `tristate-replacer.ts` reports 100% line coverage either way.
+
+The branch was dead. `JSON.stringify`'s own `SerializeJSONArray` step appends the literal `null` for any array
+element whose replacer returned `undefined` — so an Absent in an array position degrades to a wire `null`
+without a line of code here. The conjunct, the `this: unknown` parameter it needed, and the two comments
+narrating the mechanism were removed; one why-comment now records where the behaviour actually comes from, and
+the array-position tests were kept as characterization of the platform behaviour the requirement rides on.
+
+Consequence for the published surface: `tristateReplacer`'s signature lost its `this` parameter, so
+`etc/codec-json.api.md` was regenerated. A caller's `JSON.stringify(v, tristateReplacer)` is unaffected —
+`JSON.stringify` passed `this` and the function simply no longer reads it.
+
+**Trigger:** none. Recorded so a later phase does not "restore" the branch on the reasonable-looking grounds
+that SERDE-20 names two positions and only one has code.
+
+### H16 — deep-nesting encode diverges between Bun and Node — **RECORDED, no gate**
+
+A ~20k-deep object encodes successfully under Bun (whose `JSON.stringify` is iterative) and raises a
+stack-overflow `RangeError` under Node, which `encodeToText` correctly wraps as `SerializationError`. **Both
+outcomes are correct** — one succeeds, the other reports an unencodable value through the stable serde type —
+so no `test/node-conformance/` case was added: a test asserting "either encodes or throws `SerializationError`"
+asserts nothing a reader can act on. Recorded only so a future reader who trips over the difference does not
+file it as a bug.
+
+**Trigger:** none.
+
+---
+
+### H18 — every type-aware command now builds core first — **RECORDED**
+
+`packages/codec-json` imports `@dexpace/core` by package name, so `tsc` resolves it through core's
+`package.json` `types` field to `packages/core/dist/index.d.ts`. That file does not exist on a fresh clone, and
+TypeScript's project-reference source redirect does not help: module resolution fails before the redirect is
+ever consulted. CI runs `typecheck` before `build`, so the first CI run of this branch failed with 30
+`TS2307: Cannot find module '@dexpace/core'` errors across all nine codec-json files.
+
+The fix is a `build:core` script (`tsc -b packages/core/tsconfig.build.json`, incremental) that `typecheck`,
+`lint`, `fix`, and `build` each run first. `packages/codec-json/tsconfig.json`'s `references` entry was removed
+at the same time: with `dist/` guaranteed present, the package now typechecks against the **published**
+declarations rather than being redirected back to core's source, so a symbol that `stripInternal` removes
+cannot typecheck green here and fail at build.
+
+Verified by deleting every `dist/` and `.tsbuildinfo` and running both CI jobs in their exact order.
+
+**Trigger:** none. Recorded because the failure mode is invisible on a developer machine that has ever run
+`bun run build`, and the obvious "simplification" — dropping the `build:core` prefix — reintroduces it.
+
+---
+
+### H19 — `fast-uri` pinned by a root `overrides` entry; two dev-only advisories left open — **PARTLY RESOLVED**
+
+`bun run audit` (`--audit-level=high --prod`) failed in CI on `GHSA-7p8r-x3mc-p8w7`: `fast-uri <3.1.5`
+mistakes a backslash for an authority introducer, so a crafted URI resolves to an unintended host. It reaches
+this tree only through dev tooling — `eslint -> @eslint/eslintrc -> ajv -> fast-uri`, and
+`@microsoft/api-extractor`.
+
+**Why the branch surfaced it and `main` does not.** The package is in `main`'s lockfile too, so the exposure
+predates this work. What changed is the *path*: Phase 6a gives `packages/codec-json` its own
+`devDependencies`, and the pinned CI Bun (`.bun-version` 1.3.14) does not apply `--prod` to a **workspace
+member's** dev dependencies the way it does to the root's. Local Bun 1.4.0 reports "checked 0 packages" for
+the same command. So the gate's behaviour depends on the Bun version, and the version that is pinned is the
+stricter one.
+
+Fixed by a root `overrides: {"fast-uri": "^3.1.5"}`, which resolves to 3.1.6 — a patch release inside the
+range every consumer of it already accepts. Pinned rather than suppressed: there was nothing to weigh.
+
+**Still open, deliberately:** `bun audit --audit-level=high` (without `--prod`) reports two more high
+advisories, both dev-only and both present on `main` — `js-yaml` via `@changesets/cli`
+(GHSA-5p4m-2wfm-xmqj) and `tmp` via `gts -> inquirer -> external-editor` (GHSA-ph9p-34f9-6g65). Neither fails
+the gate today, because both reach the tree only through **root** dev dependencies, which 1.3.14 does filter.
+They are left alone as out of scope for a serde phase — but the filtering asymmetry above is what stands
+between them and a red CI run, so they should be pinned the same way rather than waited on.
+
+**Trigger:** the next phase that touches root tooling, or the first CI run that reports either of them.
 
 ---
 

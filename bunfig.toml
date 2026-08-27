@@ -3,9 +3,15 @@
 # test/node-conformance/*.test.mjs -- the Node-only layer that exists precisely because it must NOT
 # run on Bun (checkpoint 5.9). Running it under both runners would inflate the unit count and quietly
 # erase the distinction the suite was added to draw. It likewise keeps `scripts/*.test.mjs` -- repo
-# tooling, run via `bun run test:knowledge` (`node --test`) -- out of both the run and the coverage
-# floor, which is a statement about `packages/core`.
+# tooling, run via `bun run test:scripts` (`node --test`) -- out of both the run and the coverage
+# floor, which is a statement about `packages/*/src`.
 root = "packages"
 coverage = true
 coverageThreshold = 0.8
 coverageSkipTestFiles = true
+# Exclude the BUILT artifact. `@dexpace/codec-json` is a separate package and reaches core only
+# through its public entry point, which Bun resolves to `packages/core/dist/index.js` -- so from
+# Phase 6a on, running the suite instruments core twice: once as `src/` (the statement this floor is
+# about) and once as `dist/`, where only the handful of exports the codec touches are ever reached.
+# Left in, the duplicate halves the reported number without a line of real coverage changing.
+coveragePathIgnorePatterns = ["**/dist/**"]
