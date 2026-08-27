@@ -5,6 +5,9 @@
 ```ts
 
 // @public
+export function absent(): Tristate<never>;
+
+// @public
 export class ApiKeyCredential {
     [INSPECT](): string;
     constructor(key: string);
@@ -171,6 +174,39 @@ export function createAuthRequirement(scheme: AuthScheme, scopes?: readonly stri
 export function createBearerToken(token: string, expiresAt?: number): BearerToken;
 
 // @public
+export function decodeResponse<T>(response: Response_2, deserializer: Deserializer, target: DecodeTarget<T>): Promise<T>;
+
+// @public
+export function decodeSuccessResponse<T>(response: Response_2, deserializer: Deserializer, target: DecodeTarget<T>): Promise<T>;
+
+// @public
+export interface DecodeTarget<T> {
+    readonly schema: Schema<T>;
+    readonly typeName?: string | undefined;
+}
+
+// @public
+export class DeserializationError extends DexpaceError {
+    constructor(message: string, options?: DeserializationErrorOptions);
+    readonly etag: string | null;
+    readonly location: string | null;
+    readonly status: number | undefined;
+}
+
+// @public
+export interface DeserializationErrorOptions extends SerdeErrorOptions {
+    readonly etag?: string | null | undefined;
+    readonly location?: string | null | undefined;
+    readonly status?: number | undefined;
+}
+
+// @public
+export interface Deserializer {
+    deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T;
+    deserializeFrom<T>(source: ReadableStream<Uint8Array>, schema: Schema<T>, typeName?: string): Promise<T>;
+}
+
+// @public
 export class DexpaceError extends Error {
     constructor(message: string, options?: ErrorOptions);
 }
@@ -222,6 +258,9 @@ export interface ExchangeContext {
 
 // @public
 export type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
+
+// @public
+export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R;
 
 // @public
 export class FormBodyValidationError extends DexpaceError {
@@ -325,10 +364,35 @@ export interface InstrumentationBundle {
 }
 
 // @public
+export function isAbsent<T>(tristate: Tristate<T>): tristate is {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'absent';
+};
+
+// @public
 export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError;
 
 // @public
+export function isNull<T>(tristate: Tristate<T>): tristate is {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'null';
+};
+
+// @public
+export function isPresent<T>(tristate: Tristate<T>): tristate is {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'present';
+    readonly value: T;
+};
+
+// @public
+export function isSerdeError(e: unknown): e is SerializationError | DeserializationError;
+
+// @public
 export function isTimeoutSignal(signal: AbortSignal): boolean;
+
+// @public
+export function isTristate(value: unknown): value is Tristate<unknown>;
 
 // @public
 export function materialize(body: Body_2): Promise<Body_2>;
@@ -401,6 +465,12 @@ export class NameKeyCredential {
 export type Next = (request?: Request_2) => Promise<Response_2>;
 
 // @public
+export function nullValue(): Tristate<never>;
+
+// @public
+export function ofNullable<T>(value: T | null | undefined): Tristate<T>;
+
+// @public
 export class OperationAssemblyError extends DexpaceError {
     constructor(message: string, parameterName: string);
     readonly parameterName: string;
@@ -441,6 +511,9 @@ export class PlaintextCredentialError extends DexpaceError {
     readonly scheme: string;
     readonly stepName: string;
 }
+
+// @public
+export function present<T>(value: NonNullable<T>): Tristate<T>;
 
 // @public
 export class Protocol {
@@ -639,6 +712,39 @@ export class Runtime implements Transport {
 }
 
 // @public
+export interface Schema<T> {
+    parse(input: unknown): T;
+}
+
+// @public
+export interface Serde {
+    readonly deserializer: Deserializer;
+    readonly mediaType: string;
+    readonly serializer: Serializer;
+}
+
+// @public
+export function serdeBody(value: unknown, serde: Serde, mediaType?: string): Body_2;
+
+// @public
+export interface SerdeErrorOptions {
+    readonly cause?: unknown;
+}
+
+// @public
+export class SerializationError extends DexpaceError {
+    constructor(message: string, options?: SerdeErrorOptions);
+}
+
+// @public
+export interface Serializer {
+    serialize(value: unknown): Uint8Array;
+    serializeInto(value: unknown, target: Uint8Array, offset?: number): number;
+    serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>;
+    serializeToString(value: unknown): string;
+}
+
+// @public
 export type Stage = 'PRE_REDIRECT' | 'REDIRECT' | 'POST_REDIRECT' | 'PRE_RETRY' | 'RETRY' | 'POST_RETRY' | 'PRE_AUTH' | 'AUTH' | 'POST_AUTH' | 'PRE_LOGGING' | 'LOGGING' | 'POST_LOGGING' | 'PRE_SERDE' | 'SERDE' | 'POST_SERDE' | 'SEND';
 
 // @public
@@ -729,6 +835,32 @@ export interface Transport {
 }
 
 // @public
+export type Tristate<T> = {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'absent';
+} | {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'null';
+} | {
+    readonly [TRISTATE_BRAND]: true;
+    readonly kind: 'present';
+    readonly value: T;
+};
+
+// @public
+export const TRISTATE_BRAND: unique symbol;
+
+// @public
+export interface TristateBranches<T, R> {
+    readonly onAbsent: () => R;
+    readonly onNull: () => R;
+    readonly onPresent: (value: T) => R;
+}
+
+// @public
+export function tristateToString<T>(tristate: Tristate<T>): string;
+
+// @public
 export class TypedResponse<T> {
     constructor(response: Response_2, parse: (response: Response_2) => Promise<T>);
     get headers(): Response_2['headers'];
@@ -742,5 +874,8 @@ export class TypedResponse<T> {
 // @public
 export class UrlConstructionError extends DomainModelError {
 }
+
+// @public
+export function valueOrNull<T>(tristate: Tristate<T>): T | null;
 
 ```

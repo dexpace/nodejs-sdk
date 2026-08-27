@@ -8,8 +8,10 @@ A Node.js/TypeScript HTTP SDK platform, built as a **port of a language-agnostic
 spec in `docs/product-spec/` is normative and numbered; the code exists to satisfy it. Work here is
 spec-driven, not feature-driven: before implementing anything, find the requirement IDs it must satisfy.
 
-Bun workspace. One published package today — `@dexpace/core` (`packages/core`) — with more planned per
-`docs/sdk-design-nodejs/02-package-and-workspace-layout.md`.
+Bun workspace. Two published packages today — `@dexpace/core` (`packages/core`) and the reference wire codec
+`@dexpace/codec-json` (`packages/codec-json`, a `@dexpace/core` **peer**, never a dependency) — with more
+planned per `docs/sdk-design-nodejs/02-package-and-workspace-layout.md`. Every gate below runs over all of
+them, not over core alone.
 
 ## Commands
 
@@ -18,15 +20,21 @@ All run from the repo root unless noted.
 ```bash
 bun install --frozen-lockfile
 
-bun run typecheck        # tsc --noEmit against packages/core/tsconfig.json
+bun run typecheck        # tsc --noEmit per package (core, then codec-json)
 bun run lint             # gts lint . — formatting AND type-aware rules; fatal
 bun run fix              # gts fix . — autofixes formatting/lint
-bun run build            # tsc -p packages/core/tsconfig.build.json → dist/
-bun test                 # coverage is on by default (bunfig.toml), 80% line floor
+bun run build            # plain tsc per package (core, then codec-json) → each package's dist/
+bun test                 # needs `build` first (see below); coverage on by default, 80% line floor
 bun run test:node        # Node-runtime conformance against the BUILT artifact; needs `build` first
 ```
 
 `bun test` runs the unit suite on **Bun** and is scoped to `packages/` (`bunfig.toml`'s `[test] root`).
+**It needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach core
+through its published entry point, which Bun resolves to `packages/core/dist/`. On a fresh clone they cannot
+resolve core at all; against a stale `dist/` they report green over yesterday's core. CI is safe — its Build
+step precedes its Test step. The root `test` script deliberately does not build first, so the inner loop stays
+fast; rebuild when you have changed `packages/core/src/`.
+
 `test:node` is a separate, thin layer under `test/node-conformance/` that runs the same built package under
 `node --test`, because Bun's Web Streams / `AbortSignal` / `Uint8Array` behavior is an independent
 implementation of Node's and `src/io/` is where they diverge. **A phase that touches a runtime-divergent
@@ -39,27 +47,34 @@ bun test packages/core/src/http/media-type.test.ts
 bun test -t 'rejects blank input'          # filter by test name
 ```
 
-API surface (report is committed at `packages/core/etc/core.api.md`):
+API surface — one committed report per package (`packages/core/etc/core.api.md`,
+`packages/codec-json/etc/codec-json.api.md`):
 
 ```bash
-cd packages/core && bun run api:local     # regenerate the report after changing exports
-cd packages/core && bun run api:ci        # verify it matches — this is what CI runs
+cd packages/core && bun run api:local     # regenerate that package's report after changing its exports
+cd packages/codec-json && bun run api:local
+bun run api                               # verify BOTH match — this is what CI runs
 ```
 
 Release-shape and invariant gates:
 
 ```bash
-bun run lint:publish              # publint + attw against the built package
-bun run verify:dual-consumption   # plain `node` imports the built package and runs it
+bun run lint:publish              # publint + attw against every built package
+bun run verify:dual-consumption   # plain `node` imports each built package and exercises it end to end
 bun run verify:consumer-types     # the built .d.ts compiles on the declared `lib` with types: []
 bun run test:node                 # CI runs this as a matrix over engines.node's floor and current LTS
-bun run verify:seam-1             # asserts @dexpace/core has zero runtime dependencies
+bun run verify:seam-1             # zero runtime dependencies in EVERY package, plus the @dexpace/core
+                                  # peer-dependency rule that guards the dual-package hazard
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run audit                     # bun audit --audit-level=high --prod
 ```
 
 **Every one of these is a blocking CI step** (`.github/workflows/ci.yml`). Run the full set before claiming
 work is done — `bun test` passing is not sufficient evidence.
+
+`bun run test:scripts` (`node --test scripts/*.test.mjs`) tests the *gates themselves* — the knowledge CLI and
+`verify-seam-1.mjs`. It is **not** wired into CI yet (`docs/open-items.md` H13), so run it by hand after
+touching anything in `scripts/`.
 
 ## Documentation hierarchy
 

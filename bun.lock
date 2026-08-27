@@ -7,27 +7,48 @@
       "devDependencies": {
         "@arethetypeswrong/cli": "^0.18",
         "@changesets/cli": "^2",
+        "@dexpace/codec-json": "workspace:*",
         "@dexpace/core": "workspace:*",
         "@eslint-community/eslint-plugin-eslint-comments": "^4",
-        "@microsoft/api-extractor": "^7",
+        "@microsoft/api-extractor": "catalog:",
         "@types/bun": "latest",
         "eslint": "^9",
-        "fast-check": "^3",
+        "fast-check": "catalog:",
         "globals": "^17.8.0",
         "gts": "^7",
         "mitata": "^1",
         "publint": "^0.3",
-        "typescript": "^5.8",
+        "typescript": "catalog:",
         "typescript-eslint": "^8",
+      },
+    },
+    "packages/codec-json": {
+      "name": "@dexpace/codec-json",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
       },
     },
     "packages/core": {
       "name": "@dexpace/core",
       "version": "0.0.0",
       "devDependencies": {
-        "expect-type": "^1.4.0",
+        "expect-type": "catalog:",
       },
     },
+  },
+  "catalog": {
+    "@microsoft/api-extractor": "^7",
+    "expect-type": "^1.4.0",
+    "fast-check": "^3",
+    "typescript": "^5.8",
   },
   "packages": {
     "@andrewbranch/untar.js": ["@andrewbranch/untar.js@1.0.3", "", {}, "sha512-Jh15/qVmrLGhkKJBdXlK1+9tY4lZruYjsgkDFj08ZmDiWVBLJcqkok7Z0/R0In+i1rScBpJlSvrTS2Lm41Pbnw=="],
@@ -79,6 +100,8 @@
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
+
+    "@dexpace/codec-json": ["@dexpace/codec-json@workspace:packages/codec-json"],
 
     "@dexpace/core": ["@dexpace/core@workspace:packages/core"],
 
