@@ -5,6 +5,106 @@
 ```ts
 
 // @public
+export class ApiKeyCredential {
+    [INSPECT](): string;
+    constructor(key: string);
+    toString(): string;
+}
+
+// @public
+export interface ApiKeyCredentialConfig {
+    readonly credential: ApiKeyCredential | NameKeyCredential;
+    readonly headerName?: string | undefined;
+    readonly prefix?: string | undefined;
+}
+
+// @public
+export interface AuthCredentialSet {
+    readonly apiKey?: ApiKeyCredentialConfig | undefined;
+    readonly basic?: BasicCredential | undefined;
+    readonly bearer?: BearerCredential | undefined;
+    readonly digest?: DigestCredential | undefined;
+}
+
+// @public
+export interface AuthDescriptor {
+    readonly allowsAnonymous: boolean;
+    readonly requirements: readonly AuthRequirement[];
+}
+
+// @public
+export interface AuthRequirement {
+    readonly params: ReadonlyMap<string, string>;
+    readonly scheme: AuthScheme;
+    readonly scopes: readonly string[];
+}
+
+// @public
+export function authRequirementsEqual(a: AuthRequirement, b: AuthRequirement): boolean;
+
+// @public
+export class AuthResolutionError extends DexpaceError {
+    constructor(message: string, requiredSchemes?: readonly string[], availableSchemes?: readonly string[]);
+    readonly availableSchemes: readonly string[] | undefined;
+    readonly requiredSchemes: readonly string[] | undefined;
+    static unsatisfiable(requiredSchemes: readonly string[], availableSchemes: readonly string[]): AuthResolutionError;
+}
+
+// @public
+export type AuthScheme = 'OAUTH2' | 'API_KEY' | 'BASIC' | 'DIGEST' | 'NO_AUTH';
+
+// @public
+export function authStep(settings: AuthStepSettings): StepDescriptor;
+
+// @public
+export interface AuthStepSettings {
+    readonly bearerMarginMs?: number | undefined;
+    readonly challengeHook?: ChallengeHook | undefined;
+    readonly clock?: Pick<Clock, 'now'> | undefined;
+    readonly credentials: AuthCredentialSet;
+    readonly tiers: AuthTiers;
+}
+
+// @public
+export interface AuthTiers {
+    readonly client?: AuthDescriptor | undefined;
+    readonly operation?: AuthDescriptor | undefined;
+    readonly perCall?: AuthDescriptor | undefined;
+}
+
+// @public
+export interface BackoffSettings {
+    readonly fixedDelayMs?: number | undefined;
+    readonly initialDelayMs: number;
+    readonly jitter: number;
+    readonly maxDelayMs: number;
+    readonly multiplier: number;
+}
+
+// @public
+export interface BasicCredential {
+    readonly password: string;
+    readonly username: string;
+}
+
+// @public
+export interface BearerCredential {
+    readonly marginMs?: number | undefined;
+    readonly provider: TokenProvider;
+}
+
+// @public
+export class BearerToken {
+    [INSPECT](): string;
+    readonly expiresAt: number | undefined;
+    get token(): string;
+    toString(): string;
+}
+
+// @public
+export function bearerTokensEqual(a: BearerToken, b: BearerToken): boolean;
+
+// @public
 interface Body_2 {
     readonly contentLength: number;
     readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
@@ -41,6 +141,18 @@ export class CancellationError extends DexpaceError {
 }
 
 // @public
+export type ChallengeHook = (response: Response_2, request: Request_2, options?: {
+    readonly signal?: AbortSignal | undefined;
+}) => Promise<Request_2 | undefined>;
+
+// @public
+export interface Clock {
+    monotonic(): number;
+    now(): number;
+    sleep(ms: number, signal?: AbortSignal): Promise<void>;
+}
+
+// @public
 export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined;
 
 // @public
@@ -50,8 +162,34 @@ export class ConsumedBodyError extends DexpaceError {
 }
 
 // @public
+export function createAuthDescriptor(requirements: readonly AuthRequirement[]): AuthDescriptor;
+
+// @public
+export function createAuthRequirement(scheme: AuthScheme, scopes?: readonly string[], params?: ReadonlyMap<string, string>): AuthRequirement;
+
+// @public
+export function createBearerToken(token: string, expiresAt?: number): BearerToken;
+
+// @public
 export class DexpaceError extends Error {
     constructor(message: string, options?: ErrorOptions);
+}
+
+// @public
+export type DigestAlgorithm = 'MD5' | 'MD5-sess' | 'SHA-256' | 'SHA-256-sess';
+
+// @public
+export interface DigestCredential {
+    readonly algorithmPreference?: readonly DigestAlgorithm[] | undefined;
+    readonly password: string;
+    readonly username: string;
+}
+
+// @public
+export interface DispatchContext {
+    readonly instrumentation: InstrumentationBundle;
+    readonly key: symbol;
+    readonly kind: 'dispatch';
 }
 
 // @public
@@ -71,6 +209,19 @@ export class ETag {
 // @public
 export class EtagParseError extends DomainModelError {
 }
+
+// @public
+export interface ExchangeContext {
+    readonly instrumentation: InstrumentationBundle;
+    readonly key: symbol;
+    readonly kind: 'exchange';
+    readonly operationName: string | undefined;
+    readonly request: Request_2;
+    readonly response: Response_2;
+}
+
+// @public
+export type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
 
 // @public
 export class FormBodyValidationError extends DexpaceError {
@@ -161,6 +312,19 @@ export class HttpStatusError extends DexpaceError {
 }
 
 // @public
+export interface InstrumentationBundle {
+    readonly activeSpan: unknown;
+    readonly isRemote: boolean;
+    readonly isValid: boolean;
+    readonly spanId: string;
+    readonly traceFlags: number;
+    readonly traceId: string;
+    readonly traceIdEncoding: string;
+    readonly tracerFactory: (operationName: string) => unknown;
+    readonly traceState: string;
+}
+
+// @public
 export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError;
 
 // @public
@@ -226,6 +390,17 @@ export interface MultipartPart {
 }
 
 // @public
+export class NameKeyCredential {
+    [INSPECT](): string;
+    constructor(name: string, key: string);
+    readonly name: string;
+    toString(): string;
+}
+
+// @public
+export type Next = (request?: Request_2) => Promise<Response_2>;
+
+// @public
 export class OperationAssemblyError extends DexpaceError {
     constructor(message: string, parameterName: string);
     readonly parameterName: string;
@@ -239,6 +414,32 @@ export interface OperationDescriptor {
     readonly pathParams?: Readonly<Record<string, string>> | undefined;
     readonly pathTemplate: string;
     readonly query?: QueryParams | undefined;
+}
+
+// @public
+export const PILLAR_STAGES: ReadonlySet<Stage>;
+
+// @public
+export class PipelineBuilder {
+    constructor(transport: Transport);
+    append(descriptor: StepDescriptor): this;
+    appendAll(descriptors: readonly StepDescriptor[]): this;
+    build(): Runtime;
+    insertAfter(anchorType: symbol, descriptor: StepDescriptor): this;
+    insertBefore(anchorType: symbol, descriptor: StepDescriptor): this;
+    prepend(descriptor: StepDescriptor): this;
+    prependAll(descriptors: readonly StepDescriptor[]): this;
+    reload(descriptors: readonly StepDescriptor[]): this;
+    remove(type: symbol): this;
+    replace(anchorType: symbol, descriptor: StepDescriptor): this;
+    static seedFrom(runtime: Runtime, mode: 'flatten' | 'nest'): PipelineBuilder;
+}
+
+// @public
+export class PlaintextCredentialError extends DexpaceError {
+    constructor(stepName: string, scheme: string);
+    readonly scheme: string;
+    readonly stepName: string;
 }
 
 // @public
@@ -274,6 +475,29 @@ export class QueryParamsBuilder implements Builder<QueryParams> {
 
 // @public
 export type RangeKind = 'bounded' | 'suffix' | 'open';
+
+// @public
+export interface RedirectCondition {
+    readonly redirectsFollowed: number;
+    readonly response: Response_2;
+    readonly visited: ReadonlySet<string>;
+}
+
+// @public
+export type RedirectPredicate = (condition: Readonly<RedirectCondition>) => boolean;
+
+// @public
+export interface RedirectSettings {
+    readonly allow303: boolean;
+    readonly allowedMethods: ReadonlySet<Method>;
+    readonly allowSchemeDowngrade: boolean;
+    readonly locationHeader: string;
+    readonly maxHops: number;
+    readonly predicate?: RedirectPredicate | undefined;
+}
+
+// @public
+export function redirectStep(overrides?: Partial<RedirectSettings>): StepDescriptor;
 
 // @public
 class Request_2 {
@@ -322,7 +546,17 @@ export class RequestConditionsValidationError extends DomainModelError {
 }
 
 // @public
+export interface RequestContext {
+    readonly instrumentation: InstrumentationBundle;
+    readonly key: symbol;
+    readonly kind: 'request';
+    readonly operationName: string | undefined;
+    readonly request: Request_2;
+}
+
+// @public
 export class RequestOptions {
+    get auth(): AuthDescriptor | undefined;
     static readonly EMPTY: RequestOptions;
     get maxRetries(): number | undefined;
     static newBuilder(): RequestOptionsBuilder;
@@ -333,6 +567,7 @@ export class RequestOptions {
 
 // @public
 export class RequestOptionsBuilder implements Builder<RequestOptions> {
+    auth(descriptor: AuthDescriptor | undefined): this;
     build(): RequestOptions;
     maxRetries(value: number | undefined): this;
     tags(entries: ReadonlyMap<string, string>): this;
@@ -377,6 +612,49 @@ export class ResponseBuilder implements Builder<Response_2> {
 }
 
 // @public
+export interface RetrySettings extends BackoffSettings {
+    readonly attemptHeaderName?: string | undefined;
+    readonly maxAttempts: number;
+    readonly retryableStatuses: ReadonlySet<number>;
+    readonly totalTimeoutMs?: number | undefined;
+}
+
+// @public
+export function retryStep(options?: RetryStepOptions): StepDescriptor;
+
+// @public
+export interface RetryStepOptions {
+    readonly clock?: Clock | undefined;
+    readonly delayOverride?: ((attempt: number) => number | undefined) | undefined;
+    readonly random?: (() => number) | undefined;
+    readonly settings?: Partial<RetrySettings> | undefined;
+}
+
+// @public
+export class Runtime implements Transport {
+    close(): Promise<void>;
+    send(request: Request_2, options?: RequestOptions, signal?: AbortSignal): Promise<Response_2>;
+    get steps(): readonly StepDescriptor[];
+    get transport(): Transport;
+}
+
+// @public
+export type Stage = 'PRE_REDIRECT' | 'REDIRECT' | 'POST_REDIRECT' | 'PRE_RETRY' | 'RETRY' | 'POST_RETRY' | 'PRE_AUTH' | 'AUTH' | 'POST_AUTH' | 'PRE_LOGGING' | 'LOGGING' | 'POST_LOGGING' | 'PRE_SERDE' | 'SERDE' | 'POST_SERDE' | 'SEND';
+
+// @public
+export const STAGE_ORDER: readonly Stage[];
+
+// @public
+export function standardResilience(transport: Transport, options?: StandardResilienceOptions): Runtime;
+
+// @public
+export interface StandardResilienceOptions {
+    readonly auth?: AuthStepSettings | undefined;
+    readonly redirect?: Partial<RedirectSettings> | undefined;
+    readonly retry?: RetryStepOptions | undefined;
+}
+
+// @public
 export class Status {
     get code(): number;
     equals(other: Status): boolean;
@@ -390,6 +668,25 @@ export class Status {
     get name(): string | undefined;
     static of(code: number): Status;
     static recognized(code: number): Status | undefined;
+}
+
+// @public
+export type Step = (request: Request_2, ctx: StepContext) => Promise<Response_2>;
+
+// @public
+export interface StepContext {
+    readonly context: ExecutionContext;
+    readonly fork?: (() => Next) | undefined;
+    readonly next: Next;
+    readonly options?: RequestOptions | undefined;
+    readonly signal?: AbortSignal | undefined;
+}
+
+// @public
+export interface StepDescriptor {
+    readonly fn: Step;
+    readonly stage: Stage;
+    readonly type: symbol;
 }
 
 // @public
@@ -421,6 +718,9 @@ export function stringBody(text: string, mediaType?: string): StringBody;
 
 // @public
 export function toHttpError(response: Response_2): Promise<HttpStatusError | null>;
+
+// @public
+export type TokenProvider = () => Promise<BearerToken>;
 
 // @public
 export interface Transport {

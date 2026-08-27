@@ -7,7 +7,8 @@
 // (a missing anchor fails), PIPE-22 (an edit sequence flattens the same as constructing the final set from
 // scratch), PIPE-23 (a colliding reload leaves prior content untouched, and a same-type pillar repeat inside
 // one batch seats only one step), PIPE-25 (flatten order), PIPE-38 (appendAll preserves batch order;
-// prependAll reverses it), PIPE-1/PIPE-2 (a built pipeline, driven: entry in STAGE_ORDER, exit reversed)
+// prependAll reverses it), PIPE-1/PIPE-2 (a built pipeline, driven: entry in STAGE_ORDER, exit reversed),
+// PIPE-35 (seedFrom's explicit, non-defaulted flatten-vs-nest modes)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {Protocol} from '../http/protocol.js';
@@ -432,5 +433,115 @@ describe('PipelineBuilder batch-order properties (PIPE-38)', () => {
         },
       ),
     );
+  });
+});
+
+// Module-scope, not describe-local: the seedFrom suite is split across sibling describes to stay
+// inside `max-lines-per-function`, and both halves need these.
+class RecordingTransport implements Transport {
+  readonly calls: Request[] = [];
+
+  send(request: Request): Promise<Response> {
+    this.calls.push(request);
+    return Promise.resolve(aResponse(200));
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+function probeStep(
+  label: string,
+  stage: StepDescriptor['stage'],
+  order: string[],
+): StepDescriptor {
+  return {
+    type: Symbol(label),
+    stage,
+    // A plain pass-through probe never re-drives, so `next()` suffices -- no fork needed.
+    fn: async (request, ctx) => {
+      order.push(label);
+      return ctx.next(request);
+    },
+  };
+}
+
+describe('PipelineBuilder.seedFrom (PIPE-35)', () => {
+  test('flatten: seeded steps run in the SAME pass as newly appended ones, reusing the original transport', async () => {
+    const transport = new RecordingTransport();
+    const order: string[] = [];
+    const seeded = new PipelineBuilder(transport)
+      .append(probeStep('seeded', 'LOGGING', order))
+      .build();
+
+    const runtime = PipelineBuilder.seedFrom(seeded, 'flatten')
+      .append(probeStep('appended', 'SERDE', order))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(order).toEqual(['seeded', 'appended']); // one combined STAGE_ORDER pass
+    // The ORIGINAL transport is the terminal -- `seeded` itself is not in the chain.
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  test('flatten: re-buckets each descriptor by its OWN stage, not by seeded array position', () => {
+    const transport = new RecordingTransport();
+    const order: string[] = [];
+    const seeded = new PipelineBuilder(transport)
+      .append(probeStep('late', 'SERDE', order))
+      .append(probeStep('early', 'PRE_REDIRECT', order))
+      .build();
+
+    const runtime = PipelineBuilder.seedFrom(seeded, 'flatten').build();
+
+    expect(labelsOf(runtime)).toEqual(['early', 'late']);
+  });
+
+  test('flatten: pillar-collision rules apply exactly as any other append sequence', () => {
+    const transport = new RecordingTransport();
+    const seeded = new PipelineBuilder(transport)
+      .append(descriptor('retry-a', 'RETRY'))
+      .build();
+
+    expect(() =>
+      PipelineBuilder.seedFrom(seeded, 'flatten').append(
+        descriptor('retry-b', 'RETRY'),
+      ),
+    ).toThrow(PillarCollisionError);
+  });
+});
+
+describe('PipelineBuilder.seedFrom nest mode (PIPE-35)', () => {
+  test('nest: the seeded runtime is an opaque Transport -- its steps run in a separate, inner pass', async () => {
+    const transport = new RecordingTransport();
+    const order: string[] = [];
+    const seeded = new PipelineBuilder(transport)
+      .append(probeStep('inner', 'LOGGING', order))
+      .build();
+
+    const runtime = PipelineBuilder.seedFrom(seeded, 'nest')
+      .append(probeStep('outer', 'LOGGING', order))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(order).toEqual(['outer', 'inner']); // the outer step runs BEFORE the nested runtime's
+    expect(transport.calls).toHaveLength(1); // still exactly one wire send at the bottom
+  });
+
+  test('nest: the same pillar may be occupied in BOTH layers -- they are separate builders', () => {
+    const transport = new RecordingTransport();
+    const seeded = new PipelineBuilder(transport)
+      .append(descriptor('retry-inner', 'RETRY'))
+      .build();
+
+    const runtime = PipelineBuilder.seedFrom(seeded, 'nest')
+      .append(descriptor('retry-outer', 'RETRY'))
+      .build();
+
+    expect(labelsOf(runtime)).toEqual(['retry-outer']);
+    expect(runtime.transport).toBe(seeded);
   });
 });

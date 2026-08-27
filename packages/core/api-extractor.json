@@ -10,5 +10,13 @@
   },
   "dtsRollup": {
     "enabled": false
+  },
+  "messages": {
+    "extractorMessageReporting": {
+      "ae-forgotten-export": {
+        "logLevel": "error",
+        "addToApiReportFile": false
+      }
+    }
   }
 }
