@@ -6,11 +6,14 @@ import {invariant} from '../invariant.js';
  * The pure-math half of the retry schedule (RETRY-9..RETRY-11, RETRY-43). Carried inside
  * `RetrySettings`, never constructed standalone by a caller.
  *
- * @internal
+ * @public
  */
 export interface BackoffSettings {
+  /** The first attempt's delay in milliseconds, before any multiplier or jitter (RETRY-9). */
   readonly initialDelayMs: number;
+  /** The exponential growth factor applied per attempt: delay(n) = initialDelayMs * multiplier^n (RETRY-9). */
   readonly multiplier: number;
+  /** The ceiling the exponential schedule saturates at, in milliseconds (RETRY-11). */
   readonly maxDelayMs: number;
   /** Symmetric jitter fraction in [0,1]; 0 disables perturbation (RETRY-10). */
   readonly jitter: number;

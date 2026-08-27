@@ -12,7 +12,7 @@ import {RETRYABLE_STATUSES} from './classify.js';
  * Immutable and stateless after construction, so one instance is safe for concurrent invocation
  * (RETRY-42/RECOV-28).
  *
- * @internal
+ * @public
  */
 export interface RetrySettings extends BackoffSettings {
   /** Total wire sends including the initial one; 1 disables retries (RETRY-14, RECOV-34). */

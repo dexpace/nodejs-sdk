@@ -87,7 +87,7 @@ async function decideOrClose(
  * @param overrides - redirect policy overrides; a zero-argument call yields the spec defaults.
  * @returns the descriptor to install in a pipeline's REDIRECT slot.
  *
- * @internal
+ * @public
  */
 export function redirectStep(
   overrides?: Partial<RedirectSettings>,

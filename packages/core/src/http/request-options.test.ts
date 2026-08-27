@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request-options.test.ts
-// Exercises: HTTP-34 (EMPTY sentinel, defensive tag copy), HTTP-35 (timeout/maxRetries validation)
+// Exercises: HTTP-34 (EMPTY sentinel, defensive tag copy), HTTP-35 (timeout/maxRetries validation),
+// AUTH-4 (the per-call auth descriptor tier, added in Phase 5c)
 import {describe, expect, test} from 'bun:test';
+import {createAuthDescriptor} from '../auth/descriptor.js';
+import {createAuthRequirement} from '../auth/requirement.js';
 import {RequestOptions} from './request-options.js';
 import {RequestOptionsValidationError} from './errors.js';
 
@@ -10,6 +13,31 @@ describe('RequestOptions.EMPTY', () => {
     expect(RequestOptions.EMPTY.timeoutMs).toBeUndefined();
     expect(RequestOptions.EMPTY.maxRetries).toBeUndefined();
     expect(RequestOptions.EMPTY.tag('anything')).toBeUndefined();
+  });
+});
+
+describe('per-call auth descriptor (AUTH-4)', () => {
+  test('EMPTY carries no auth descriptor', () => {
+    expect(RequestOptions.EMPTY.auth).toBeUndefined();
+  });
+
+  test('the builder stores and the accessor returns the same descriptor instance', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('NO_AUTH')]);
+    expect(RequestOptions.newBuilder().auth(descriptor).build().auth).toBe(
+      descriptor,
+    );
+  });
+
+  test('an explicit undefined clears the override', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('NO_AUTH')]);
+    const builder = RequestOptions.newBuilder().auth(descriptor);
+    expect(builder.auth(undefined).build().auth).toBeUndefined();
+  });
+
+  test('a derived builder carries the descriptor forward (HTTP-3)', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('BASIC')]);
+    const original = RequestOptions.newBuilder().auth(descriptor).build();
+    expect(original.newBuilder().build().auth).toBe(descriptor);
   });
 });
 

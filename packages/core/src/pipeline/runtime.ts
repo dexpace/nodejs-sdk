@@ -24,7 +24,7 @@ import type {StepDescriptor} from './step.js';
  * never left the process, against CTX-1's "the exchange stage exposes the request and the response". Doing it
  * here rather than widening `promoteToExchange` with a request-override keeps promotion strictly additive.
  *
- * Exported (still `@internal`, still absent from the package barrel) so its two branches can be asserted as
+ * Exported (still internal-only, still absent from the package barrel) so its two branches can be asserted as
  * the pure function they are. The alternative -- observing the exchange context end-to-end -- would require
  * patching `install` on the process-wide `contextStore` singleton, since `send()` evicts the entry in its own
  * `finally`.
@@ -44,23 +44,43 @@ export function exchangeSource(
 }
 
 /**
+ * TypeScript has no friend classes, so `PipelineBuilder` -- a different module -- reaches `Runtime`'s
+ * private constructor through this module-scoped `let`, assigned exactly once inside the class's
+ * `static {}` block. Init-once wiring, not mutable state, the same shape every builder-based model in
+ * `src/http/` uses (`createHeaders`, `createRequest`, ...). It is surfaced as {@link createRuntime}
+ * rather than kept module-local because the sanctioned construction site lives in another file.
+ */
+let create: (steps: readonly StepDescriptor[], transport: Transport) => Runtime;
+
+/**
  * The built, immutable pipeline (PIPE-10, PIPE-25). Implements `Transport` itself (PIPE-26) -- Phase 2's
  * `Transport` SPI has one method (`send`), so there is no second `sendAsync` entry point to delegate through.
  * `close()` deliberately never touches the wrapped transport (PIPE-27): the pipeline never owns it.
  *
- * @internal
+ * The constructor is TS-`private`, so no field-wise constructor appears in the emitted `.d.ts` and a
+ * consumer cannot assemble a `Runtime` around `PipelineBuilder.build()`'s validation. That matters
+ * now that this class is public surface: a hand-built `new Runtime([authStep(a), authStep(b)], t)`
+ * would put two steps in the single AUTH pillar slot (PIPE-4/PIPE-5, AUTH-27) and a hand-ordered step
+ * array would invert PIPE-2's pillar precedence chain, both without any collision error, because
+ * `Cursor` runs whatever array it is handed. `PipelineBuilder` is the only path that enforces either.
+ *
+ * @public
  */
 export class Runtime implements Transport {
   readonly #steps: readonly StepDescriptor[];
   readonly #transport: Transport;
 
-  constructor(steps: readonly StepDescriptor[], transport: Transport) {
+  private constructor(steps: readonly StepDescriptor[], transport: Transport) {
     // PIPE-10/PIPE-25: the built runtime is immutable, and `get steps()` hands out a read-only view. Copying
-    // and freezing here rather than trusting the caller makes both structural -- `PipelineBuilder` is not the
-    // only construction site (tests build one directly, and Phase 5+ may too), so an unfrozen array passed in
-    // would leave the "immutable after construction" guarantee resting on caller discipline.
+    // and freezing here rather than trusting the caller makes both structural -- `createRuntime` is reachable
+    // from any in-package caller, so an unfrozen array passed in would leave the "immutable after
+    // construction" guarantee resting on caller discipline.
     this.#steps = Object.freeze([...steps]);
     this.#transport = transport;
+  }
+
+  static {
+    create = (steps, transport) => new Runtime(steps, transport);
   }
 
   /**
@@ -114,11 +134,62 @@ export class Runtime implements Transport {
     }
   }
 
+  /**
+   * A no-op, deliberately (PIPE-27). The pipeline never OWNS its terminal transport, so closing the
+   * runtime must not close the transport a caller handed it and may still be using elsewhere. The
+   * method exists only to satisfy the `Transport` SPI, so a `Runtime` can be nested as another
+   * pipeline's transport (PIPE-26) without the outer one leaking a close through.
+   *
+   * @returns a promise that is already resolved.
+   */
   async close(): Promise<void> {
     // PIPE-27: the pipeline never owns its transport and MUST NOT close it.
   }
 
+  /**
+   * The flattened step array, in the order the cursor drives it (PIPE-25).
+   *
+   * Frozen at construction, so the returned array is a read-only view and not a defensive copy —
+   * there is nothing a caller can mutate through it.
+   *
+   * @returns the ordered, immutable step array.
+   */
   get steps(): readonly StepDescriptor[] {
     return this.#steps; // PIPE-25: "exposes a read-only, ordered view of its steps."
   }
+
+  /**
+   * The wrapped terminal transport.
+   *
+   * Exposed for `PipelineBuilder.seedFrom(runtime, 'flatten')` (PIPE-35), which must reuse this
+   * runtime's own transport as the seeded builder's terminal — flatten mode is not implementable
+   * without it. Read-only: the pipeline never owns its transport (PIPE-27), so there is nothing to
+   * copy defensively and nothing a caller can change by holding the reference.
+   *
+   * @returns the transport this pipeline dispatches to innermost.
+   */
+  get transport(): Transport {
+    return this.#transport;
+  }
+}
+
+/**
+ * The in-package construction hook for {@link Runtime}, whose own constructor is `private` so no
+ * consumer can build one around `PipelineBuilder.build()`'s pillar and ordering validation.
+ *
+ * Exported (still internal-only, still absent from the package barrel) for the same reason
+ * {@link exchangeSource} is: the sanctioned caller -- `PipelineBuilder.build()` -- lives in a
+ * different module, and TypeScript has no friend-class visibility to express that with.
+ *
+ * @param steps - the flattened, stage-ordered step array. Copied and frozen.
+ * @param transport - the terminal transport. Never closed by the pipeline (PIPE-27).
+ * @returns the built, immutable runtime.
+ *
+ * @internal
+ */
+export function createRuntime(
+  steps: readonly StepDescriptor[],
+  transport: Transport,
+): Runtime {
+  return create(steps, transport);
 }

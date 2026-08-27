@@ -8,7 +8,7 @@
  * SHOULD extension slots around every pillar. `SEND` is terminal and reserved -- PIPE-8, flattening skips it
  * and `PipelineBuilder` rejects any attempt to install a step there.
  *
- * @internal
+ * @public
  */
 export type Stage =
   | 'PRE_REDIRECT'
@@ -33,7 +33,7 @@ export type Stage =
  * further stage later is one splice here -- no existing `Stage` value needs to change, so there is no
  * numeric-gap "renumbering" concern to design around.
  *
- * @internal
+ * @public
  */
 export const STAGE_ORDER: readonly Stage[] = [
   'PRE_REDIRECT',
@@ -54,7 +54,7 @@ export const STAGE_ORDER: readonly Stage[] = [
   'SEND',
 ];
 
-/** A pillar stage admits at most one step (PIPE-4). @internal */
+/** A pillar stage admits at most one step (PIPE-4). @public */
 export const PILLAR_STAGES: ReadonlySet<Stage> = new Set([
   'REDIRECT',
   'RETRY',

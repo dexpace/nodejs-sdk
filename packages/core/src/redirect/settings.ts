@@ -12,11 +12,14 @@ import {DEFAULT_ALLOWED_METHODS} from './codes.js';
  *
  * `visited` is insertion-ordered and includes the current request's URI.
  *
- * @internal
+ * @public
  */
 export interface RedirectCondition {
+  /** The 3xx response being judged. Open; the predicate MUST NOT consume or close its body. */
   readonly response: Response;
+  /** How many hops this call has already followed, before the one under consideration. */
   readonly redirectsFollowed: number;
+  /** Every URI seen on this call, insertion-ordered, including the current request's (REDIR-19). */
   readonly visited: ReadonlySet<string>;
 }
 
@@ -25,18 +28,22 @@ export interface RedirectCondition {
  * wire-safety mechanics that follow it -- credential stripping, the downgrade guard, body replayability,
  * loop and hop-cap detection -- see `decide.ts`'s note on the scope of that override.
  *
- * @internal
+ * @public
  */
 export type RedirectPredicate = (
   condition: Readonly<RedirectCondition>,
 ) => boolean;
 
 /**
- * Redirect policy. Every field is optional at the construction surface ({@link redirectSettings} takes a
- * `Partial`), so a zero-config call yields the spec defaults and a caller can override one field without
- * restating the rest.
+ * Redirect policy. Every field is optional at the construction surface -- the internal
+ * `redirectSettings()` factory takes a `Partial` -- so a zero-config call yields the spec defaults and a
+ * caller can override one field without restating the rest. `redirectStep()` and `standardResilience()`
+ * both accept that same `Partial<RedirectSettings>`.
  *
- * @internal
+ * The factory is named in plain prose rather than as a TSDoc link: it is internal and absent from the
+ * package barrel, so a link to it cannot resolve from a published declaration.
+ *
+ * @public
  */
 export interface RedirectSettings {
   /** REDIR-17: a non-negative integer, default 3. `0` disables following, with no special branch anywhere downstream. */
