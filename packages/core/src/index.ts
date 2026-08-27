@@ -217,3 +217,23 @@ export {
   typedSseStream,
 } from './sse/typed.js';
 export type {MapperOutcome, SseMapper} from './sse/typed.js';
+
+// Pagination (Phase 6c). The query splice and link tokenizer stay internal: publishing them would put a second
+// URL-manipulation surface next to Phase 1's QueryParams, which is the confusion the one-encoder rule avoids.
+export {Page, pageInfo} from './pagination/page.js';
+export type {PageInfo} from './pagination/page.js';
+export type {PaginationStrategy} from './pagination/strategy.js';
+export {Paginator} from './pagination/paginator.js';
+export type {PaginatorInit} from './pagination/paginator.js';
+export {
+  cursorStrategy,
+  linkHeaderStrategy,
+  pageNumberStrategy,
+} from './pagination/strategies.js';
+export {paginateWithFetchers} from './pagination/fetchers.js';
+export type {
+  FetcherPage,
+  FetcherPaginationInit,
+  PagingOptions,
+} from './pagination/fetchers.js';
+export {PaginationError} from './pagination/errors.js';

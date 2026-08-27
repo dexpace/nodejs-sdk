@@ -25,12 +25,8 @@ let createResponse: (
  * Status-range classification is reached through {@link Response.status} — `response.status.isSuccess`,
  * `response.status.isError`, and the rest (HTTP-11).
  *
- * Owns the body's connection, released by {@link Response.close}. Teardown is `close()` only, with no
- * `[Symbol.asyncDispose]`: the symbol postdates the declared `engines.node` floor (`>=18.17`), where the
- * computed key evaluates to `undefined` and binds the method to the string `"undefined"` — wrong,
- * silent, and only at run time — and its type reaches this package only through a dev-only global, so a
- * consumer compiling against the published `.d.ts` on the same `lib` this package declares cannot build.
- * Matches every Phase 2/3a resource-owning class. Revisit when the checkpoint's floor bump lands.
+ * Owns the body's connection, released by {@link Response.close}. Teardown is `close()` only.
+ * Revisit when a project-wide explicit resource management pass lands across all Phase 2/3a resource classes.
  *
  * @public
  */
