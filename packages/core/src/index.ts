@@ -108,7 +108,6 @@ export type {
   RequestContext,
 } from './context/context.js';
 export type {InstrumentationBundle} from './context/instrumentation.js';
-export type {Clock} from './config/clock.js';
 export type {BackoffSettings} from './retry/backoff.js';
 export type {RetrySettings} from './retry/settings.js';
 export type {RetryStepOptions} from './retry/retry-step.js';
@@ -237,3 +236,48 @@ export type {
   PagingOptions,
 } from './pagination/fetchers.js';
 export {PaginationError} from './pagination/errors.js';
+
+// Phase 7a — configuration and platform primitives. There is no `./config/index.js`, because 7a's
+// design doc rules one out by name. Not because the question is settled: this repo carries both
+// patterns — `http/`, `body/`, `io/`, and `seams/` each have an internal barrel, while `pipeline/`,
+// `context/`, and `config/` do not — and so does the knowledge corpus, where
+// docs/knowledge/module-organization.md:18 bans internal barrels outright and
+// docs/knowledge/api-design.md:8 endorses one per feature folder, with no entry in the corpus's
+// `--section conflicts` reconciling them. 7a followed its design doc and names each symbol here
+// against its own file; see docs/open-items.md K11 for the standing note.
+// Deliberately NOT exported: `config/equality.js`'s deepEqual/deepHash — no requirement gives a
+// caller direct access to them, and they have no in-package caller either as of 2026-08-27, so the
+// module is reachable only from its own test (docs/open-items.md K16 owns the first real consumer);
+// and `config/client-identity-step.js`'s clientIdentityStep, whose StepDescriptor return type is
+// part of the still-internal pipeline authoring surface (docs/open-items.md K1).
+export type {Clock} from './config/clock.js';
+export {defaultClock} from './config/clock.js';
+export type {BuildInfo} from './config/build-info.js';
+export {getBuildInfo} from './config/build-info.js';
+export type {Configuration, SourceFn} from './config/configuration.js';
+export {
+  CFG_KEY_HTTPS_PROXY,
+  CFG_KEY_HTTP_PROXY,
+  CFG_KEY_LOG_LEVEL,
+  CFG_KEY_MAX_RETRY_ATTEMPTS,
+  CFG_KEY_NO_PROXY,
+  ConfigurationBuilder,
+  defaultConfiguration,
+  getGlobalConfiguration,
+  setGlobalConfiguration,
+} from './config/configuration.js';
+export {formatHttpDate, parseHttpDate} from './config/http-date.js';
+export {randomUuid} from './config/identifiers.js';
+export type {
+  ProxyCredentials,
+  ProxyOptions,
+  ProxyOptionsInit,
+  ProxyType,
+} from './config/proxy.js';
+export {
+  createProxyOptions,
+  formatProxyOptions,
+  resolveProxyOptions,
+  shouldBypassProxy,
+} from './config/proxy.js';
+export {RETRYABLE_STATUSES, isRetryableStatus} from './config/retryable.js';

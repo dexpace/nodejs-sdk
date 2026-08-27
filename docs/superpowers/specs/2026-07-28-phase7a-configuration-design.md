@@ -141,10 +141,18 @@ interface ProxyOptions {
   readonly credentials?: { readonly username: string; readonly password: string };
   readonly challengeHandler?: unknown;                      // slot only; no challenge protocol shipped
   readonly bypassAll: boolean;
-  toString(): string;                                       // credentials masked
 }
 
-function shouldBypassProxy(options: ProxyOptions, host: string): boolean;   // CFG-23
+// CFG-22's masking contract, as built. `toString(): string` was NOT kept on the interface: every object
+// satisfies it via Object.prototype, so declaring it guarantees nothing while forcing Omit/Pick gymnastics
+// through the public API. `createProxyOptions` attaches an own `toString` delegating here, so `String(options)`
+// still masks for a factory-built instance.
+function formatProxyOptions(options: ProxyOptions): string;                 // CFG-22, credentials masked
+function createProxyOptions(init: ProxyOptionsInit): ProxyOptions;
+function shouldBypassProxy(
+  options: Pick<ProxyOptions, 'bypassAll' | 'nonProxyHosts'>,               // CFG-23
+  host: string,
+): boolean;
 function resolveProxyOptions(config: Configuration): ProxyOptions | null;  // CFG-24–CFG-28, never throws
 ```
 
@@ -153,11 +161,25 @@ concrete `Transport` exists until Phase 8 (`@dexpace/transport-fetch`/`-undici`)
 `Serde<T>`-before-`codec-json` precedent exactly: the contract lands here, wiring lands with the first concrete
 consumer. Explicit scope boundary, recorded so it isn't later mistaken for an omission.
 
-Node has no system-properties layer, so `CFG-24`'s "`https.proxyHost` preferred over `http.proxyHost`" collapses
-to environment-only: `HTTPS_PROXY` preferred over `HTTP_PROXY`, parsed as `scheme://user:pass@host:port` — a
-second, smaller instance of the same three-tier-to-two-tier collapse `Configuration` itself makes. Glob
-compilation (`*` → "any run", `?` → "one char", metacharacter-escaped, full-string, case-insensitive) happens
-once at construction and is cached on the `ProxyOptions` instance.
+**As-built correction (2026-08-27).** This section originally said `CFG-24`'s "`https.proxyHost` preferred over
+`http.proxyHost`" collapses to environment-only. That is true of the *production sources* and false of the
+resolution logic, and the shipped code implements the wider reading. `resolveProxyOptions` consults the property
+tier first — `https.proxyHost` over `http.proxyHost`, the port taken from the chosen host's own layer,
+credentials read only from `https.proxyUser`/`https.proxyPassword` — and falls through to the environment URL
+form (`HTTPS_PROXY` preferred over `HTTP_PROXY`, parsed as `scheme://user:pass@host:port`) only when the
+property tier yields nothing. All of `CFG-26`'s non-proxy-host resolution (property pipe-list over environment
+comma-list, backslash escape, split → drop empty → unescape → trim) is likewise built. It reads the same
+substitutable property seam `Configuration` already carries for `CFG-3`/`CFG-4`, and in the default Node wiring
+that seam is empty, so real behavior *is* environment-only exactly as the collapse describes. Without the tier,
+`CFG-24`'s same-layer-port and https-only-credentials clauses and every clause of `CFG-26` would have been
+silent gaps, and `CFG-4`'s `getRawProperty` would have had no consumer in the repository.
+
+Glob compilation (`*` → "any run", `?` → "one char", metacharacter-escaped, full-string, case-insensitive)
+happens once at construction. As built, the compiled patterns are held in a module-level `WeakMap` keyed by the
+pattern array itself rather than in a cache field on the `ProxyOptions` instance, which keeps the public shape
+free of a field no requirement asks for and makes the caching work for a hand-built options object too. The
+trade-off: a hand-built object whose `nonProxyHosts` array is not frozen caches its first compile permanently,
+so a pattern pushed on afterwards is silently ignored.
 
 ## Dates, identifiers, and equality (`CFG-29`–`CFG-36`)
 
@@ -233,6 +255,7 @@ doesn't manage).
 ```
 packages/core/src/config/
   configuration.ts       # Configuration, ConfigurationBuilder, global slot, CFG-14 key constants
+  duration.ts             # parseDurationMs -- CFG-7's grammar, split out of configuration.ts at review
   clock.ts                # Clock seam, default implementation
   proxy.ts                # ProxyOptions, shouldBypassProxy, resolveProxyOptions
   http-date.ts             # formatHttpDate, parseHttpDate
@@ -263,7 +286,16 @@ every phase since Phase 1), each pointing at its concrete file (e.g. `export {Cl
 `Configuration`, `ConfigurationBuilder`, `getGlobalConfiguration`/`setGlobalConfiguration`, the `CFG-14` key
 constants, `Clock`, `ProxyOptions`, `resolveProxyOptions`/`shouldBypassProxy`, `formatHttpDate`/`parseHttpDate`,
 `randomUuid`, `isRetryableStatus`, `getBuildInfo`, and `clientIdentityStep`/`ClientIdentitySettings` are
-promoted this way. `deepEqual`/`deepHash` stay `@internal` (no root re-export) — no requirement calls for
+promoted this way.
+
+**As built, two corrections to that list.** `createProxyOptions`/`ProxyOptionsInit` and `formatProxyOptions`
+are promoted alongside `ProxyOptions` — a caller cannot otherwise build one with its `CFG-22` masking, and the
+free formatter replaced the interface's `toString()` member (see §"Proxy model"). `clientIdentityStep`/
+`ClientIdentitySettings` are **not** promoted: `StepDescriptor` is `@internal` and api-extractor rejects a
+`@public` export returning a forgotten one, so the step ships in-package until the phase that publishes the
+pipeline authoring surface lands. Recorded as open item G1.
+
+`deepEqual`/`deepHash` stay `@internal` (no root re-export) — no requirement calls for
 callers to compare arbitrary values through the SDK's own API, and 5a's/5b's own equality needs (settings
 validation, collection defensive-copy checks) can import `config/equality.js` directly within the same package.
 
@@ -300,7 +332,7 @@ reintroduce a second parser without a test noticing the import changed.
 | `Clock.sleep` is the only wait primitive; no separate blocking-sleep/async-delay pair | `CFG-15`/`CFG-17` (blocking sleep) vs. `CFG-18` (scheduled async delay) as two primitives | Node has no carrier threads to distinguish "block this one" from "schedule that one" against; both are already non-blocking `setTimeout`-backed `Promise`s. Same collapse class as `NFR-11` |
 | No interruptible-task-future / executor vocabulary (`CFG-20`/`CFG-21`) | JVM `ExecutorService`/`Future` cancel-with-interrupt semantics | No executor/worker-pool concept in this port; `Promise` cancellation is `AbortSignal`-based throughout, already covered by `Clock.sleep`'s signal parameter and 4a's cancellation model |
 | Async-wrapper unwrapping (`CFG-19`) is vacuous | JVM wraps async-completion exceptions requiring unwrap | `Promise` rejection carries the original error directly; no wrapper type exists in this runtime to unwrap |
-| System-property layer collapses into environment-only (proxy and general config alike) | `CFG-1`/`CFG-24`'s four/system-properties-first precedence | Node has no ambient key/value store distinct from `process.env`; already the settled reasoning from `08-instrumentation-and-configuration.md`, restated here for `CFG-*`'s own conformance sweep |
+| The *production sources* collapse to environment-only (proxy and general config alike); the property seam and the resolution tier that reads it are both built | `CFG-1`/`CFG-24`'s four/system-properties-first precedence | Node has no ambient key/value store distinct from `process.env`, so `defaultConfiguration()` wires the property seam to a function that always returns `undefined` and real behavior is environment-only — already the settled reasoning from `08-instrumentation-and-configuration.md`. The seam itself, `getRawProperty` (`CFG-4`), `resolveProxyOptions`'s property tier (`CFG-24`), and all of `CFG-26` ARE implemented against it, so every conformance clause is testable; only the production wiring collapses. Narrowed from an earlier, wider wording on 2026-08-27 — see `docs/open-items.md` K2 |
 | SDK version resolved via build-time codegen, not a runtime `package.json` read | N/A — JVM reads manifest attributes at class-load time | Core's runtime floor includes browsers/Workers with no filesystem; `import.meta.url` tricks are Node/Deno/Bun-only and would leave the browser build with the placeholder `NFR-15` forbids |
 
 ## Deferred Items (add to the roadmap's Deferred Items Log)

@@ -69,17 +69,20 @@ describe('Retry-After as an HTTP-date (RETRY-15)', () => {
     ).toBe(0);
   });
 
-  test('a year below 100 yields no hint rather than an instant 1900 years in the past (RETRY-16)', () => {
-    // The regression this guards: `Date.UTC` maps a year in [0,99] into the 1900s, so an unguarded
-    // parse turns this into 1926 -- a delta so negative it clamps to 0, i.e. RETRY-17's "retry
-    // immediately". A malformed header must fall back to backoff, never hammer the server.
+  test('a year below 100 is a valid past instant, so it yields zero (RETRY-17)', () => {
+    // Until Phase 7a's shared parser landed, this module's private one REJECTED a year in [0,99],
+    // and this case asserted null. `config/http-date.ts` reads the year literally instead (never
+    // `Date.UTC`, whose legacy mapping would turn 0026 into 1926), which makes this a well-formed
+    // HTTP-date already in the past -- and RETRY-17 governs that case: a valid past instant MUST
+    // yield a zero delay, distinct from RETRY-16's unparseable-value-yields-no-hint. Recorded at
+    // docs/open-items.md K20.
     expect(
       parsePacingHint(
         headersOf({'Retry-After': 'Thu, 01 Jan 0026 00:00:00 GMT'}),
         NOW,
         noJitter,
       ),
-    ).toBeNull();
+    ).toBe(0);
   });
 
   test('an out-of-range field is rejected rather than rolled over (RETRY-16)', () => {

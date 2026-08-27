@@ -38,6 +38,7 @@
     "fix": "bun run build:core && gts fix .",
     "build:core": "tsc -b packages/core/tsconfig.build.json",
     "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit",
+    "prebuild": "bun run --cwd packages/core prebuild",
     "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
