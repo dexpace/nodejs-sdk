@@ -31,10 +31,11 @@
     "typescript-eslint": "^8"
   },
   "scripts": {
-    "lint": "gts lint .",
-    "fix": "gts fix .",
-    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit",
-    "build": "tsc -p packages/core/tsconfig.build.json && tsc -p packages/codec-json/tsconfig.build.json",
+    "lint": "bun run build:core && gts lint .",
+    "fix": "bun run build:core && gts fix .",
+    "build:core": "tsc -b packages/core/tsconfig.build.json",
+    "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit",
+    "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
     "test:scripts": "node --test 'scripts/*.test.mjs'",

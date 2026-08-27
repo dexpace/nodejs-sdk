@@ -967,6 +967,27 @@ file it as a bug.
 
 ---
 
+### H18 — every type-aware command now builds core first — **RECORDED**
+
+`packages/codec-json` imports `@dexpace/core` by package name, so `tsc` resolves it through core's
+`package.json` `types` field to `packages/core/dist/index.d.ts`. That file does not exist on a fresh clone, and
+TypeScript's project-reference source redirect does not help: module resolution fails before the redirect is
+ever consulted. CI runs `typecheck` before `build`, so the first CI run of this branch failed with 30
+`TS2307: Cannot find module '@dexpace/core'` errors across all nine codec-json files.
+
+The fix is a `build:core` script (`tsc -b packages/core/tsconfig.build.json`, incremental) that `typecheck`,
+`lint`, `fix`, and `build` each run first. `packages/codec-json/tsconfig.json`'s `references` entry was removed
+at the same time: with `dist/` guaranteed present, the package now typechecks against the **published**
+declarations rather than being redirected back to core's source, so a symbol that `stripInternal` removes
+cannot typecheck green here and fail at build.
+
+Verified by deleting every `dist/` and `.tsbuildinfo` and running both CI jobs in their exact order.
+
+**Trigger:** none. Recorded because the failure mode is invisible on a developer machine that has ever run
+`bun run build`, and the obvious "simplification" — dropping the `build:core` prefix — reintroduces it.
+
+---
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a
