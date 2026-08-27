@@ -4,11 +4,19 @@ Running register of everything known to be unmet, unverified, misreported, or de
 implemented portion of this project. Reviewed state: **scaffold milestone** (committed, `0ebdc79`),
 **Phase 1 — Core HTTP Domain Model** (branch `2-phase-1-core-http-domain-model`, uncommitted at time of
 review), **Phase 3a/3b**, **Phase 4a — Execution Context** (branch `7-phase-4a-execution-context`, three
-review passes), and **Phase 4b — Recovery-Chain Primitives** (branch
-`8-phase-4b-recovery-chain-primitives`). 4a and 4b are both merged into `9-phase-4c-stage-based-pipeline`.
-Last reviewed **2026-08-26**.
+review passes), **Phase 4b — Recovery-Chain Primitives** (branch
+`8-phase-4b-recovery-chain-primitives`), and **Phase 5b — Redirect** (branch
+`12-phase-5b-resilience-redirect`, three review passes). 4a and 4b are both merged into
+`9-phase-4c-stage-based-pipeline`. Last reviewed **2026-08-27**.
 
-Sections A–E below were written against Phase 1 and are re-verified at each review; section F is Phase 4b's.
+**Two phases are shipped but were never registered here: 4c (stage-based pipeline) and 5a (retry).** Both are
+merged and both have executed checklists, but neither ran the scan this file's maintenance rule asks for, so
+their absence below means "not reviewed", not "nothing found". Section G was written without reviewing either,
+and says nothing about them beyond what 5b's own work touched — the one 5a file 5b modified
+(`retry/engine.ts`) is recorded at G9.
+
+Sections A–E below were written against Phase 1 and are re-verified at each review; section F is Phase 4b's,
+section G is Phase 5b's.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is either scheduled against a named phase or
@@ -254,6 +262,13 @@ No action now. Each is already owned by a named phase; this table exists so none
 | Self-identifying version metadata (real `User-Agent`) | NFR-15 | 7/8 | |
 | Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet |
 | NFR-8 re-confirmed as a documented non-applicability | NFR-8 | 10 | No reflection-driven discovery surface exists by design |
+| Redirect structured logging — hop, rejection, and permitted-downgrade events | REDIR-28, REDIR-15 (surfacing clause), XCUT-17(d) | 7b | Task 9. 5b executes before 7b and 7b needs 5b's step, so the import cannot run either way until then. See G2 |
+| Redirect's loop-detected and malformed-Location events | REDIR-28 | none | Blocked behind a reason discriminant on `decide()`'s `'return-current'` variant, which no phase owns. See G3 |
+| The cross-origin marker's *consumption* side — skip-stamping on a cross-origin re-issue | REDIR-11(b/c), XCUT-17(b), AUTH-29 | 5c | 5b produces the marker and defends it with an independent `POST_AUTH` guard; nothing yet reads it. See G7 |
+| Auth re-runs per redirect hop | PIPE-2 | 5c | Needs an auth step to re-run |
+| Public-barrel promotion of `redirectStep`/`withRedirect` and the step-authoring surface | — | 5c | Same "not yet" 5a's `retry/` shipped with. Publishing a pillar-authoring surface early would freeze `StepDescriptor`/`Stage`/`PipelineBuilder` shapes 5c may still reshape |
+| Erratum for the `PIPE-40` / `REDIR-22` contradiction | PIPE-40 vs REDIR-22 | 10 | Behavior is chosen and tested; one of the two spec sentences still needs correcting. See G1 |
+| Re-confirm the redirect predicate's scope over the safety mechanics | REDIR-20 | 9 | See G4 |
 
 ---
 
@@ -356,6 +371,140 @@ parenthetical is corrected. The sequencing half is now closed too: 4a and 4b are
 `plans/2026-07-26-phase4-execution-context-and-pipelines-checklist.md` now says so explicitly in its Status
 line, but the §7.x and §8.1 tables read identically to the §8.2 ones that are now real. Re-scan both when their
 phases execute, per this file's own maintenance rule.
+
+---
+
+---
+
+## G. Phase 5b — Redirect
+
+Three review passes ran over this phase. Everything they found is either fixed in the branch or listed here.
+Nothing below blocks the phase — `REDIR-1`–`REDIR-27` are satisfied, `PIPE-40` is closed, and every CI step is
+green. `REDIR-28` is the one requirement in the chapter that ships unimplemented, and it is scheduled.
+
+### G1 — `PIPE-40` and `REDIR-22` contradict each other on the non-replayable-body path — **SCHEDULED** (Phase 10)
+
+Two `MUST`s naming the same trigger and prescribing opposite dispositions.
+
+`product-spec/08-execution-pipelines.md:20` (`PIPE-40`): "on paths that abandon a re-drive (redirect cycle,
+**non-replayable body**, budget exhausted) the in-flight response MUST be returned unclosed."
+
+`product-spec/10-redirect-handling.md` (`REDIR-22`): "if building the follow-up throws (**non-replayable
+body**, downgrade rejection) the current response MUST be closed before the error propagates."
+
+5b implements `REDIR-22` — closes, then throws — on three grounds: `REDIR-6` independently fixes the control
+flow ("the operation MUST fail with a clear error naming replayability"), so the path throws and a response
+never *returned* cannot be "returned unclosed"; specific governs general, since `§10` owns the redirect step's
+lifecycle; and closing is the safer reading, because the alternative leaks a body on an error path with no
+caller holding a reference to close it. `PIPE-40`'s other two named paths do genuinely return, and both return
+unclosed as it requires.
+
+Not a code decision left open — the behavior is chosen, tested, and reasoned. What is open is that **one of the
+two spec sentences needs an erratum**, which is Phase 10's to write. Recorded in the 5b design's Deviation
+Ledger and asserted with the reasoning inline in `redirect-step.test.ts`.
+
+### G2 — `REDIR-28` and `REDIR-15`'s observability clause ship unimplemented — **SCHEDULED** (Phase 7b, Task 9)
+
+`REDIR-28` (SHOULD): hop, loop-detected, scheme-downgrade, and malformed-Location events as structured
+records, URLs through a redactor. `REDIR-15` (MUST) carries a separate, easily-conflated obligation on the
+*permitted* downgrade path — the `allowSchemeDowngrade` flag is the opt-in, and "MUST surface it observably" is
+a second requirement on top of it. `XCUT-17`(d) restates the same pairing.
+
+None of it is implemented. 5b executes before 7b, so an `observability/logger.js` import here would not
+resolve, and 7b needs 5b's redirect step for its own retrofit conformance test — the dependency cannot run the
+other way. `redirectStep()`'s TSDoc names 7b's Task 9 as the owner. Same disposition, and the same
+cycle-breaking reason, as 5a's two `engine.ts` events.
+
+**Note the MUST/SHOULD split when this is closed:** `REDIR-28` is a SHOULD, but `REDIR-15`'s surfacing clause
+is part of a MUST. 7b's Task 9 closes both in one edit, so the distinction only matters if that task slips.
+
+### G3 — `Decision` carries no reason on `'return-current'`, so two of `REDIR-28`'s four events stay blocked — **DECIDE**
+
+`decide()`'s `'return-current'` variant is a bare `{kind}`. Nothing distinguishes loop-detected from
+hop-cap-exceeded from normal termination from malformed-Location, so even after G2 lands, the hop, rejection,
+and permitted-downgrade events can ship while **loop-detected and malformed-Location cannot**. `REDIR-28`'s
+carve-out — that the malformed-Location event logs the raw Location string, since it failed to parse and
+cannot be redacted — travels with that deferral.
+
+Reshaping `Decision` touches every assertion in `decide.test.ts`, which is why it was not done inside the 7b
+retrofit's scope. It is a `SHOULD`, so nothing is violated by leaving it — but it is not owned by any phase
+today, which is why this is DECIDE rather than SCHEDULED. Either schedule it (7b or 9) or accept the two
+events as permanently unshipped and record that in `sdk-design-nodejs/10`.
+
+### G4 — `REDIR-20`'s "fully override" is read as scoped to code/method eligibility only — **DECIDE**
+
+The spec says a configured predicate "MUST fully override the built-in decision". 5b reads that as scoped to
+the *code/method eligibility* question, not as license to bypass the safety mechanics that follow it —
+userinfo stripping, credential hygiene, the downgrade guard, body replayability, and loop/cap detection — on
+the grounds that those are stated as unconditional `MUST`s elsewhere in the same chapter and are not "should
+this kind of redirect be followed" policy. A caller predicate opting to follow a 307 with a single-use body
+still cannot make that body re-sendable.
+
+Defensible, and a test pins it. But it is a judgment call on genuinely ambiguous wording, made without the user
+present. If wrong, the fix is narrow and mechanical: gate `decide()`'s step 3 onward behind the predicate's
+answer. Flagged for re-confirmation at Phase 9's conformance sweep, or sooner.
+
+### G5 — The marker-stripping guard is not the last step before `SEND` — **WATCH**
+
+`REDIR-11`(c) requires the internal cross-origin marker be removed before dispatch. `stripCrossOriginMarkerStep()`
+occupies `POST_AUTH`, but `STAGE_ORDER` runs six more stages after it — `PRE_LOGGING`, `LOGGING`,
+`POST_LOGGING`, `PRE_SERDE`, `SERDE`, `POST_SERDE` — before `SEND`. A step installed in any of them runs
+*closer to the wire than the guard* and could put the marker back.
+
+Not a defect today: no step exists in any of those stages, so the guard is effectively last. It is also not a
+plausible accident — nothing would write that header by name.
+
+**Trigger:** a step installed after `POST_AUTH` that copies or synthesizes request headers wholesale rather
+than setting named ones. 7b's `loggingStep` and 6a's serde step are the first two occupants of those stages;
+neither should touch it, but neither has been read yet.
+
+### G6 — Loop detection keys on `href`, so a fragment-only difference is a distinct URI — **WATCH**
+
+`REDIR-16` says "recording every visited absolute URI". `visited` stores `URL.href`, which includes the
+fragment — so `https://h/a` → `https://h/a#x` → `https://h/a#y` is three distinct entries, not a loop.
+
+Correct by the letter (a fragment is part of the URI) and harmless in practice, because `REDIR-17`'s hop cap
+bounds the chain regardless — the default budget of 3 stops it. Worth recording only because the reasoning is
+non-obvious and the alternative (stripping the fragment before the visited check) would be a silent behavior
+change if someone "fixed" it later.
+
+Verified in the same pass that the *dangerous* normalizations do collapse: `HTTPS://EXAMPLE.COM/a` and
+`https://example.com:443/a` both normalize to a href already in the set, so case and default-port variation
+cannot be used to spin past the cap. Both are pinned by tests, in `bun test` and on Node's own URL parser.
+
+### G7 — `XCUT-17`(b)'s "not re-applied to the foreign host" half needs an auth layer — **SCHEDULED** (Phase 5c)
+
+`XCUT-17`(b) has two halves: strip `Cookie`/`Proxy-Authorization` on a cross-origin hop, **and** "ensure the
+caller's credential is not re-applied to the foreign host". 5b ships the first and the *mechanism* for the
+second — `REDIR-11`'s marker, plus an independent guard so it never reaches the wire — but nothing yet reads
+the marker for its intended purpose. `AUTH-29`'s consumption side and `PIPE-2`'s auth-re-runs-per-hop clause
+are the same deferral. Appendix B reaches redirect only through the `XCUT-17` line at
+`appendix-b-conformance-test-checklist.md:81`, so this is the row Phase 9 will actually check.
+
+### G8 — The 5b design doc's process note claims it is uncommitted — **ACT**
+
+`docs/superpowers/specs/2026-07-26-phase5b-redirect-design.md:23` ends: "Not committed — left for the user to
+review and commit if it holds up." It was committed in `c6603aa` ("Planning (#26)") and has since been amended
+twice. The sentence is stale and should be dropped or rewritten; the rest of the process note (that the design
+was authored autonomously and every judgment call is re-listed in the Deviation Ledger for challenge) is still
+accurate and worth keeping. Left as-is rather than rewritten unilaterally, because it is the author's own
+process note about their own delegation.
+
+### G9 — `retry/engine.ts` was edited by a phase that does not own it — **WATCH**
+
+5b's review pass 1 found both of its close-before-throw paths replacing the error they were meant to
+propagate, because `Response.close()` rethrows whatever cancelling the body raised. The fix needed
+`releaseQuietly`/`withReleaseFailure`, which existed as module-private helpers inside 5a's `retry/engine.ts`.
+Rather than ship a second copy of a helper whose identity guard is load-bearing, they were extracted to
+`packages/core/src/recovery/release.ts` and both call sites now import them.
+
+The move is behavior-neutral — the diff is one import added and the two functions removed verbatim, and 5a's
+suite passes untouched — and the new module has its own tests at 100% coverage. Recorded because a file
+belonging to a merged phase changed outside that phase's plan, which is exactly the kind of edit a later
+conformance sweep should be able to find an explanation for.
+
+**Trigger:** none expected. Re-verify at Phase 9 that 5a's checklist rows for `RECOV-12`/`RETRY-22` still point
+at code that exists where they say it does.
 
 ---
 
