@@ -53,6 +53,9 @@ jobs:
       - name: SEAM-1 zero-dependency check
         run: bun run verify:seam-1
 
+      - name: Verify SSE-37/SSE-38 (no serde dependency, no reconnect path in core SSE)
+        run: bun run verify:sse-37
+
       - name: Runtime-floor consistency check
         run: bun run verify:runtime-floor
 

@@ -196,3 +196,24 @@ export {
 } from './serde/response-handlers.js';
 export type {DecodeTarget} from './serde/response-handlers.js';
 export {serdeBody} from './body/serde-body.js';
+
+// SSE (Phase 6b). The parser and line reader stay internal: they are driven only through the facade, and
+// exposing them would expose a way to violate SSE-17's non-ownership contract by accident.
+export type {SseEvent, SseEventFields} from './sse/event.js';
+export {
+  isSseEventEmpty,
+  makeSseEvent,
+  sseEventToString,
+  sseEventsEqual,
+} from './sse/event.js';
+export {SseLineTooLongError} from './sse/line-reader.js';
+export {SseStreamError} from './sse/errors.js';
+export {SseStream, sseStreamFrom} from './sse/stream.js';
+export type {SseStreamFromOptions, SseStreamOptions} from './sse/stream.js';
+export {
+  MAPPER_DONE,
+  MAPPER_SKIP,
+  mapperValue,
+  typedSseStream,
+} from './sse/typed.js';
+export type {MapperOutcome, SseMapper} from './sse/typed.js';

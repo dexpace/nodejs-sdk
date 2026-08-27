@@ -41,3 +41,30 @@ test('io/ is still not public — 3b froze that decision and 6a does not reopen 
     expect(barrel).not.toHaveProperty(name);
   }
 });
+
+test('the SSE surface is publicly importable', async () => {
+  const barrel = await import('./index.js');
+  for (const name of [
+    'sseStreamFrom',
+    'SseStream',
+    'typedSseStream',
+    'mapperValue',
+    'MAPPER_SKIP',
+    'MAPPER_DONE',
+    'SseStreamError',
+    'SseLineTooLongError',
+    'makeSseEvent',
+    'sseEventsEqual',
+    'isSseEventEmpty',
+    'sseEventToString',
+  ]) {
+    expect(barrel).toHaveProperty(name);
+  }
+});
+
+test('the SSE parser internals stay private — publishing them would publish a way to break SSE-17', async () => {
+  const barrel = await import('./index.js');
+  for (const name of ['SseParser', 'SseLineReader']) {
+    expect(barrel).not.toHaveProperty(name);
+  }
+});

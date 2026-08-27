@@ -389,10 +389,35 @@ export function isPresent<T>(tristate: Tristate<T>): tristate is {
 export function isSerdeError(e: unknown): e is SerializationError | DeserializationError;
 
 // @public
+export function isSseEventEmpty(event: SseEvent): boolean;
+
+// @public
 export function isTimeoutSignal(signal: AbortSignal): boolean;
 
 // @public
 export function isTristate(value: unknown): value is Tristate<unknown>;
+
+// @public
+export function makeSseEvent(fields: SseEventFields): SseEvent;
+
+// @public
+export const MAPPER_DONE: MapperOutcome<never>;
+
+// @public
+export const MAPPER_SKIP: MapperOutcome<never>;
+
+// @public
+export type MapperOutcome<T> = {
+    readonly kind: 'value';
+    readonly value: T;
+} | {
+    readonly kind: 'skip';
+} | {
+    readonly kind: 'done';
+};
+
+// @public
+export function mapperValue<T>(value: T): MapperOutcome<T>;
 
 // @public
 export function materialize(body: Body_2): Promise<Body_2>;
@@ -745,6 +770,73 @@ export interface Serializer {
 }
 
 // @public
+export interface SseEvent {
+    // (undocumented)
+    readonly comment: string | undefined;
+    readonly data: readonly string[];
+    // (undocumented)
+    readonly event: string | undefined;
+    // (undocumented)
+    readonly id: string | undefined;
+    // (undocumented)
+    readonly retryMs: number | undefined;
+}
+
+// @public
+export interface SseEventFields {
+    // (undocumented)
+    readonly comment?: string | undefined;
+    // (undocumented)
+    readonly data?: readonly string[] | undefined;
+    // (undocumented)
+    readonly event?: string | undefined;
+    // (undocumented)
+    readonly id?: string | undefined;
+    // (undocumented)
+    readonly retryMs?: number | undefined;
+}
+
+// @public
+export function sseEventsEqual(a: SseEvent, b: SseEvent): boolean;
+
+// @public
+export function sseEventToString(event: SseEvent): string;
+
+// @public
+export class SseLineTooLongError extends DexpaceError {
+    constructor(limitBytes: number, options?: ErrorOptions);
+    readonly limitBytes: number;
+}
+
+// @public
+export type SseMapper<T> = (eventName: string | undefined, joinedData: string) => MapperOutcome<T>;
+
+// @public
+export class SseStream implements AsyncIterable<SseEvent> {
+    [Symbol.asyncIterator](): AsyncIterator<SseEvent>;
+    close(): Promise<void>;
+}
+
+// @public
+export class SseStreamError extends DexpaceError {
+    constructor(message: string, options?: ErrorOptions);
+}
+
+// @public
+export function sseStreamFrom(response: Response_2, options?: SseStreamFromOptions): SseStream;
+
+// @public
+export interface SseStreamFromOptions extends SseStreamOptions {
+    readonly maxLineBytes?: number | undefined;
+    readonly signal?: AbortSignal | undefined;
+}
+
+// @public
+export interface SseStreamOptions {
+    readonly onReleaseFailure?: ((error: unknown) => void) | undefined;
+}
+
+// @public
 export type Stage = 'PRE_REDIRECT' | 'REDIRECT' | 'POST_REDIRECT' | 'PRE_RETRY' | 'RETRY' | 'POST_RETRY' | 'PRE_AUTH' | 'AUTH' | 'POST_AUTH' | 'PRE_LOGGING' | 'LOGGING' | 'POST_LOGGING' | 'PRE_SERDE' | 'SERDE' | 'POST_SERDE' | 'SEND';
 
 // @public
@@ -870,6 +962,9 @@ export class TypedResponse<T> {
     get status(): Response_2['status'];
     value(): Promise<T>;
 }
+
+// @public
+export function typedSseStream<T>(stream: SseStream, mapper: SseMapper<T>): AsyncIterable<T>;
 
 // @public
 export class UrlConstructionError extends DomainModelError {
