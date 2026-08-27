@@ -6,6 +6,7 @@ import type {Clock} from '../config/clock.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {failure, type Outcome} from '../recovery/outcome.js';
+import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
 import {suppress} from '../suppress.js';
 import {stampAttempt} from './attempt-stamp.js';
 import {computeDelay} from './backoff.js';
@@ -147,9 +148,6 @@ async function retire(response: Response): Promise<unknown> {
   );
 }
 
-/** Marks "the response was released without incident", distinct from any value `close()` could throw. */
-const RELEASED_CLEANLY = Symbol('dexpace.retry.released');
-
 /** What the schedule step decided, before the release outcome is folded in. */
 interface Schedule {
   readonly error: unknown;
@@ -185,48 +183,6 @@ async function scheduleFrom(
     overshootsBudget: overshootsBudget(delayMs, state),
     delayMs: clampToBudget(delayMs, state),
   };
-}
-
-/**
- * Releases a discarded response, reporting rather than raising whatever release itself threw.
- *
- * `Response.close()` is documented to rethrow whatever cancelling the body raises (everything except
- * the `TypeError` a locked stream reports), so it is not a call that can sit in a bare `finally`:
- * there it would replace the value being returned, or replace an in-flight throwable with the
- * teardown failure -- the exact inversion RECOV-12 forbids and `suppress()` exists to prevent.
- */
-async function releaseQuietly(
-  response: Response | undefined,
-): Promise<unknown> {
-  if (response === undefined) return RELEASED_CLEANLY;
-  try {
-    await response.close();
-    return RELEASED_CLEANLY;
-  } catch (error) {
-    return error;
-  }
-}
-
-/**
- * Keeps `primary` primary, with a release failure riding along as suppressed (RECOV-12, RETRY-22's
- * "a teardown failure can never mask the upstream failure").
- *
- * The identity guard is not decorative. `Response.close()` memoizes its release promise, so a close
- * that already failed inside `toHttpError`'s own `finally` hands the SAME rejection back to the
- * second caller -- without this check that instance would be suppressed under itself.
- */
-function withReleaseFailure(
-  primary: unknown,
-  releaseFailure: unknown,
-): unknown {
-  if (releaseFailure === RELEASED_CLEANLY || releaseFailure === primary) {
-    return primary;
-  }
-  return suppress(
-    primary,
-    releaseFailure,
-    'releasing the discarded response failed',
-  );
 }
 
 /**
