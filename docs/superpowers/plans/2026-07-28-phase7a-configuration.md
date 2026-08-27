@@ -1,5 +1,18 @@
 # Phase 7a — Configuration & Platform Primitives Implementation Plan
 
+> **EXECUTED — do not follow these sketches verbatim (banner added 2026-08-27).** This phase has shipped.
+> The task sketches below are the pre-execution draft, and six of them are known to be wrong: Task 2's
+> RFC 1123 parser (`Date.UTC` maps a four-digit year under 100 onto 1900-1999, and it does not reject a
+> rolled-over calendar date such as `31 Feb`), Task 5's hash-consistency test (asserts two arrays of
+> *distinct object literals* are equal, which `CFG-33`'s "non-arrays fall back to ordinary equality"
+> forbids), Task 6's `getInt` (`Number.parseInt` resolves `"12abc"` to `12`, which `CFG-5` calls
+> unparseable), Task 7's `CFG-22` test (asserts a hard-coded literal returned by a fake `toString`, testing
+> nothing) and its omission of `CFG-26` entirely, and Task 8 Step 6 (rewrites `build` to `tsc -b`, replacing
+> the working `tsc -p tsconfig.build.json`). All six were corrected in the shipped code and are itemized in
+> [`docs/open-items.md`](../../open-items.md) G6. **The as-built record is
+> [the checklist](./2026-07-28-phase7a-configuration-checklist.md) and the code, not this file.** The
+> sketches are left in place deliberately, as the historical artifact of a completed phase.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the layered `Configuration` model, the `Clock` seam, the proxy model, RFC 1123 dates, UUID
@@ -8,7 +21,8 @@ client-identity header step in `@dexpace/core` — satisfying `docs/product-spec
 (`CFG-1`–`CFG-38`), `NFR-15`, and appendix C's `RECOV-33`, per
 `docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`.
 
-**Architecture:** A new `packages/core/src/config/` folder of nine independent files, no folder-level barrel
+**Architecture:** A new `packages/core/src/config/` folder of nine independent files (**ten as built** — see
+the file-structure note below), no folder-level barrel
 (every public symbol re-exports from the existing package-root `packages/core/src/index.ts` instead). Every
 file is pure — no I/O beyond the injected env/property source functions `Configuration` accepts, and no
 `node:` imports anywhere. A build-time codegen script (`scripts/gen-version.mjs`) writes
@@ -96,7 +110,9 @@ packages/core/scripts/
 
 Every file has a colocated `*.test.ts` except `generated/version.ts` (generated, not hand-written) and
 `scripts/gen-version.mjs` (exercised indirectly by Task 8's own test asserting the generated output shape).
-Nine production files, each one responsibility, none over ~100 lines.
+Nine production files, each one responsibility, none over ~100 lines. **As built: ten** -- Pass 1 of the
+review split `CFG-7`'s duration grammar out of `configuration.ts` into `config/duration.ts` on the
+one-concept-per-file rule (`docs/knowledge/module-organization.md:42`). See the banner at the top of this file.
 
 ---
 

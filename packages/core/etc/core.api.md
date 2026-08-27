@@ -20,6 +20,13 @@ export interface Builder<T> {
 }
 
 // @public
+export interface BuildInfo {
+    readonly identityTokens: readonly string[];
+    readonly runtimeIdentity: string;
+    readonly sdkVersion: string;
+}
+
+// @public
 export function buildRequest(baseUrl: string | URL, operation: OperationDescriptor): Request_2;
 
 // @public
@@ -41,13 +48,63 @@ export class CancellationError extends DexpaceError {
 }
 
 // @public
+export const CFG_KEY_HTTP_PROXY = "HTTP_PROXY";
+
+// @public
+export const CFG_KEY_HTTPS_PROXY = "HTTPS_PROXY";
+
+// @public
+export const CFG_KEY_LOG_LEVEL = "DEXPACE_LOG_LEVEL";
+
+// @public
+export const CFG_KEY_MAX_RETRY_ATTEMPTS = "DEXPACE_MAX_RETRY_ATTEMPTS";
+
+// @public
+export const CFG_KEY_NO_PROXY = "NO_PROXY";
+
+// @public
+export interface Clock {
+    monotonic(): number;
+    now(): number;
+    sleep(durationMs: number, signal?: AbortSignal): Promise<void>;
+}
+
+// @public
 export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined;
+
+// @public
+export interface Configuration {
+    derive(mutate: (builder: ConfigurationBuilder) => void): Configuration;
+    getBoolean(key: string, fallback: boolean): boolean;
+    getDuration(key: string, fallbackMs: number): number;
+    getInt(key: string, fallback: number): number;
+    getRawProperty(key: string, fallback?: string): string | undefined;
+    getString(key: string, fallback?: string): string | undefined;
+}
+
+// @public
+export class ConfigurationBuilder {
+    build(): Configuration;
+    put(key: string, value: string): this;
+    remove(key: string): this;
+    withEnvSource(source: SourceFn): this;
+    withPropertySource(source: SourceFn): this;
+}
 
 // @public
 export class ConsumedBodyError extends DexpaceError {
     constructor(bodyKind: string, options?: ErrorOptions);
     readonly bodyKind: string;
 }
+
+// @public
+export function createProxyOptions(init: ProxyOptionsInit): ProxyOptions;
+
+// @public
+export const defaultClock: Clock;
+
+// @public
+export function defaultConfiguration(): Configuration;
 
 // @public
 export class DexpaceError extends Error {
@@ -71,6 +128,12 @@ export class ETag {
 // @public
 export class EtagParseError extends DomainModelError {
 }
+
+// @public
+export function formatHttpDate(epochMs: number): string;
+
+// @public
+export function formatProxyOptions(options: ProxyOptions): string;
 
 // @public
 export class FormBodyValidationError extends DexpaceError {
@@ -97,6 +160,12 @@ export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, FormUrlEncod
 
 // @public
 export type FormUrlEncodedValue = string | number | boolean | bigint | null;
+
+// @public
+export function getBuildInfo(): BuildInfo;
+
+// @public
+export function getGlobalConfiguration(): Configuration;
 
 // @public
 export class HeaderName {
@@ -162,6 +231,9 @@ export class HttpStatusError extends DexpaceError {
 
 // @public
 export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError;
+
+// @public
+export function isRetryableStatus(code: number): boolean;
 
 // @public
 export function isTimeoutSignal(signal: AbortSignal): boolean;
@@ -242,6 +314,9 @@ export interface OperationDescriptor {
 }
 
 // @public
+export function parseHttpDate(raw: string): number | null;
+
+// @public
 export class Protocol {
     equals(other: Protocol): boolean;
     static readonly HTTP_1_1: Protocol;
@@ -253,6 +328,37 @@ export class Protocol {
 // @public
 export class ProtocolParseError extends DomainModelError {
 }
+
+// @public
+export interface ProxyCredentials {
+    readonly password: string;
+    readonly username: string;
+}
+
+// @public
+export interface ProxyOptions {
+    readonly bypassAll: boolean;
+    readonly challengeHandler?: unknown;
+    readonly credentials?: ProxyCredentials | undefined;
+    readonly host: string;
+    readonly nonProxyHosts: readonly string[];
+    readonly port: number;
+    readonly type: ProxyType;
+}
+
+// @public
+export interface ProxyOptionsInit {
+    readonly bypassAll?: boolean | undefined;
+    readonly challengeHandler?: unknown;
+    readonly credentials?: ProxyCredentials | undefined;
+    readonly host: string;
+    readonly nonProxyHosts?: readonly string[] | undefined;
+    readonly port: number;
+    readonly type: ProxyType;
+}
+
+// @public
+export type ProxyType = 'http' | 'socks4' | 'socks5';
 
 // @public
 export class QueryParams {
@@ -271,6 +377,9 @@ export class QueryParamsBuilder implements Builder<QueryParams> {
     add(name: string, value: string | null): this;
     build(): QueryParams;
 }
+
+// @public
+export function randomUuid(): string;
 
 // @public
 export type RangeKind = 'bounded' | 'suffix' | 'open';
@@ -350,6 +459,9 @@ export class RequiredFieldError extends DomainModelError {
 }
 
 // @public
+export function resolveProxyOptions(config: Configuration): ProxyOptions | null;
+
+// @public
 class Response_2 {
     get body(): ReadableStream<Uint8Array> | null;
     bytes(): Promise<Uint8Array>;
@@ -375,6 +487,18 @@ export class ResponseBuilder implements Builder<Response_2> {
     request(request: Request_2): this;
     status(status: Status): this;
 }
+
+// @public
+export const RETRYABLE_STATUSES: ReadonlySet<number>;
+
+// @public
+export function setGlobalConfiguration(config: Configuration): void;
+
+// @public
+export function shouldBypassProxy(options: Pick<ProxyOptions, 'bypassAll' | 'nonProxyHosts'>, host: string): boolean;
+
+// @public
+export type SourceFn = (key: string) => string | undefined;
 
 // @public
 export class Status {

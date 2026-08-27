@@ -29,7 +29,12 @@ export default tseslint.config(
     // these, so declare them here or `console`/`URL` trip `no-undef` — and, in
     // the conformance suite, so do the Web Streams and `AbortSignal` globals
     // that are the whole point of running it on Node.
-    files: ['eslint.config.js', 'scripts/*.mjs', 'test/node-conformance/*.mjs'],
+    files: [
+      'eslint.config.js',
+      'scripts/*.mjs',
+      'packages/*/scripts/*.mjs',
+      'test/node-conformance/*.mjs',
+    ],
     languageOptions: {sourceType: 'module', globals: globals.node},
   },
   {

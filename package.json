@@ -25,6 +25,7 @@
     "lint": "gts lint .",
     "fix": "gts fix .",
     "typecheck": "tsc -p packages/core/tsconfig.json --noEmit",
+    "prebuild": "bun run --cwd packages/core prebuild",
     "build": "tsc -p packages/core/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",

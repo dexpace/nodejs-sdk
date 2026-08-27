@@ -20,6 +20,7 @@
   "sideEffects": false,
   "dependencies": {},
   "scripts": {
+    "prebuild": "node scripts/gen-version.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
