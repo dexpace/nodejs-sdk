@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request-options.ts
+import type {AuthDescriptor} from '../auth/descriptor.js';
 import type {Builder} from './builder.js';
 import {RequestOptionsValidationError} from './errors.js';
 
+// eslint-disable-next-line max-params -- private, builder-internal plumbing; one parameter per HTTP-34 field
 let createRequestOptions: (
   timeoutMs: number | undefined,
   maxRetries: number | undefined,
   tags: ReadonlyMap<string, string>,
+  auth: AuthDescriptor | undefined,
 ) => RequestOptions;
 
 /**
  * Immutable per-call operational overrides that are deliberately *not* part of the wire form: a
- * timeout, a max-retries count, and opaque string-keyed tags (HTTP-34).
+ * timeout, a max-retries count, opaque string-keyed tags (HTTP-34), and a per-call auth descriptor
+ * (AUTH-4).
  *
- * Every field defaults to a "use the configured default" sentinel of `undefined`, and
- * {@link RequestOptions.EMPTY} is the canonical override-nothing instance.
+ * Every scalar field defaults to a "use the configured default" sentinel of `undefined`; tags default
+ * to an empty map, which means the same thing. {@link RequestOptions.EMPTY} is the canonical
+ * override-nothing instance.
  *
  * `undefined` and `0` are different states for max-retries: `undefined` means "use the default",
  * while `0` means "disable retries for this call" (HTTP-35).
@@ -25,28 +30,37 @@ export class RequestOptions {
   readonly #timeoutMs: number | undefined;
   readonly #maxRetries: number | undefined;
   readonly #tags: ReadonlyMap<string, string>;
+  readonly #auth: AuthDescriptor | undefined;
 
+  // eslint-disable-next-line max-params -- private, builder-internal; one parameter per HTTP-34 field
   private constructor(
     timeoutMs: number | undefined,
     maxRetries: number | undefined,
     tags: ReadonlyMap<string, string>,
+    auth: AuthDescriptor | undefined,
   ) {
     this.#timeoutMs = timeoutMs;
     this.#maxRetries = maxRetries;
     this.#tags = tags;
+    this.#auth = auth;
     Object.freeze(this);
   }
 
   static {
-    createRequestOptions = (timeoutMs, maxRetries, tags) =>
-      new RequestOptions(timeoutMs, maxRetries, tags);
+    // eslint-disable-next-line max-params -- private, builder-internal plumbing; one parameter per HTTP-34 field
+    createRequestOptions = (timeoutMs, maxRetries, tags, auth) =>
+      new RequestOptions(timeoutMs, maxRetries, tags, auth);
   }
 
-  /** The canonical "override nothing" instance: no timeout, no retry override, no tags. */
+  /**
+   * The canonical "override nothing" instance: no timeout, no retry override, no tags, no per-call
+   * auth descriptor.
+   */
   static readonly EMPTY = new RequestOptions(
     undefined,
     undefined,
     Object.freeze(new Map()),
+    undefined,
   );
 
   /**
@@ -68,7 +82,8 @@ export class RequestOptions {
     return new RequestOptionsBuilder()
       .timeoutMs(this.#timeoutMs)
       .maxRetries(this.#maxRetries)
-      .tags(this.#tags);
+      .tags(this.#tags)
+      .auth(this.#auth);
   }
 
   /** The per-call timeout in milliseconds, or `undefined` to use the configured default. */
@@ -93,6 +108,20 @@ export class RequestOptions {
   tag(key: string): string | undefined {
     return this.#tags.get(key);
   }
+
+  /**
+   * The per-call auth descriptor, or `undefined` to use the configured tiers.
+   *
+   * Fills AUTH-4's most-specific `perCall` tier: when present it wins over any `perCall`, `operation`,
+   * or `client` descriptor the AUTH pillar step was constructed with, and a tier below it is never
+   * consulted even if this one turns out to be unsatisfiable.
+   *
+   * Returned by reference: an {@link AuthDescriptor} is frozen at construction, so there is nothing to
+   * copy defensively.
+   */
+  get auth(): AuthDescriptor | undefined {
+    return this.#auth;
+  }
 }
 
 /**
@@ -107,6 +136,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   #timeoutMs: number | undefined;
   #maxRetries: number | undefined;
   readonly #tags = new Map<string, string>();
+  #auth: AuthDescriptor | undefined;
 
   /**
    * Sets the per-call timeout.
@@ -130,10 +160,6 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   /**
    * Sets the per-call retry ceiling.
    *
-   * @param value - the maximum retries, or `undefined` for no override. `0` is accepted and means
-   * "disable retries for this call"; anything that is not a non-negative integer is rejected rather
-   * than silently reinterpreted (HTTP-35).
-   *
    * The range check is deliberately wider than "not negative". A retry ceiling is a count of wire
    * sends, so `Infinity` and `NaN` are as out-of-range as `-1` -- and they are worse in effect: a
    * negative value at least fails a downstream lower-bound guard, while a non-finite one makes a
@@ -141,6 +167,9 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
    * HTTP-35's point is that an out-of-range retry count is a loud error at the call site that
    * supplied it, never a value reinterpreted somewhere downstream.
    *
+   * @param value - the maximum retries, or `undefined` for no override. `0` is accepted and means
+   * "disable retries for this call"; anything that is not a non-negative integer is rejected rather
+   * than silently reinterpreted (HTTP-35).
    * @returns this builder, for chaining.
    * @throws {@link RequestOptionsValidationError} when a defined value is negative, fractional, or
    * not finite.
@@ -167,6 +196,20 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   }
 
   /**
+   * Sets the per-call auth descriptor, filling AUTH-4's `perCall` tier for this call only.
+   *
+   * No validation beyond the type: {@link createAuthDescriptor} already rejects an empty requirement
+   * list and freezes the result (AUTH-3), so any constructed descriptor is valid by construction.
+   *
+   * @param descriptor - the descriptor, or `undefined` for no override.
+   * @returns this builder, for chaining.
+   */
+  auth(descriptor: AuthDescriptor | undefined): this {
+    this.#auth = descriptor;
+    return this;
+  }
+
+  /**
    * Copies and freezes the accumulated state into an immutable {@link RequestOptions}.
    *
    * Tags are defensively copied here, so later mutation of any source map a caller passed to
@@ -179,6 +222,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
       this.#timeoutMs,
       this.#maxRetries,
       Object.freeze(new Map(this.#tags)),
+      this.#auth,
     );
   }
 }

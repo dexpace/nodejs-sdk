@@ -508,6 +508,79 @@ at code that exists where they say it does.
 
 ---
 
+### G10 — Phase 5c publishes `Step`, the context family, and a PROVISIONAL `InstrumentationBundle` — **ACCEPTED RISK**
+
+5c's plan (Task 16 Step 5) lists exactly which symbols the public barrel gains. Two symbol groups had to be
+promoted that the list does not name, because promoting `StepContext` and `StepDescriptor` forces them:
+
+- **`Step`** — `StepDescriptor.fn` is typed `Step`, so the type is reachable from a promoted signature.
+- **`ExecutionContext`, `DispatchContext`, `RequestContext`, `ExchangeContext`, `InstrumentationBundle`** —
+  `StepContext.context` is typed `ExecutionContext`, which is a union ALIAS; api-extractor refuses to analyze
+  a re-exported union whose members are unexported, and a caller writing a custom step cannot type
+  `ctx.context` without them.
+
+**Narrowing `StepContext.context` was considered and rejected.** Cutting it down to `{readonly kind}` would
+avoid publishing `InstrumentationBundle` — but `CTX-1` exists precisely so a step can read the exchange's
+request and response, and every future logging and serde step needs that. Losing real capability to avoid
+publishing a provisional type is the wrong trade.
+
+**The accepted risk is `InstrumentationBundle.activeSpan` and `.tracerFactory`.** Both are typed `unknown`
+pending Phase 7a's tracing adapter. They are now documented as provisional *in the emitted `.d.ts`*, on the
+interface and on each member, so a consumer reading either is warned in the same place they read the type. A
+consumer warned in the declaration is the honest version of this tradeoff; publishing the type silently was
+not.
+
+**Trigger:** Phase 7a. When the tracing adapter lands and those two members get concrete types, that is a
+narrowing of what a caller receives and a widening of what they may pass — a `major` for anyone who read
+either field. 7a owns that decision and the changeset wording for it. Phase 10 should confirm the promotion
+as a whole was intended.
+
+### G11 — `DigestChallengeUnsupportedError` was speculative — **CLOSED: cut in Phase 5c**
+
+The design doc flagged this leaf as speculative and told the plan to cut it if no consumer materialized. None
+did: `composingHandler()` returns `undefined` for an unsatisfiable challenge and `authStep()` leaves the 401
+unchanged either way, so nothing in `packages/core` ever constructed or caught it. Its stated reason to exist
+— "for a caller driving `digestHandler()` directly" — was self-refuting, because `digestHandler` is internal
+and absent from the barrel, so no caller could drive it directly.
+
+**Cut during Phase 5c's own shape review**, before it ever shipped: the class, its tests, its barrel export,
+and the reference in `composing-handler.ts`'s doc comment are all gone. Removing an exported error class is a
+breaking change, so doing it now cost nothing and doing it after release would have cost a `major`. If Phase
+9's conformance sweep turns up a genuine need, adding it back is a `minor`.
+
+### G12 — `AUTH-37`'s failed-background-refresh logging is swallowed silently — **DEFERRED to Phase 7b**
+
+`AUTH-37` makes a failed background refresh non-fatal *and* expects it recorded. `bearer-cache.ts` swallows
+the rejection explicitly and UNCONDITIONALLY — a bare `void` would leave an unhandled rejection that
+terminates the process under Node's default policy, and the narrowed `catch` that briefly re-threw
+`InvariantViolation` did exactly that, asynchronously and unattributable to any request, for a fault in
+caller-supplied `TokenProvider` code. (That narrowing is gone; this entry described it for one revision
+longer than the code did.) The log half has nowhere to go: no `Logger` seam exists until Phase 7b.
+
+**Trigger:** Phase 7b, alongside the `loggingStep()` install into `standardResilience()`'s empty `LOGGING`
+slot and redirect's own three deferred emission sites.
+
+---
+
+### G13 — two pre-existing cleanups Phase 5c's Reader pass found and deliberately did not take — **DEFERRED**
+
+Both predate 5c, sit in files Passes 1 and 2 declared settled, and were left alone rather than widening a
+review pass into a refactor of earlier phases.
+
+1. **`hasForbiddenOutboundByte` breaks its own family's naming.** `packages/core/src/http/ascii-validation.ts`
+   exports `hasForbiddenNameByte`, `hasForbiddenInboundValueByte`, and `hasForbiddenOutboundByte` — the
+   outbound *value* predicate is the only one that omits `Value`. At `digest.ts:213` and `digest.ts:408` a
+   reader cannot tell from the call whether the name rule or the value rule is being applied, and the two
+   differ (HTAB is excepted by one and not the other). `hasForbiddenOutboundValueByte` restores the symmetry;
+   nine call sites outside the module.
+2. **`PipelineBuilder`'s duplicated bucket lookup.** `insertAfter`, `insertBefore`, and `replace` each repeat
+   the same three lines — `const bucket = this.#buckets.get(anchor.stage);` plus an `invariant` whose message
+   is identical in all three. One `#requireBucket(stage)` collapses them.
+
+**Trigger:** whichever phase next edits `ascii-validation.ts` (1) or `pipeline/builder.ts` (2).
+
+---
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a

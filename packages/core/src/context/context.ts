@@ -10,45 +10,59 @@ import {
 /**
  * Before any request (CTX-1). No `operationName` — CTX-16 introduces it at the request stage.
  *
- * @internal
+ * @public
  */
 export interface DispatchContext {
+  /** The discriminant. Branch on it to tell which promotion stage a step is observing. */
   readonly kind: 'dispatch';
+  /** This call's identity, unique per `Runtime.send()` and stable across every promotion (CTX-4/CTX-6). */
   readonly key: symbol;
+  /** Correlation and tracing for this call, shared by reference across every promotion (CTX-2/CTX-3). */
   readonly instrumentation: InstrumentationBundle;
 }
 
 /**
  * An outgoing request assembled (CTX-1).
  *
- * @internal
+ * @public
  */
 export interface RequestContext {
+  /** The discriminant. Branch on it to tell which promotion stage a step is observing. */
   readonly kind: 'request';
+  /** This call's identity, carried unchanged from the dispatch stage (CTX-4/CTX-6). */
   readonly key: symbol;
+  /** Correlation and tracing for this call, carried by reference from the dispatch stage (CTX-2/CTX-3). */
   readonly instrumentation: InstrumentationBundle;
+  /** The operation this call belongs to, or `undefined` when the caller named none (CTX-16). */
   readonly operationName: string | undefined;
+  /** The assembled outbound request. Immutable; a step substitutes by passing a new one to `ctx.next`. */
   readonly request: Request;
 }
 
 /**
  * A response arrived; terminal — no further promotion exists (CTX-1).
  *
- * @internal
+ * @public
  */
 export interface ExchangeContext {
+  /** The discriminant. Branch on it to tell which promotion stage a step is observing. */
   readonly kind: 'exchange';
+  /** This call's identity, carried unchanged from the dispatch stage (CTX-4/CTX-6). */
   readonly key: symbol;
+  /** Correlation and tracing for this call, carried by reference from the dispatch stage (CTX-2/CTX-3). */
   readonly instrumentation: InstrumentationBundle;
+  /** The operation this call belongs to, or `undefined` when the caller named none (CTX-16). */
   readonly operationName: string | undefined;
+  /** The request that actually went on the wire — the substituted one, if a step replaced it (CTX-1). */
   readonly request: Request;
+  /** The response that arrived. OPEN: whoever owns the drive owns closing its body. */
   readonly response: Response;
 }
 
 /**
  * The three promotion-chain stages as one discriminated union, branched on `kind`.
  *
- * @internal
+ * @public
  */
 export type ExecutionContext =
   DispatchContext | RequestContext | ExchangeContext;

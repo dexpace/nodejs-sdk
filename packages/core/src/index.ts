@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/index.ts
 /**
- * The immutable, transport-agnostic HTTP domain model at the heart of `@dexpace/core`.
+ * The transport-agnostic HTTP core of `@dexpace/core`: an immutable domain model, and the pipeline
+ * that drives it.
  *
- * Every type here is frozen at construction and built through a builder or a static factory, so
- * case-insensitivity, multi-value semantics, ordering, header-injection defenses, method/body
- * legality, and total status handling are fixed once and behave identically under every transport.
+ * Every DOMAIN MODEL type — requests, responses, headers, bodies, status — is frozen at construction
+ * and reachable only through a builder or a static factory, so case-insensitivity, multi-value
+ * semantics, ordering, header-injection defenses, method/body legality, and total status handling are
+ * fixed once and behave identically under every transport.
+ *
+ * The PIPELINE surface promoted in Phase 5c is deliberately not held to that rule. `PipelineBuilder`
+ * is mutable by design and freezes only at `build()`; `Stage`, `Step`, `Next`, `StepContext`, and the
+ * settings records are plain types a caller writes literals for; `authStep`, `retryStep`,
+ * `redirectStep`, and `standardResilience` are factories returning descriptors and runtimes.
  *
  * The package has zero runtime dependencies.
  *
@@ -59,3 +66,87 @@ export {
 } from './body/simple-bodies.js';
 export {streamBody, type StreamBody} from './body/stream-body.js';
 export {TypedResponse} from './body/typed-response.js';
+
+// ---------------------------------------------------------------------------------------------
+// The pillar-authoring surface, promoted in Phase 5c.
+//
+// 5c is the first point a caller can assemble a genuinely working pipeline -- all three resilience
+// pillars plus the preset now exist. Promoting any earlier would have frozen shapes 5c still had
+// latitude to reshape, which is why every prior phase deliberately exported nothing from here.
+// ---------------------------------------------------------------------------------------------
+
+// Group 1: the authoring surface itself.
+export type {Stage} from './pipeline/stage.js';
+export {PILLAR_STAGES, STAGE_ORDER} from './pipeline/stage.js';
+export type {Next, Step, StepContext, StepDescriptor} from './pipeline/step.js';
+export {PipelineBuilder} from './pipeline/builder.js';
+export {Runtime} from './pipeline/runtime.js';
+export {retryStep} from './retry/retry-step.js';
+export {redirectStep} from './redirect/redirect-step.js';
+export {authStep} from './auth/auth-step.js';
+export {standardResilience} from './auth/preset.js';
+
+// Group 2: everything Group 1's signatures name. A promoted function whose parameter type is
+// internal-only is an API a caller cannot call, and api-extractor reports each omission as
+// `ae-forgotten-export`.
+//
+// The word "internal-only" above is deliberate and must not be spelled as the TSDoc tag: gts turns
+// `stripInternal` on, and TypeScript tests the WHOLE leading comment range of a declaration for that
+// tag as a substring -- so writing it in prose here silently deletes the export below from the
+// emitted `.d.ts`. It did, for one commit. `api-extractor.json` now fails `api:ci` on the resulting
+// `ae-forgotten-export`, and `verify:consumer-types` compiles these four names from the built
+// package, so the same slip cannot ship twice.
+// The whole context family, not just `ExecutionContext`: it is a union alias, and `StepContext.context`
+// makes every member reachable from a promoted signature. A caller writing a custom step reads
+// `ctx.context.kind` to tell which promotion stage it is in.
+export type {
+  DispatchContext,
+  ExchangeContext,
+  ExecutionContext,
+  RequestContext,
+} from './context/context.js';
+export type {InstrumentationBundle} from './context/instrumentation.js';
+export type {Clock} from './config/clock.js';
+export type {BackoffSettings} from './retry/backoff.js';
+export type {RetrySettings} from './retry/settings.js';
+export type {RetryStepOptions} from './retry/retry-step.js';
+export type {
+  RedirectCondition,
+  RedirectPredicate,
+  RedirectSettings,
+} from './redirect/settings.js';
+export type {StandardResilienceOptions} from './auth/preset.js';
+export type {
+  ApiKeyCredentialConfig,
+  AuthCredentialSet,
+  AuthStepSettings,
+  BasicCredential,
+  BearerCredential,
+  ChallengeHook,
+  DigestCredential,
+} from './auth/auth-step.js';
+export type {AuthTiers} from './auth/resolve.js';
+export type {AuthScheme} from './auth/scheme.js';
+export type {DigestAlgorithm} from './auth/digest.js';
+
+// Factories, not bare interfaces: AUTH-3 validates and freezes inside `createAuthDescriptor`, and
+// `ApiKeyCredential`/`NameKeyCredential`/`BearerToken` are NOMINAL -- they carry a `#` field, so no
+// caller-side object literal is assignable and the AUTH-9 validation in each factory cannot be routed
+// around. Without these, API_KEY and OAUTH2 auth are unreachable from outside the package.
+// `BearerToken` is a VALUE export, not a type-only one: it is a class, and `TokenProvider` returns it.
+export type {AuthDescriptor} from './auth/descriptor.js';
+export {createAuthDescriptor} from './auth/descriptor.js';
+export type {AuthRequirement} from './auth/requirement.js';
+export {
+  authRequirementsEqual,
+  createAuthRequirement,
+} from './auth/requirement.js';
+export type {TokenProvider} from './auth/credential.js';
+export {
+  ApiKeyCredential,
+  BearerToken,
+  NameKeyCredential,
+  bearerTokensEqual,
+  createBearerToken,
+} from './auth/credential.js';
+export {AuthResolutionError, PlaintextCredentialError} from './auth/errors.js';

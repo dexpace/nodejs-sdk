@@ -8,7 +8,7 @@ import {
   PillarCollisionError,
   ReservedStageError,
 } from './errors.js';
-import {Runtime} from './runtime.js';
+import {createRuntime, type Runtime} from './runtime.js';
 import {PILLAR_STAGES, STAGE_ORDER, type Stage} from './stage.js';
 import type {StepDescriptor} from './step.js';
 
@@ -21,7 +21,7 @@ interface AnchorLocation {
  * Assembles a stage-based pipeline via surgical edits (PIPE-7, PIPE-18..PIPE-24), flattening into an
  * immutable Runtime at build() time (PIPE-25). Mutable while being built; the produced Runtime is frozen.
  *
- * @internal
+ * @public
  */
 export class PipelineBuilder {
   readonly #buckets = new Map<Stage, StepDescriptor[]>();
@@ -174,30 +174,72 @@ export class PipelineBuilder {
   reload(descriptors: readonly StepDescriptor[]): this {
     const admitted: StepDescriptor[] = [];
     const pillarTypes = new Map<Stage, symbol>();
-    for (const desc of descriptors) {
-      this.#rejectReservedStage(desc.stage, 'reload');
-      if (!PILLAR_STAGES.has(desc.stage)) {
-        admitted.push(desc);
+    for (const descriptor of descriptors) {
+      this.#rejectReservedStage(descriptor.stage, 'reload');
+      if (!PILLAR_STAGES.has(descriptor.stage)) {
+        admitted.push(descriptor);
         continue;
       }
-      const seenType = pillarTypes.get(desc.stage);
-      if (seenType === desc.type) continue; // PIPE-6: a repeat of the SAME type is idempotent, not a second step.
+      const seenType = pillarTypes.get(descriptor.stage);
+      // PIPE-6: a repeat of the SAME type is idempotent, not a second step.
+      if (seenType === descriptor.type) continue;
       if (seenType !== undefined) {
-        throw new PillarCollisionError(desc.stage, seenType, desc.type); // PIPE-5
+        throw new PillarCollisionError(
+          descriptor.stage,
+          seenType,
+          descriptor.type,
+        ); // PIPE-5
       }
-      pillarTypes.set(desc.stage, desc.type);
-      admitted.push(desc);
+      pillarTypes.set(descriptor.stage, descriptor.type);
+      admitted.push(descriptor);
     }
     // PIPE-4: `admitted` holds at most one entry per pillar stage by construction -- a same-type repeat was
     // skipped above rather than pushed, so a batch cannot install two steps onto one pillar the way the
     // incremental `append` path already refuses to.
     this.#buckets.clear();
-    for (const desc of admitted) {
-      const bucket = this.#buckets.get(desc.stage);
-      if (bucket === undefined) this.#buckets.set(desc.stage, [desc]);
-      else bucket.push(desc);
+    for (const descriptor of admitted) {
+      const bucket = this.#buckets.get(descriptor.stage);
+      if (bucket === undefined)
+        this.#buckets.set(descriptor.stage, [descriptor]);
+      else bucket.push(descriptor);
     }
     return this;
+  }
+
+  /**
+   * PIPE-35: derives a builder from an already-built `runtime`, under an explicit, non-defaulted
+   * `mode` — the requirement's own MUST is that the flatten-vs-nest choice be explicit, never
+   * accidental, so there is deliberately no default value.
+   *
+   * `flatten` re-buckets every seeded descriptor by its own stage and reuses `runtime`'s transport as
+   * the new builder's terminal, so seeded and newly-appended steps run in the SAME cursor pass.
+   * Pillar-collision rules apply exactly as they would to any other `append` sequence, because
+   * flatten IS an append sequence.
+   *
+   * Seeding re-seats the SAME descriptor objects, never copies: a `StepDescriptor` is a plain record
+   * around a closure, so any state that closure captured is now shared between `runtime` and the
+   * builder derived from it. `authStep`'s `BearerTokenCache` is the live example — a flattened
+   * builder shares one token cache, and therefore one single-flight slot, with the runtime it was
+   * seeded from. That is usually what a caller wants (AUTH-34's coalescing only works when concurrent
+   * calls meet at one instance), but it is sharing, not isolation; a caller who needs an independent
+   * cache constructs a fresh `authStep`.
+   *
+   * `nest` constructs a fresh builder whose transport IS `runtime`, treated as an opaque `Transport`
+   * — `Runtime implements Transport` (PIPE-26) makes this work with zero adapter code — so the new
+   * builder's own steps run once, outside `runtime`'s already-flattened loops.
+   *
+   * @param runtime - the built pipeline to seed from.
+   * @param mode - `'flatten'` to merge its steps into this builder's stages, `'nest'` to wrap it as
+   *   this builder's transport.
+   * @returns a fresh builder seeded per `mode`.
+   * @throws PillarCollisionError in `'flatten'` mode when two seeded descriptors of different types
+   *   claim one pillar stage (PIPE-5) — the same rule `append` enforces.
+   */
+  static seedFrom(runtime: Runtime, mode: 'flatten' | 'nest'): PipelineBuilder {
+    if (mode === 'flatten') {
+      return new PipelineBuilder(runtime.transport).appendAll(runtime.steps);
+    }
+    return new PipelineBuilder(runtime);
   }
 
   /** PIPE-25: flattens stage buckets in declaration order, skipping SEND, into an immutable Runtime. */
@@ -208,7 +250,7 @@ export class PipelineBuilder {
       const bucket = this.#buckets.get(stage);
       if (bucket !== undefined) flattened.push(...bucket);
     }
-    return new Runtime(flattened, this.#transport); // Runtime copies and freezes -- PIPE-10/PIPE-25.
+    return createRuntime(flattened, this.#transport); // Runtime copies and freezes -- PIPE-10/PIPE-25.
   }
 
   #rejectReservedStage(stage: Stage, operation: string): void {

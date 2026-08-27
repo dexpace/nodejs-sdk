@@ -22,7 +22,7 @@ import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
 import {invariant} from '../invariant.js';
 import type {Transport} from '../seams/transport.js';
-import {exchangeSource, Runtime} from './runtime.js';
+import {createRuntime, exchangeSource} from './runtime.js';
 import type {Step, StepDescriptor} from './step.js';
 
 function aRequest(url: string): Request {
@@ -73,7 +73,7 @@ describe('Runtime.send empty pipeline (PIPE-9)', () => {
   test('dispatches directly to the terminal transport, threading options and signal, no context installed', async () => {
     const canned = aResponse(200);
     const transport = new RecordingTransport(canned);
-    const runtime = new Runtime([], transport);
+    const runtime = createRuntime([], transport);
     const request = aRequest('https://example.com/a');
     const signal = new AbortController().signal;
     const sizeBefore = contextStore.size;
@@ -100,7 +100,7 @@ describe('Runtime.send context-store wiring (CTX-17, CTX-8)', () => {
       stage: 'PRE_LOGGING',
       fn: step,
     };
-    const runtime = new Runtime(
+    const runtime = createRuntime(
       [descriptor],
       new RecordingTransport(aResponse(200)),
     );
@@ -129,7 +129,7 @@ describe('Runtime.send context-store wiring (CTX-17, CTX-8)', () => {
       stage: 'PRE_LOGGING',
       fn: step,
     };
-    const runtime = new Runtime(
+    const runtime = createRuntime(
       [descriptor],
       new RecordingTransport(aResponse(200)),
     );
@@ -188,7 +188,7 @@ describe('Runtime.send request substitution reaches the wire (PIPE-14)', () => {
     };
     const transport = new RecordingTransport(aResponse(200));
 
-    await new Runtime([descriptor], transport).send(original);
+    await createRuntime([descriptor], transport).send(original);
 
     expect(transport.calls[0]?.request).toBe(substituted);
   });
@@ -206,7 +206,7 @@ describe('Runtime concurrency (PIPE-10, PIPE-11)', () => {
       stage: 'PRE_LOGGING',
       fn: rewrite,
     };
-    const runtime = new Runtime([descriptor], transport);
+    const runtime = createRuntime([descriptor], transport);
 
     await Promise.all([
       runtime.send(aRequest('https://example.com/a/')),
@@ -229,7 +229,7 @@ describe('Runtime.steps (PIPE-25)', () => {
       stage: 'PRE_LOGGING',
       fn: async (_r, ctx) => ctx.next(),
     };
-    const runtime = new Runtime(
+    const runtime = createRuntime(
       [descriptor],
       new RecordingTransport(aResponse(200)),
     );
@@ -238,7 +238,7 @@ describe('Runtime.steps (PIPE-25)', () => {
   });
 
   test('the exposed view is frozen', () => {
-    const runtime = new Runtime([], new RecordingTransport(aResponse(200)));
+    const runtime = createRuntime([], new RecordingTransport(aResponse(200)));
 
     expect(Object.isFrozen(runtime.steps)).toBe(true);
   });
@@ -250,7 +250,10 @@ describe('Runtime.steps (PIPE-25)', () => {
       fn: async (_r, ctx) => ctx.next(),
     };
     const source: StepDescriptor[] = [descriptor];
-    const runtime = new Runtime(source, new RecordingTransport(aResponse(200)));
+    const runtime = createRuntime(
+      source,
+      new RecordingTransport(aResponse(200)),
+    );
 
     source.push({...descriptor, type: Symbol('smuggled')});
 
@@ -271,11 +274,11 @@ describe('Runtime as a nested transport (PIPE-26)', () => {
         log.push(`exit:${label}`);
         return response;
       };
-    const inner = new Runtime(
+    const inner = createRuntime(
       [{type: Symbol('inner'), stage: 'PRE_SERDE', fn: probe('inner')}],
       transport,
     );
-    const outer = new Runtime(
+    const outer = createRuntime(
       [{type: Symbol('outer'), stage: 'PRE_REDIRECT', fn: probe('outer')}],
       inner,
     );
@@ -300,7 +303,7 @@ describe('Runtime as a nested transport (PIPE-26)', () => {
 describe('Runtime.close (PIPE-27)', () => {
   test('never calls the underlying transport close', async () => {
     const transport = new RecordingTransport(aResponse(200));
-    const runtime = new Runtime([], transport);
+    const runtime = createRuntime([], transport);
 
     await runtime.close();
 

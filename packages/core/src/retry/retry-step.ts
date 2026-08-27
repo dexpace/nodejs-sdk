@@ -16,12 +16,36 @@ export const RETRY_STEP_TYPE: unique symbol = Symbol('dexpace.retry');
  * reach `RetryConfig`, and a no-argument `retryStep()` must stay the default-tuned pillar step
  * (RETRY-12).
  *
- * @internal
+ * @public
  */
 export interface RetryStepOptions {
+  /**
+   * Policy overrides. Any omitted field takes its spec default (RETRY-12).
+   *
+   * @defaultValue the spec defaults `retrySettings()` supplies
+   */
   readonly settings?: Partial<RetrySettings> | undefined;
+  /**
+   * The wall-clock and sleep seam, injected so backoff is testable without real time. The same
+   * instance also satisfies `AuthStepSettings.clock`, so one `Clock` drives every pillar in a
+   * pipeline (CFG-15..CFG-18).
+   *
+   * @defaultValue a `Clock` over `Date.now`, `performance.now`, and a cancellable `setTimeout`
+   */
   readonly clock?: Clock | undefined;
+  /**
+   * The randomness seam jitter draws from, in `[0, 1)`. Injected so a jittered schedule is
+   * assertable (RETRY-10).
+   *
+   * @defaultValue `Math.random`
+   */
   readonly random?: (() => number) | undefined;
+  /**
+   * RETRY-39's caller override: returns the delay in milliseconds to use for `attempt`, or
+   * `undefined` to fall through to the configured schedule for that attempt.
+   *
+   * @defaultValue absent, so every attempt uses the configured schedule
+   */
   readonly delayOverride?:
     ((attempt: number) => number | undefined) | undefined;
 }
@@ -87,7 +111,7 @@ function configFrom(
  * @param options - settings overrides and the injected clock, randomness, and delay override.
  * @returns the descriptor to install in a pipeline's RETRY slot.
  *
- * @internal
+ * @public
  */
 export function retryStep(options: RetryStepOptions = {}): StepDescriptor {
   // Built ONCE per installed step, not per request: `retrySettings()` validates every field and

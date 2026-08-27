@@ -7,7 +7,7 @@
  * (CFG-15/17 vs. 18) -- Node has no carrier threads to distinguish "block this one" from "schedule
  * that one" against, and every timer is already non-blocking.
  *
- * @internal
+ * @public
  */
 export interface Clock {
   /** Wall-clock epoch milliseconds. MAY move backwards; MUST NOT be used for elapsed-time math (CFG-16). */
