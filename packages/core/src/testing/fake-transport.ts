@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/testing/fake-transport.ts
+import {Headers} from '../http/headers.js';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import type {RequestOptions} from '../http/request-options.js';
@@ -57,6 +58,16 @@ export class FakeTransport implements Transport {
     return this.#calls.length;
   }
 
+  /** Options passed to each send, in order (PAGE-36). */
+  get sentOptions(): readonly (RequestOptions | undefined)[] {
+    return this.#calls.map(c => c.options);
+  }
+
+  /** Abort signals passed to each send, in order (PAGE-25). */
+  get sentSignals(): readonly (AbortSignal | undefined)[] {
+    return this.#calls.map(c => c.signal);
+  }
+
   /**
    * Records the send and serves the scripted entry at this position.
    *
@@ -87,6 +98,14 @@ export class FakeTransport implements Transport {
   }
 }
 
+export interface CountingResponseInit {
+  readonly status?: number;
+  readonly headers?: Record<string, string>;
+  readonly body?: string;
+  readonly request?: Request;
+  readonly onCancel?: () => void;
+}
+
 /**
  * Builds a `Response` whose close can be OBSERVED.
  *
@@ -107,35 +126,81 @@ export class FakeTransport implements Transport {
  * `ReadableStream` that enqueues and never closes leaves `toHttpError()`'s drain awaiting a chunk
  * that never arrives, and every engine test that discards a 503 hangs until the runner's timeout.
  *
- * @param status - the status code the response carries.
- * @param request - the originating request; defaults to a bare GET.
- * @returns the response and a counter reporting how many times its body was released.
- *
  * @internal
  */
 export function countingResponse(
   status: number,
-  request: Request = Request.newBuilder().url('https://example.com').build(),
-): {response: Response; cancelCount: () => number} {
-  let releases = 0;
+  request?: Request,
+): {response: Response; cancelCount: () => number};
+export function countingResponse(init: CountingResponseInit): Response;
+export function countingResponse(
+  statusOrInit: number | CountingResponseInit,
+  requestParam?: Request,
+): Response | {response: Response; cancelCount: () => number} {
+  if (typeof statusOrInit === 'number') {
+    let releases = 0;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1]));
+      },
+      pull(controller) {
+        // Reached only once the single chunk has been read (default highWaterMark 1), i.e. a full drain.
+        releases += 1;
+        controller.close();
+      },
+      cancel() {
+        releases += 1;
+      },
+    });
+    const response = Response.newBuilder()
+      .request(
+        requestParam ?? Request.newBuilder().url('https://example.com').build(),
+      )
+      .protocol(Protocol.HTTP_1_1)
+      .status(Status.of(statusOrInit))
+      .body(body)
+      .build();
+    return {response, cancelCount: () => releases};
+  }
+
+  const {
+    status = 200,
+    headers: headersRecord,
+    body: bodyString = '{}',
+    request = Request.newBuilder().url('https://example.com').build(),
+    onCancel,
+  } = statusOrInit;
+
+  const headerBuilder = Headers.newBuilder();
+  if (headersRecord) {
+    for (const [key, value] of Object.entries(headersRecord)) {
+      headerBuilder.set(key, value);
+    }
+  }
+
+  const encoded = new TextEncoder().encode(bodyString);
+  let served = false;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(Uint8Array.from([1]));
+      controller.enqueue(encoded);
     },
     pull(controller) {
-      // Reached only once the single chunk has been read (default highWaterMark 1), i.e. a full drain.
-      releases += 1;
-      controller.close();
+      if (!served) {
+        served = true;
+      } else {
+        controller.close();
+      }
     },
     cancel() {
-      releases += 1;
+      onCancel?.();
     },
   });
-  const response = Response.newBuilder()
+
+  return Response.newBuilder()
     .request(request)
     .protocol(Protocol.HTTP_1_1)
     .status(Status.of(status))
+    .headers(headerBuilder.build())
     .body(body)
     .build();
-  return {response, cancelCount: () => releases};
 }

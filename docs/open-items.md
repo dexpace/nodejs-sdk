@@ -1049,6 +1049,63 @@ value equality (`hashCode`); value equality is provided via `sseEventsEqual()` (
 
 ---
 
+## Section J — Phase 6c (Pagination)
+
+Recorded at implementation and review time. Everything here is either an intentional design clarification, a requirement clause satisfied with documented deviation/erratum, or an accepted runtime consideration.
+
+### J1 — `PAGE-11` close-before-yield precedence over §7.1 illustrative snippet — **RESOLVED WITH ERRATUM**
+
+`sdk-design-nodejs/07-pagination-sse-and-serialization.md` §7.1 shows an illustrative generator snippet with `try { yield* page.items } finally { await page.close() }`.
+`PAGE-11` (MUST) mandates closing *before* yielding any items on the page (`const items = page.items; await page.close(); yield* items;`). Materialized items survive close (`PAGE-2`), so closing before yielding releases the underlying response immediately and ensures an abandoned item iteration cannot strand an open response connection.
+An erratum callout was added to `07-pagination-sse-and-serialization.md` §7.1 and documented in the Deferred Items Log.
+
+**Trigger:** none.
+
+### J2 — `PAGE-5` / `PAGE-29` asynchronous `PaginationStrategy.parse` signature — **RESOLVED WITH SPEC CLARIFICATION**
+
+`PAGE-5` describes `parse` as reading what it needs "synchronously inside parse". In Node.js / Web Standards HTTP domain models, response bodies arrive as asynchronous streams (`ReadableStream<Uint8Array>`), making synchronous stream consumption impossible without prior full buffering.
+`PaginationStrategy.parse` returns `Promise<PageInfo<T>>`, fulfilling all intended semantics of `PAGE-5` and `PAGE-29` (isolated, non-mutating parse) while maintaining compatibility with async body decoders.
+
+**Trigger:** none.
+
+### J3 — `Page<T>` implements `AsyncDisposable` with `Symbol.asyncDispose` — **RESOLVED**
+
+`Page<T>` implements `AsyncDisposable` unconditionally (`[Symbol.asyncDispose](): Promise<void>`), delegating to `close()`. Consumers utilizing Explicit Resource Management (`await using`) against `Page` must include `"ESNext.Disposable"` in their compiler `lib`.
+
+**Trigger:** none.
+
+### J4 — WHATWG encode-set boundary & verbatim query splice (PAGE-21, PAGE-22) — **RESOLVED BY DESIGN**
+
+`URLSearchParams` re-serializes full query strings, reorders parameters, and encodes space as `+` rather than RFC 3986 `%20`. `query-splice.ts` implements hand-rolled tokenization operating directly on the raw query substring, preserving untargeted parameters byte-for-byte.
+
+**Trigger:** none.
+
+### J5 — Transport-direct pagination without internal resilience loop — **RESOLVED BY DESIGN**
+
+`Paginator` operates directly over `Transport` and `Request`. Resilience (retry, redirect, auth) is composed externally at the pipeline / `Runtime` layer (`PIPE-9`), keeping the pagination engine modular and transport-agnostic (§12).
+
+**Trigger:** none.
+
+### J6 — `items()` vs `pages()` single-use asymmetry (PAGE-8, PAGE-14) — **RESOLVED BY DESIGN**
+
+`Paginator.items()` allows multiple independent iterations because each iteration starts a fresh walk and closes each page before yielding. `Paginator.pages()` is single-use because yielded `Page` objects hold live connection ownership, where re-iteration would cause double-consumption of unclosed resources.
+
+**Trigger:** none.
+
+### J7 — Iterative generator drive without trampoline (PAGE-31) — **RESOLVED BY DESIGN**
+
+`PAGE-31` sanctions native loop models without recursion. `Paginator.#walk` and `driveFetchers` are implemented as `async function*` generator loops, guaranteeing constant stack space across thousands of pages without explicit trampoline structures.
+
+**Trigger:** none.
+
+### J8 — Error unwrapping and root cause propagation (PAGE-28) — **RESOLVED BY DESIGN**
+
+`PaginationError` is reserved strictly for engine misuse and precondition violations (`maxPages <= 0`, single-use iterator re-use). Transport, parse, and network failures propagate unwrapped with original causes preserved.
+
+**Trigger:** none.
+
+---
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a

@@ -81,7 +81,7 @@
   <sub>design · `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md:7-10` · high · sha:d546f9973c4e</sub>
 - Close-on-abandon for pagination relies on JavaScript's iterator protocol automatically calling `.return()` on an async iterator when a `for await...of` loop exits early via break, return, or exception, resuming execution at the enclosing `finally` block, unlike Kotlin's `Iterator`/`Sequence` protocol which has no built-in early-termination cleanup hook and requires a bespoke `CloseablePages` wrapper.
   <sub>design · `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md:12-19` · high · sha:d546f9973c4e</sub>
-- The page-level view's two-outstanding-pages buffering requirement is implemented as a one-slot look-ahead buffer held in the generator's own closure, released via the same `finally` mechanism.
+- The page-level view holds the currently delivered page in the generator's `held` binding, releasing it upon advancing before dispatching the next request and releasing the last held page at exhaustion or early termination via the enclosing `finally` block.
   <sub>design · `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md:32-34` · high · sha:d546f9973c4e</sub>
 - The port rejects `URLSearchParams` for verbatim query-parameter splicing because it re-serializes the entire query string through its own canonical encoding on every mutation, reordering and re-encoding untouched parameters and encoding space as `+` rather than the RFC 3986 `%20` the port's query model otherwise standardizes on.
   <sub>design · `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md:36-41` · high · sha:d546f9973c4e</sub>

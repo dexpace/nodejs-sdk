@@ -174,6 +174,15 @@ export function createAuthRequirement(scheme: AuthScheme, scopes?: readonly stri
 export function createBearerToken(token: string, expiresAt?: number): BearerToken;
 
 // @public
+export function cursorStrategy<T>(init: {
+    extract: (response: Response_2) => Promise<{
+        items: readonly T[];
+        cursor?: string | null | undefined;
+    }>;
+    parameterName?: string | undefined;
+}): PaginationStrategy<T>;
+
+// @public
 export function decodeResponse<T>(response: Response_2, deserializer: Deserializer, target: DecodeTarget<T>): Promise<T>;
 
 // @public
@@ -258,6 +267,20 @@ export interface ExchangeContext {
 
 // @public
 export type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
+
+// @public
+export interface FetcherPage<T> {
+    readonly continuationToken?: string | undefined;
+    readonly nextLink?: string | undefined;
+    readonly page: Page<T>;
+}
+
+// @public
+export interface FetcherPaginationInit<T> {
+    first: (options: PagingOptions) => Promise<FetcherPage<T> | undefined>;
+    maxPages?: number | undefined;
+    next: (key: string, options: PagingOptions) => Promise<FetcherPage<T> | undefined>;
+}
 
 // @public
 export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R;
@@ -398,6 +421,12 @@ export function isTimeoutSignal(signal: AbortSignal): boolean;
 export function isTristate(value: unknown): value is Tristate<unknown>;
 
 // @public
+export function linkHeaderStrategy<T>(init: {
+    extract: (response: Response_2) => Promise<readonly T[]>;
+    headerName?: string | undefined;
+}): PaginationStrategy<T>;
+
+// @public
 export function makeSseEvent(fields: SseEventFields): SseEvent;
 
 // @public
@@ -509,6 +538,70 @@ export interface OperationDescriptor {
     readonly pathParams?: Readonly<Record<string, string>> | undefined;
     readonly pathTemplate: string;
     readonly query?: QueryParams | undefined;
+}
+
+// @public
+export class Page<T> implements AsyncDisposable {
+    [Symbol.asyncDispose](): Promise<void>;
+    constructor(response: Response_2, items: readonly T[]);
+    close(): Promise<void>;
+    readonly headers: Headers_2;
+    readonly items: readonly T[];
+    readonly request: Request_2;
+    readonly status: Status;
+}
+
+// @public
+export interface PageInfo<T> {
+    readonly items: readonly T[];
+    readonly nextRequest: Request_2 | undefined;
+}
+
+// @public
+export function pageInfo<T>(items: readonly T[], nextRequest?: Request_2): PageInfo<T>;
+
+// @public
+export function pageNumberStrategy<T>(init: {
+    extract: (response: Response_2) => Promise<readonly T[]>;
+    parameterName?: string | undefined;
+    startPage?: number | undefined;
+}): PaginationStrategy<T>;
+
+// @public
+export function paginateWithFetchers<T>(init: FetcherPaginationInit<T>): AsyncIterable<Page<T>>;
+
+// @public
+export class PaginationError extends DexpaceError {
+    constructor(message: string, options?: ErrorOptions);
+}
+
+// @public
+export interface PaginationStrategy<T> {
+    parse(response: Response_2, template: Request_2): Promise<PageInfo<T>>;
+}
+
+// @public
+export class Paginator<T> {
+    constructor(init: PaginatorInit<T>);
+    items(): AsyncIterable<T>;
+    pages(): AsyncIterable<Page<T>>;
+}
+
+// @public
+export interface PaginatorInit<T> {
+    readonly initialRequest: Request_2;
+    readonly maxPages?: number | undefined;
+    readonly options?: RequestOptions | undefined;
+    readonly signal?: AbortSignal | undefined;
+    readonly strategy: PaginationStrategy<T>;
+    readonly transport: Transport;
+}
+
+// @public
+export interface PagingOptions {
+    [key: string]: unknown;
+    continuationToken?: string | undefined;
+    nextLink?: string | undefined;
 }
 
 // @public
