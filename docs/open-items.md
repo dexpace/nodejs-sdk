@@ -988,6 +988,34 @@ Verified by deleting every `dist/` and `.tsbuildinfo` and running both CI jobs i
 
 ---
 
+### H19 — `fast-uri` pinned by a root `overrides` entry; two dev-only advisories left open — **PARTLY RESOLVED**
+
+`bun run audit` (`--audit-level=high --prod`) failed in CI on `GHSA-7p8r-x3mc-p8w7`: `fast-uri <3.1.5`
+mistakes a backslash for an authority introducer, so a crafted URI resolves to an unintended host. It reaches
+this tree only through dev tooling — `eslint -> @eslint/eslintrc -> ajv -> fast-uri`, and
+`@microsoft/api-extractor`.
+
+**Why the branch surfaced it and `main` does not.** The package is in `main`'s lockfile too, so the exposure
+predates this work. What changed is the *path*: Phase 6a gives `packages/codec-json` its own
+`devDependencies`, and the pinned CI Bun (`.bun-version` 1.3.14) does not apply `--prod` to a **workspace
+member's** dev dependencies the way it does to the root's. Local Bun 1.4.0 reports "checked 0 packages" for
+the same command. So the gate's behaviour depends on the Bun version, and the version that is pinned is the
+stricter one.
+
+Fixed by a root `overrides: {"fast-uri": "^3.1.5"}`, which resolves to 3.1.6 — a patch release inside the
+range every consumer of it already accepts. Pinned rather than suppressed: there was nothing to weigh.
+
+**Still open, deliberately:** `bun audit --audit-level=high` (without `--prod`) reports two more high
+advisories, both dev-only and both present on `main` — `js-yaml` via `@changesets/cli`
+(GHSA-5p4m-2wfm-xmqj) and `tmp` via `gts -> inquirer -> external-editor` (GHSA-ph9p-34f9-6g65). Neither fails
+the gate today, because both reach the tree only through **root** dev dependencies, which 1.3.14 does filter.
+They are left alone as out of scope for a serde phase — but the filtering asymmetry above is what stands
+between them and a red CI run, so they should be pinned the same way rather than waited on.
+
+**Trigger:** the next phase that touches root tooling, or the first CI run that reports either of them.
+
+---
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a
