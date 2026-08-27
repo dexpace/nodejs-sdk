@@ -858,7 +858,8 @@ maintain it; out of scope for a review pass because it is Phase 2 surface.
 ### H13 — `test:scripts` runs in no CI job — **OPEN**
 
 `scripts/*.test.mjs` runs only under `bun run test:scripts`, and `.github/workflows/ci.yml` has no step that
-invokes it. As of 6a that glob covers `scripts/knowledge.test.mjs` and the new `scripts/verify-seam-1.test.mjs`.
+invokes it. As of 6b that glob covers `scripts/knowledge.test.mjs`, `scripts/verify-seam-1.test.mjs`, and
+`scripts/verify-sse-37.test.mjs`.
 
 The script was named `test:knowledge` until the Phase 6a reader pass renamed it: the glob had outgrown the
 name the moment `verify-seam-1.test.mjs` landed, and both places that cite it had to explain the mismatch in
@@ -1013,6 +1014,38 @@ They are left alone as out of scope for a serde phase — but the filtering asym
 between them and a red CI run, so they should be pinned the same way rather than waited on.
 
 **Trigger:** the next phase that touches root tooling, or the first CI run that reports either of them.
+
+---
+
+## Section I — Phase 6b (Server-Sent Events)
+
+### I1 — `SSE-41` reactive adapter deferred to Phase 8b (`@dexpace/rx`) — **SCHEDULED** (Phase 8b)
+
+`SSE-41` (MAY) describes a backpressure-honoring `Observable` view over an SSE stream. Phase 6b ships the
+pull-based `AsyncGenerator` surface `SSE-39` mandates; the reactive view is a bridge package, and the roadmap
+scopes `§18`'s async-runtime adapters to Phase 8b specifically (`@dexpace/rx`).
+
+### I2 — Hand-rolled `SseLineReader` vs `BufferedSource.readUtf8Line()` — **RECORDED**
+
+`BufferedSource.readUtf8Line()` (`IO-14`) treats `\n` and `\r\n` as terminators but keeps a lone `\r` as line
+content. `SSE-2` requires the opposite: a lone `\r` terminates an SSE line by itself. Both contracts are
+normative for their respective subsystems, so SSE frames its own lines in `src/sse/line-reader.ts` rather than
+reshaping a frozen Phase 3a surface. Recorded so Phase 10's deviation review does not read the duplication as
+accidental.
+
+### I3 — `[Symbol.asyncDispose]` runtime-guarded and omitted from `.d.ts` — **WATCH**
+
+Node 20.3 (the pinned floor verified by `verify:runtime-floor` and CI `node-conformance`) predates
+`Symbol.asyncDispose` (which landed in Node 20.4). TypeScript does not polyfill the well-known symbol for a
+library that declares the member, so declaring it on the interface would cause `.d.ts` compilation failures for
+consumers on standard `ES2023` lib without `esnext.disposable`. `SseStream` therefore installs
+`[Symbol.asyncDispose]` at run time only when the symbol exists, matching `Response` (HTTP-38). Becomes an
+unconditional `implements AsyncDisposable` when `engines.node` moves past Node 20.4.
+
+### I4 — `SSE-21` hash equality is N/A in JavaScript — **RECORDED**
+
+`SSE-21` mentions value equality and hash. JavaScript does not have language-level hash maps keyed by object
+value equality (`hashCode`); value equality is provided via `sseEventsEqual()` (`SSE-21`).
 
 ---
 
