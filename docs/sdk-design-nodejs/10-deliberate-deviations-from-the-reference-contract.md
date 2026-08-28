@@ -128,7 +128,17 @@ Phase 10 (`docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-de
     path. Neither transport retries a partial send internally (**TRANSPORT-18**); the SDK's own retry layer
     handles it via the replayability gate instead. `Response.protocol` is a hardcoded `HTTP_1_1` best-effort
     default because neither `fetch`'s `Response` nor undici's `ResponseData` surface the negotiated protocol
-    version (all: Phase 8a).
+    version (all: Phase 8a). Phase 8a's implementation added one more, found only by building it: **a custom
+    proxy `challengeHandler` cannot be dispatched by `transport-undici` either** — undici's `ProxyAgent` takes
+    its credential solely from its own constructor and rejects any per-request `Proxy-Authorization` with
+    `InvalidArgumentError` (a deliberate security fix on their side), and the constructor runs before any
+    challenge has been seen, so no handler-minted credential can reach the exchange that provoked it. This is
+    the case **TRANSPORT-30**'s own text anticipates: the handler is surfaced with a WARN at construction and
+    again on the first real `407`, proxy auth falls back to Basic (`ProxyOptions.credentials`, which *is*
+    passed to the `ProxyAgent` constructor), the `407` reaches the caller untouched, and a per-request
+    `Proxy-Authorization` is dropped from the outbound pass — logged by name like any other drop — rather than
+    turning every proxied send into a hard failure. The Phase 8a *plan* had specified a retry-with-stamped-
+    credential flow instead; that flow is not implementable on this platform (Phase 8a).
 14. **Reproducible builds and publish provenance stay open, unblocking only at first real release.** **NFR-12**
     (byte-identical builds from identical source) and **NFR-16** (publish provenance enforced on the release path)
     are soft gaps: `bun install --frozen-lockfile` and plain `tsc` are deterministic by construction, and
@@ -155,3 +165,13 @@ Phase 10 (`docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-de
     different data shape — push-based `Observable`s — not plumbing for the request/response pivot; its
     `sseEvents$`/`typedSse$` are single-subscription, not standard cold/repeatable Observables, because
     `SseStream` wraps an already-consumed-once HTTP response body (Phase 8b).
+17. **`TransportFailureError` adds a third level to an error tree the styleguide caps at two.** The
+    styleguide holds custom error hierarchies to two levels deep, and Phase 3a flattened this very tree to
+    obey it — the four I/O leaves extend `DexpaceError` directly, and `isIoError` exists to group them
+    without reintroducing a middle tier (`packages/core/src/io/errors.ts`). Phase 8a's **TRANSPORT-20**
+    reintroduces one: `TransportFailureError extends IoError extends DexpaceError`. The subtyping *is* the
+    requirement rather than an accident of modelling — `classify.ts`'s cause-walk returns `true` for every
+    `IoError`, so extending it is what makes a no-response failure retryable with no edit to the retry
+    layer, and a flat sibling would have to be named there by hand and again for every transport added
+    later. One level of depth buys the canonical-subtype clause. Held at exactly three: a fourth level is
+    not sanctioned by this row (Phase 8a).

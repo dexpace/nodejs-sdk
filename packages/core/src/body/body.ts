@@ -12,7 +12,12 @@ export interface Body {
    * discriminated-union-over-independent-classes pattern -- there is deliberately no base class.
    */
   readonly kind:
-    'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
+    | 'byte-array'
+    | 'string'
+    | 'stream'
+    | 'form-urlencoded'
+    | 'multipart'
+    | 'file';
   /**
    * The media type to send as `Content-Type`, or `undefined` when the body declares none.
    *
@@ -44,4 +49,18 @@ export interface Body {
    * `contentLength` (HTTP-39/BODY-10).
    */
   writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
+}
+
+/**
+ * The structural recognition contract a transport narrows on (`body.kind === 'file'`) to dispatch a
+ * file-specific send path (TRANSPORT-28). Type-only — `\@dexpace/core` never constructs one; the concrete
+ * factory lives in `\@dexpace/body-file`, which can depend on `node:fs` precisely because it is not core.
+ *
+ * @public
+ */
+export interface FileBodyDescriptor extends Body {
+  readonly kind: 'file';
+  readonly path: string;
+  readonly start: number;
+  readonly count: number;
 }

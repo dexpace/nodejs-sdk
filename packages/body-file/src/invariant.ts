@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: MIT
+// packages/body-file/src/invariant.ts
+
+export function invariant(
+  condition: boolean,
+  message: string,
+): asserts condition {
+  if (!condition) throw new Error(message);
+}

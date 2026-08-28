@@ -11,6 +11,7 @@ import {
   IoError,
   isIoError,
   SourceContractViolationError,
+  TransportFailureError,
 } from './errors.js';
 
 describe('IoError tree', () => {
@@ -72,5 +73,19 @@ describe('IoError tree', () => {
     expect(isIoError(new AllocationLimitError(1, 2))).toBe(true);
     expect(isIoError(new DexpaceError('other'))).toBe(false);
     expect(isIoError(new Error('plain'))).toBe(false);
+  });
+});
+
+describe('TransportFailureError (TRANSPORT-20)', () => {
+  test('is an IoError subtype', () => {
+    const error = new TransportFailureError('connect ECONNREFUSED');
+    expect(error).toBeInstanceOf(IoError);
+    expect(error.name).toBe('TransportFailureError');
+  });
+
+  test('carries an optional cause', () => {
+    const cause = new Error('ECONNREFUSED');
+    const error = new TransportFailureError('connect failed', {cause});
+    expect(error.cause).toBe(cause);
   });
 });

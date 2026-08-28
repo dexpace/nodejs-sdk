@@ -3,7 +3,7 @@
 // Internal-facing barrel for product-spec §6. Everything except the two logging tees is also promoted to
 // packages/core/src/index.ts (Step 2) -- this file is the superset a future in-tree consumer (e.g. Phase
 // 7's pipeline) imports from directly.
-export type {Body} from './body.js';
+export type {Body, FileBodyDescriptor} from './body.js';
 export {
   ConsumedBodyError,
   FormBodyValidationError,

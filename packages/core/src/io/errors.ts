@@ -8,7 +8,7 @@ import {DexpaceError} from '../http/errors.js';
  * Error messages in this tree carry counts and limits, never buffer contents — these buffers hold request
  * and response bodies, which routinely contain credentials and PII (styleguide 8.8).
  *
- * @internal
+ * @public
  */
 export class IoError extends DexpaceError {
   // bun's coverage tool never marks a bodiless subclass's implicit constructor as covered
@@ -114,4 +114,18 @@ export function isIoError(
     error instanceof ClosedResourceError ||
     error instanceof AllocationLimitError
   );
+}
+
+/**
+ * The canonical retryable transport-failure exception (TRANSPORT-20): any send that produced no HTTP
+ * response — connection refused, DNS/TLS failure, peer reset, connect/read timeout. A subtype of IoError
+ * so 5a's `classify.ts` cause-walk already treats it as always-retryable with no change to that file.
+ *
+ * @public
+ */
+export class TransportFailureError extends IoError {
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor -- load-bearing for Bun function coverage (see IoError)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+  }
 }

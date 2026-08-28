@@ -116,7 +116,7 @@ export function bearerTokensEqual(a: BearerToken, b: BearerToken): boolean;
 // @public
 interface Body_2 {
     readonly contentLength: number;
-    readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart';
+    readonly kind: 'byte-array' | 'string' | 'stream' | 'form-urlencoded' | 'multipart' | 'file';
     readonly mediaType: string | undefined;
     readonly replayable: boolean;
     writeTo(sink: WritableStream<Uint8Array>): Promise<void>;
@@ -361,6 +361,18 @@ export interface FetcherPaginationInit<T> {
 }
 
 // @public
+export interface FileBodyDescriptor extends Body_2 {
+    // (undocumented)
+    readonly count: number;
+    // (undocumented)
+    readonly kind: 'file';
+    // (undocumented)
+    readonly path: string;
+    // (undocumented)
+    readonly start: number;
+}
+
+// @public
 export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R;
 
 // @public
@@ -485,6 +497,11 @@ export interface InstrumentationBundle {
     readonly traceIdEncoding: string;
     readonly tracerFactory: (operationName: string) => unknown;
     readonly traceState: string;
+}
+
+// @public
+export class IoError extends DexpaceError {
+    constructor(message: string, options?: ErrorOptions);
 }
 
 // @public
@@ -1279,6 +1296,11 @@ export interface Tracer {
 export interface Transport {
     close(): Promise<void>;
     send(request: Request_2, options?: RequestOptions, signal?: AbortSignal): Promise<Response_2>;
+}
+
+// @public
+export class TransportFailureError extends IoError {
+    constructor(message: string, options?: ErrorOptions);
 }
 
 // @public
