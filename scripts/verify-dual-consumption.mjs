@@ -9,6 +9,9 @@ import assert from 'node:assert/strict';
 import {absent, present, serdeBody, Status} from '@dexpace/core';
 import {jsonSerde} from '@dexpace/codec-json';
 
+import {createPinoLogger} from '@dexpace/logging-pino';
+import {createDebugLogger} from '@dexpace/logging-debug';
+
 assert.equal(Status.of(200).code, 200);
 assert.equal(Status.of(200).name, 'OK');
 
@@ -38,6 +41,32 @@ const body = serdeBody({id: 7}, serde);
 assert.equal(body.mediaType, 'application/json');
 assert.equal(body.replayable, true);
 
+// Exercise logging-pino bridge
+const pinoEvents = [];
+const fakePino = {
+  isLevelEnabled: () => true,
+  error: obj => pinoEvents.push({level: 'error', obj}),
+  warn: obj => pinoEvents.push({level: 'warn', obj}),
+  info: obj => pinoEvents.push({level: 'info', obj}),
+  debug: obj => pinoEvents.push({level: 'debug', obj}),
+  trace: obj => pinoEvents.push({level: 'trace', obj}),
+};
+const pinoLogger = createPinoLogger(fakePino);
+pinoLogger.atLevel('info').event('dual.pino').field('k', 'v').emit();
+assert.equal(pinoEvents.length, 1);
+assert.equal(pinoEvents[0].obj.event, 'dual.pino');
+
+// Exercise logging-debug bridge
+const debugEvents = [];
+const fakeDebug = Object.assign(
+  (formatter, ...args) => debugEvents.push(args.join(' ')),
+  {enabled: true},
+);
+const debugLogger = createDebugLogger(fakeDebug);
+debugLogger.atLevel('info').event('dual.debug').field('k', 'v').emit();
+assert.equal(debugEvents.length, 1);
+assert.ok(debugEvents[0].includes('event=dual.debug'));
+
 console.log(
-  'dual-consumption check passed: plain Node import resolved and executed @dexpace/core and @dexpace/codec-json',
+  'dual-consumption check passed: plain Node import resolved and executed all packages in workspace',
 );

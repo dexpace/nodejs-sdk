@@ -396,3 +396,94 @@ describe("redirectStep -- REDIR-22(b)'s other named trigger, and concurrency", (
     expect(b).toBe('https://b.example/final');
   });
 });
+
+describe('Phase 7b retrofit: redirect hop and downgrade logging', () => {
+  test('emits http.redirect.hop for followed hops', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    });
+    setGlobalLogger(testLogger);
+
+    try {
+      const hop = countingResponse(302);
+      const final = countingResponse(200);
+      const transport = new FakeTransport([
+        withLocation(hop.response, 'https://example.com/dest'),
+        final.response,
+      ]);
+
+      await runThrough(redirectStep(), transport);
+
+      const hops = events.filter(e => e.get('event') === 'http.redirect.hop');
+      expect(hops).toHaveLength(1);
+      expect(hops[0]?.get('hop')).toBe(1);
+      expect(hops[0]?.get('status')).toBe(302);
+      expect(hops[0]?.get('url.full')).toBe('https://example.com/dest');
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+
+  test('emits http.redirect.downgradePermitted when downgrade policy permits http redirect', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    });
+    setGlobalLogger(testLogger);
+
+    try {
+      const hop = countingResponse(302);
+      const final = countingResponse(200);
+      const transport = new FakeTransport([
+        withLocation(hop.response, 'http://example.com/downgraded'),
+        final.response,
+      ]);
+
+      await runThrough(redirectStep({allowSchemeDowngrade: true}), transport);
+
+      const downgrades = events.filter(
+        e => e.get('event') === 'http.redirect.downgradePermitted',
+      );
+      expect(downgrades).toHaveLength(1);
+      expect(downgrades[0]?.get('from_url')).toBe('https://example.com/start');
+      expect(downgrades[0]?.get('to_url')).toBe(
+        'http://example.com/downgraded',
+      );
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+});
+
+describe('Phase 7b retrofit: redirect rejection logging', () => {
+  test('emits http.redirect.rejected on rejected redirect or loop', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    });
+    setGlobalLogger(testLogger);
+
+    try {
+      const hop = countingResponse(302);
+      const transport = new FakeTransport([
+        withLocation(hop.response, 'https://example.com/start'), // loop to self
+      ]);
+
+      await runThrough(redirectStep(), transport);
+
+      const rejections = events.filter(
+        e => e.get('event') === 'http.redirect.rejected',
+      );
+      expect(rejections).toHaveLength(1);
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+});

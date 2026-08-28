@@ -8,6 +8,12 @@
 export function absent(): Tristate<never>;
 
 // @public
+export function activateSpan(span: Span): Scope;
+
+// @public
+export function activateSpanForCorrelation(span: Span): Scope;
+
+// @public
 export class ApiKeyCredential {
     [INSPECT](): string;
     constructor(key: string);
@@ -206,6 +212,11 @@ export class ConsumedBodyError extends DexpaceError {
 }
 
 // @public
+export interface Counter {
+    add(delta: number, attributes?: Readonly<Record<string, unknown>>): void;
+}
+
+// @public
 export function createAuthDescriptor(requirements: readonly AuthRequirement[]): AuthDescriptor;
 
 // @public
@@ -213,6 +224,20 @@ export function createAuthRequirement(scheme: AuthScheme, scopes?: readonly stri
 
 // @public
 export function createBearerToken(token: string, expiresAt?: number): BearerToken;
+
+// @public
+export function createInstrumentationBundle(tracerFactory?: (operationName: string) => Tracer): InstrumentationBundle;
+
+// @public
+export function createLogger(sink: (level: LogLevel, fields: ReadonlyMap<string, unknown>) => void, options?: CreateLoggerOptions): Logger;
+
+// @public
+export interface CreateLoggerOptions {
+    readonly diagnosticAllowList?: readonly string[] | null | undefined;
+    // (undocumented)
+    readonly globalFields?: Readonly<Record<string, unknown>> | undefined;
+    readonly isLevelEnabled?: ((level: LogLevel) => boolean) | undefined;
+}
 
 // @public
 export function createProxyOptions(init: ProxyOptionsInit): ProxyOptions;
@@ -292,6 +317,9 @@ export class DomainModelError extends DexpaceError {
 }
 
 // @public
+export type DroppedHeaderPolicy = 'mark' | 'omit';
+
+// @public
 export class ETag {
     static readonly ANY: ETag;
     get isAny(): boolean;
@@ -368,10 +396,16 @@ export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, FormUrlEncod
 export type FormUrlEncodedValue = string | number | boolean | bigint | null;
 
 // @public
+export function getActiveSpan(): Span;
+
+// @public
 export function getBuildInfo(): BuildInfo;
 
 // @public
 export function getGlobalConfiguration(): Configuration;
+
+// @public
+export function getGlobalLogger(): Logger;
 
 // @public
 export class HeaderName {
@@ -408,6 +442,11 @@ export class HeaderValidationError extends DomainModelError {
     constructor(kind: 'name' | 'value', offendingName: string, _offendingValue: string | undefined);
     readonly escapedName: string;
     readonly kind: 'name' | 'value';
+}
+
+// @public
+export interface Histogram {
+    record(value: number, attributes?: Readonly<Record<string, unknown>>): void;
 }
 
 // @public
@@ -492,6 +531,44 @@ export function linkHeaderStrategy<T>(init: {
 }): PaginationStrategy<T>;
 
 // @public
+export interface LogEvent {
+    cause(error: unknown): this;
+    emit(): void;
+    event(name: string): this;
+    field(key: string, value: unknown): this;
+}
+
+// @public
+export interface Logger {
+    atLevel(level: LogLevel): LogEvent;
+    withContext(fields: Readonly<Record<string, unknown>>): Logger;
+}
+
+// @public
+export const LOGGING_STEP_TYPE: unique symbol;
+
+// @public
+export type LoggingGranularity = 'none' | 'headers' | 'body';
+
+// @public
+export function loggingStep(settings?: LoggingStepSettings): StepDescriptor;
+
+// @public
+export interface LoggingStepSettings {
+    readonly clock?: Clock | undefined;
+    readonly droppedHeaderPolicy?: DroppedHeaderPolicy | undefined;
+    readonly granularity?: LoggingGranularity | undefined;
+    readonly logger?: Logger | undefined;
+    readonly meter?: Meter | undefined;
+    readonly previewSizeBytes?: number | undefined;
+    readonly severity?: LogLevel | undefined;
+    readonly tracerFactory?: (() => Tracer) | undefined;
+}
+
+// @public
+export type LogLevel = 'error' | 'warning' | 'info' | 'verbose';
+
+// @public
 export function makeSseEvent(fields: SseEventFields): SseEvent;
 
 // @public
@@ -531,6 +608,20 @@ export class MediaType {
 
 // @public
 export class MediaTypeParseError extends DomainModelError {
+}
+
+// @public
+export interface Meter {
+    // (undocumented)
+    createCounter(name: string, options?: {
+        readonly unit?: string;
+        readonly description?: string;
+    }): Counter;
+    // (undocumented)
+    createHistogram(name: string, options?: {
+        readonly unit?: string;
+        readonly description?: string;
+    }): Histogram;
 }
 
 // @public
@@ -582,6 +673,18 @@ export class NameKeyCredential {
 
 // @public
 export type Next = (request?: Request_2) => Promise<Response_2>;
+
+// @public
+export const NOOP_LOGGER: Logger;
+
+// @public
+export const NOOP_METER: Meter;
+
+// @public
+export const NOOP_SPAN: Span;
+
+// @public
+export const NOOP_TRACER: Tracer;
 
 // @public
 export function nullValue(): Tristate<never>;
@@ -943,6 +1046,12 @@ export interface Schema<T> {
 }
 
 // @public
+export interface Scope {
+    // (undocumented)
+    close(): void;
+}
+
+// @public
 export interface Serde {
     readonly deserializer: Deserializer;
     readonly mediaType: string;
@@ -974,10 +1083,39 @@ export interface Serializer {
 export function setGlobalConfiguration(config: Configuration): void;
 
 // @public
+export function setGlobalLogger(logger: Logger): void;
+
+// @public
 export function shouldBypassProxy(options: Pick<ProxyOptions, 'bypassAll' | 'nonProxyHosts'>, host: string): boolean;
 
 // @public
 export type SourceFn = (key: string) => string | undefined;
+
+// @public
+export interface Span {
+    // (undocumented)
+    end(): void;
+    // (undocumented)
+    readonly isRecording: boolean;
+    // (undocumented)
+    recordException(error: unknown): this;
+    // (undocumented)
+    setAttribute(key: string, value: unknown): this;
+    // (undocumented)
+    spanContext?(): SpanContext | undefined;
+}
+
+// @public
+export interface SpanContext {
+    // (undocumented)
+    readonly spanId: string;
+    // (undocumented)
+    readonly traceFlags?: number | undefined;
+    // (undocumented)
+    readonly traceId: string;
+    // (undocumented)
+    readonly traceState?: string | undefined;
+}
 
 // @public
 export interface SseEvent {
@@ -1058,6 +1196,7 @@ export function standardResilience(transport: Transport, options?: StandardResil
 // @public
 export interface StandardResilienceOptions {
     readonly auth?: AuthStepSettings | undefined;
+    readonly logging?: LoggingStepSettings | undefined;
     readonly redirect?: Partial<RedirectSettings> | undefined;
     readonly retry?: RetryStepOptions | undefined;
 }
@@ -1129,6 +1268,12 @@ export function toHttpError(response: Response_2): Promise<HttpStatusError | nul
 
 // @public
 export type TokenProvider = () => Promise<BearerToken>;
+
+// @public
+export interface Tracer {
+    // (undocumented)
+    startSpan(name: string): Span;
+}
 
 // @public
 export interface Transport {

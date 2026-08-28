@@ -9,6 +9,8 @@
         "@changesets/cli": "^2",
         "@dexpace/codec-json": "workspace:*",
         "@dexpace/core": "workspace:*",
+        "@dexpace/logging-debug": "workspace:*",
+        "@dexpace/logging-pino": "workspace:*",
         "@eslint-community/eslint-plugin-eslint-comments": "^4",
         "@microsoft/api-extractor": "catalog:",
         "@types/bun": "latest",
@@ -41,6 +43,34 @@
       "version": "0.0.0",
       "devDependencies": {
         "expect-type": "catalog:",
+      },
+    },
+    "packages/logging-debug": {
+      "name": "@dexpace/logging-debug",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+      },
+    },
+    "packages/logging-pino": {
+      "name": "@dexpace/logging-pino",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
       },
     },
   },
@@ -107,6 +137,10 @@
     "@dexpace/codec-json": ["@dexpace/codec-json@workspace:packages/codec-json"],
 
     "@dexpace/core": ["@dexpace/core@workspace:packages/core"],
+
+    "@dexpace/logging-debug": ["@dexpace/logging-debug@workspace:packages/logging-debug"],
+
+    "@dexpace/logging-pino": ["@dexpace/logging-pino@workspace:packages/logging-pino"],
 
     "@eslint-community/eslint-plugin-eslint-comments": ["@eslint-community/eslint-plugin-eslint-comments@4.7.2", "", { "dependencies": { "escape-string-regexp": "^4.0.0", "ignore": "^7.0.5" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0" } }, "sha512-LF03qURSwEWm2dz5wtdDCzNk+7Opl0X7q6I3undsaIuNsEiNvRV3BCtqu14Q/6Pzg1tBj44LcxpW2EpSLZStZw=="],
 

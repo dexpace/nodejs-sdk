@@ -19,6 +19,7 @@ import {createBearerToken} from './credential.js';
 import {createAuthDescriptor} from './descriptor.js';
 import {standardResilience, type StandardResilienceOptions} from './preset.js';
 import {createAuthRequirement} from './requirement.js';
+import {LOGGING_STEP_TYPE} from '../observability/logging-step.js';
 
 function aRequest(url = 'https://example.com/start'): Request {
   return Request.newBuilder().url(url).build();
@@ -50,7 +51,7 @@ function bearerOptions(): StandardResilienceOptions {
 }
 
 describe('standardResilience', () => {
-  test('installs exactly the three pillars that exist, plus 5b’s marker guard (PIPE-24/PIPE-39)', () => {
+  test('installs the resilience pillars plus 5b’s marker guard and 7b logging (PIPE-24/PIPE-39)', () => {
     const runtime = standardResilience(
       new FakeTransport([countingResponse(200).response]),
       bearerOptions(),
@@ -60,12 +61,12 @@ describe('standardResilience', () => {
     expect(types).toContain(REDIRECT_STEP_TYPE);
     expect(types).toContain(RETRY_STEP_TYPE);
     expect(types).toContain(AUTH_STEP_TYPE);
-    // redirectStep + its POST_AUTH marker guard + retryStep + authStep. LOGGING and SERDE stay empty:
-    // LOGGING's real step ships in Phase 7b, which amends this preset in its own plan.
-    expect(types).toHaveLength(4);
+    expect(types).toContain(LOGGING_STEP_TYPE);
+    // redirectStep + its POST_AUTH marker guard + retryStep + authStep + loggingStep.
+    expect(types).toHaveLength(5);
   });
 
-  test('the pillars flatten in redirect-then-retry-then-auth order (AUTH-27/PIPE-2)', () => {
+  test('the pillars flatten in redirect-then-retry-then-auth-then-logging order (AUTH-27/PIPE-2)', () => {
     const runtime = standardResilience(
       new FakeTransport([countingResponse(200).response]),
       bearerOptions(),
@@ -74,6 +75,7 @@ describe('standardResilience', () => {
 
     expect(order.indexOf('REDIRECT')).toBeLessThan(order.indexOf('RETRY'));
     expect(order.indexOf('RETRY')).toBeLessThan(order.indexOf('AUTH'));
+    expect(order.indexOf('AUTH')).toBeLessThan(order.indexOf('LOGGING'));
   });
 
   test('NO_AUTH is the default when no auth option is supplied', async () => {
@@ -192,5 +194,25 @@ describe('the cross-origin marker is load-bearing on both sides (REDIR-11/AUTH-2
     expect(transport.calls[1]?.request.headers.get('Authorization')).toBe(
       'Bearer leaked',
     );
+  });
+});
+
+describe('standardResilience logging options (Phase 7b)', () => {
+  test('logging options pass through to the installed logging step', async () => {
+    const {createLogger} = await import('../observability/logger.js');
+    const events: string[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      const name = fields.get('event');
+      if (typeof name === 'string') events.push(name);
+    });
+
+    const transport = new FakeTransport([countingResponse(200).response]);
+    const runtime = standardResilience(transport, {
+      logging: {logger: testLogger, granularity: 'headers'},
+    });
+
+    await runtime.send(aRequest());
+
+    expect(events).toEqual(['http.request', 'http.response']);
   });
 });

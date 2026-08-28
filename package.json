@@ -18,6 +18,8 @@
     "@changesets/cli": "^2",
     "@dexpace/codec-json": "workspace:*",
     "@dexpace/core": "workspace:*",
+    "@dexpace/logging-debug": "workspace:*",
+    "@dexpace/logging-pino": "workspace:*",
     "@eslint-community/eslint-plugin-eslint-comments": "^4",
     "@microsoft/api-extractor": "catalog:",
     "@types/bun": "latest",
@@ -37,16 +39,16 @@
     "lint": "bun run build:core && gts lint .",
     "fix": "bun run build:core && gts fix .",
     "build:core": "tsc -b packages/core/tsconfig.build.json",
-    "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit",
+    "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit && tsc -p packages/logging-pino/tsconfig.json --noEmit && tsc -p packages/logging-debug/tsconfig.json --noEmit",
     "prebuild": "bun run --cwd packages/core prebuild",
-    "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json",
+    "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json && tsc -p packages/logging-pino/tsconfig.build.json && tsc -p packages/logging-debug/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
     "test:scripts": "node --test 'scripts/*.test.mjs'",
     "test:node": "node --test test/node-conformance/*.test.mjs",
     "bench": "bun run packages/core/src/io/byte-queue.bench.ts",
-    "api": "cd packages/core && bun run api:ci && cd ../codec-json && bun run api:ci",
-    "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm && publint packages/codec-json && attw --pack packages/codec-json --ignore-rules cjs-resolves-to-esm",
+    "api": "cd packages/core && bun run api:ci && cd ../codec-json && bun run api:ci && cd ../logging-pino && bun run api:ci && cd ../logging-debug && bun run api:ci",
+    "lint:publish": "publint packages/core && attw --pack packages/core --ignore-rules cjs-resolves-to-esm && publint packages/codec-json && attw --pack packages/codec-json --ignore-rules cjs-resolves-to-esm && publint packages/logging-pino && attw --pack packages/logging-pino --ignore-rules cjs-resolves-to-esm && publint packages/logging-debug && attw --pack packages/logging-debug --ignore-rules cjs-resolves-to-esm",
     "audit": "bun audit --audit-level=high --prod",
     "changeset": "node scripts/changeset.mjs",
     "verify:dual-consumption": "node scripts/verify-dual-consumption.mjs",
@@ -56,3 +58,4 @@
     "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs"
   }
 }
+

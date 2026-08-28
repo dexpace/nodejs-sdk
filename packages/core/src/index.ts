@@ -281,3 +281,39 @@ export {
   shouldBypassProxy,
 } from './config/proxy.js';
 export {RETRYABLE_STATUSES, isRetryableStatus} from './config/retryable.js';
+
+// Phase 7b — Observability and instrumentation.
+export type {
+  CreateLoggerOptions,
+  LogEvent,
+  LogLevel,
+  Logger,
+} from './observability/logger.js';
+export {
+  NOOP_LOGGER,
+  createLogger,
+  getGlobalLogger,
+  setGlobalLogger,
+} from './observability/logger.js';
+export type {
+  Scope,
+  Span,
+  SpanContext,
+  Tracer,
+} from './observability/tracing.js';
+export {
+  NOOP_SPAN,
+  NOOP_TRACER,
+  activateSpan,
+  activateSpanForCorrelation,
+  createInstrumentationBundle,
+  getActiveSpan,
+} from './observability/tracing.js';
+export type {Counter, Histogram, Meter} from './observability/metrics.js';
+export {NOOP_METER} from './observability/metrics.js';
+export type {DroppedHeaderPolicy} from './observability/redaction.js';
+export type {
+  LoggingGranularity,
+  LoggingStepSettings,
+} from './observability/logging-step.js';
+export {LOGGING_STEP_TYPE, loggingStep} from './observability/logging-step.js';

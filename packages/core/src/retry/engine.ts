@@ -13,13 +13,10 @@ import {computeDelay} from './backoff.js';
 import {isResendable, isRetryableFailure} from './classify.js';
 import {parsePacingHint} from './pacing.js';
 import type {RetrySettings} from './settings.js';
+import {getGlobalLogger} from '../observability/logger.js';
 
-// Phase 7b retrofit (deferred): RETRY-40's "log and fall back" and the two SHOULD-level structured
-// events -- attempt-failed and retries-exhausted -- are specified in this plan's Task 8 but are
-// APPLIED BY PHASE 7B's Task 9, not here. 5a executes before 7b, so an `observability/logger.js`
-// import at this point would not resolve; 7b in turn needs 5a's FakeTransport, so the dependency
-// cannot run the other way. See docs/superpowers/plans/2026-07-26-phase5a-retry.md's 2026-07-29
-// correction.
+// Structured logging events (http.retry.attemptFailed, http.retry.exhausted, http.retry.delayOverrideFailed)
+// are emitted through the global logger facade (OBS-39, RETRY-40).
 
 /**
  * One attempt: dispatch the (possibly stamped) request and report the outcome without throwing.
@@ -103,15 +100,23 @@ function overshootsBudget(delayMs: number, state: LoopState): boolean {
 }
 
 /**
- * RETRY-40: a throwing user override is ignored, never fatal. The "log the failure" half of RETRY-40
- * is Phase 7b's Task 9 (see the retrofit note at the top of this file).
+ * RETRY-40: a throwing user override is ignored, never fatal. Emits http.retry.delayOverrideFailed at warning level.
  */
 function callerOverride(state: LoopState): number | undefined {
   const {delayOverride} = state.config;
   if (delayOverride === undefined) return undefined;
   try {
     return delayOverride(state.attempt);
-  } catch {
+  } catch (error) {
+    try {
+      getGlobalLogger()
+        .atLevel('warning')
+        .event('http.retry.delayOverrideFailed')
+        .cause(error)
+        .emit();
+    } catch {
+      // OBS-20: logger failure must never fail the request or retry loop
+    }
     return undefined;
   }
 }
@@ -305,6 +310,26 @@ async function runAttempt(
   return decideRetry(await dispatch(stamped, state.attempt), state);
 }
 
+function maybeEmitExhausted(
+  outcome: Outcome<Response>,
+  trailLength: number,
+  state: LoopState,
+): void {
+  if (outcome.kind === 'failure' && trailLength > 0) {
+    try {
+      const elapsedMs = state.config.clock.monotonic() - state.startedAt;
+      getGlobalLogger()
+        .atLevel('info')
+        .event('http.retry.exhausted')
+        .field('attempts', state.attempt)
+        .field('elapsed_ms', elapsedMs)
+        .emit();
+    } catch {
+      // OBS-20: logger failure must never fail the request
+    }
+  }
+}
+
 /**
  * The one retry loop (RETRY-13/RETRY-14, RECOV-30). Both entry points -- the RETRY pillar step and
  * the recovery-chain wrapper -- call this, so the schedule, the classifier, and the budget cannot
@@ -351,14 +376,31 @@ export async function runWithRetry(
     }
 
     try {
-      const decision = await runAttempt(dispatch, {
+      const state: LoopState = {
         config,
         request,
         attempt,
         startedAt,
-      });
-      if (decision.kind === 'stop') return withTrail(decision.outcome, trail);
+      };
+      const decision = await runAttempt(dispatch, state);
+      if (decision.kind === 'stop') {
+        maybeEmitExhausted(decision.outcome, trail.length, state);
+        return withTrail(decision.outcome, trail);
+      }
+
       trail.push(decision.error);
+
+      try {
+        getGlobalLogger()
+          .atLevel('info')
+          .event('http.retry.attemptFailed')
+          .field('attempt', attempt)
+          .field('delay_ms', decision.delayMs)
+          .cause(decision.error)
+          .emit();
+      } catch {
+        // OBS-20: logger failure must never fail the request or abort retry loop
+      }
       await waitFor(decision.delayMs, config);
     } catch (error) {
       // RETRY-33 literally, not merely as a rejected promise. Three things under here can throw --
