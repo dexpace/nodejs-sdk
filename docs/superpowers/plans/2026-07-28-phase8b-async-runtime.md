@@ -391,6 +391,52 @@ git commit -m "feat(rx): promote public barrel for @dexpace/rx"
 
 ## Self-Review
 
+**Executed 2026-08-28.** All four tasks shipped; the full gate sequence is green. One deviation, recorded below
+rather than left silent.
+
+### Deviation Ledger addition — the `AsyncIterable`→`Observable` bridge is hand-written
+
+**What the plan said.** Global Constraints: "Do not hand-write an `AsyncIterable`-to-`Observable` pull loop. Use
+RxJS's own `from()`." Task 1 Step 3 named the escape hatch: if a conformance clause fails against the installed
+RxJS, write the minimal wrapping `Observable` that closes *exactly* that clause and record it here.
+
+**What was found.** `rxjs@7.8.2`'s async-iterable path (`internal/observable/innerFrom.js`) is a bare `for await`
+loop that tests `subscriber.closed` only *after* a pull resolves:
+
+```js
+async function process(asyncIterable, subscriber) {
+  for await (const value of asyncIterable) {
+    subscriber.next(value);
+    if (subscriber.closed) return;
+  }
+  subscriber.complete();
+}
+```
+
+Unsubscribing while a pull is suspended therefore reaches the source only if and when the source produces
+again. For pagination that is invisible (a page fetch always settles). For SSE it is the failure mode that
+matters most: an idle event stream is *permanently* suspended on `next()`, so `subscription.unsubscribe()`
+leaves the response body unreleased and the connection open until the server happens to send something. That is
+`ASYNC-6`'s bidirectional-cancellation clause, unsatisfied — and `SSE-30`'s release obligation with it.
+
+**What was built.** `packages/rx/src/from-async-iterable.ts` (`@internal`, ~60 lines): the same pull loop, plus a
+teardown that releases the caller-supplied source and drives `iterator.return()` on unsubscription. Release runs
+*before* the iterator return, because closing the source is what settles the suspended pull that an async
+generator's queued `return()` would otherwise sit behind. Scope is exactly the failing clause — no scheduler, no
+error re-wrapping, no retry, no buffering.
+
+**How it stays honest.** `from-async-iterable.conformance.test.ts`'s last case asserts the *defect* in RxJS's own
+`from()` (`returns` stays `0` after an idle unsubscribe) alongside this module's `1`. When a future RxJS closes
+the gap that case fails, and the reviewer's instruction is in the file header: delete the module and go back to
+`from()`. `test/node-conformance/rx-bridge.test.mjs` proves the same cancellation path on real Node, since
+whether the release lands depends on Node's `ReadableStream.cancel()` and async-generator `return()` queueing.
+
+**Not a deviation from the product spec.** `ASYNC-6`/`ASYNC-21`/`SSE-41` are satisfied as written; the deviation
+is from this plan's own implementation instruction, which named this outcome as an allowed one. Nothing is added
+to `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`, whose Phase 8b rows
+(`ASYNC-21`'s fatal/non-fatal collapse, `ASYNC-18`'s full-port collapse) are unaffected.
+
+
 - [ ] Task 1's conformance suite passed against the installed RxJS version with no fallback needed — or, if a
   fallback was needed, it is scoped to exactly the failing clause and recorded in this section as a Deviation
   Ledger addition to the design doc.

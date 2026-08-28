@@ -1,0 +1,51 @@
+{
+  "name": "@dexpace/rx",
+  "version": "0.0.0",
+  "description": "RxJS async-runtime bridge for the dexpace Node.js SDK.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "dependencies": {},
+  "peerDependencies": {
+    "@dexpace/core": "workspace:*",
+    "rxjs": "^7.8.0"
+  },
+  "peerDependenciesMeta": {
+    "@dexpace/core": {
+      "optional": false
+    },
+    "rxjs": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@dexpace/core": "workspace:*",
+    "@microsoft/api-extractor": "catalog:",
+    "expect-type": "catalog:",
+    "fast-check": "catalog:",
+    "rxjs": "^7.8.0",
+    "typescript": "catalog:"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "api:local": "api-extractor run --local",
+    "api:ci": "api-extractor run",
+    "prepublishOnly": "bun run build && bun run api:ci && publint . && attw --pack . --ignore-rules cjs-resolves-to-esm"
+  }
+}
