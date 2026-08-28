@@ -8,6 +8,8 @@ import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
 import {originOf} from './cross-origin.js';
 import {decide, type Decision, type RedirectContext} from './decide.js';
 import {redirectSettings, type RedirectSettings} from './settings.js';
+import {getGlobalLogger} from '../observability/logger.js';
+import {redactUrl} from '../observability/redaction.js';
 
 /** Stable identity for pillar-slot occupancy and anchor matching (PIPE-6/PIPE-18). @internal */
 export const REDIRECT_STEP_TYPE: unique symbol = Symbol('dexpace.redirect');
@@ -38,6 +40,51 @@ async function decideOrClose(
     return decide(response, context, settings);
   } catch (error) {
     throw withReleaseFailure(error, await releaseQuietly(response));
+  }
+}
+
+function emitRejected(error?: unknown): void {
+  try {
+    const event = getGlobalLogger()
+      .atLevel('warning')
+      .event('http.redirect.rejected');
+    if (error !== undefined) {
+      event.cause(error);
+    }
+    event.emit();
+  } catch {
+    // OBS-20: logger failure must never fail the request
+  }
+}
+
+function emitFollowEvents(
+  context: {readonly request: Request; readonly nextRequest: Request},
+  response: Response,
+  hop: number,
+): void {
+  try {
+    const {request, nextRequest} = context;
+    if (
+      request.url.protocol === 'https:' &&
+      nextRequest.url.protocol === 'http:'
+    ) {
+      getGlobalLogger()
+        .atLevel('warning')
+        .event('http.redirect.downgradePermitted')
+        .field('from_url', redactUrl(request.url))
+        .field('to_url', redactUrl(nextRequest.url))
+        .emit();
+    }
+
+    getGlobalLogger()
+      .atLevel('info')
+      .event('http.redirect.hop')
+      .field('hop', hop)
+      .field('status', response.status.code)
+      .field('url.full', redactUrl(nextRequest.url))
+      .emit();
+  } catch {
+    // OBS-20: log emission must never fail the request
   }
 }
 
@@ -80,21 +127,17 @@ async function decideOrClose(
  * `withRedirect()`, must also install `stripCrossOriginMarkerStep()` -- otherwise REDIR-11's internal
  * marker reaches the transport whenever no auth step is present to strip it.
  *
- * Redirect's SHOULD-level structured logging (REDIR-28, and REDIR-15's observable surfacing of a
- * permitted downgrade) is deliberately absent here: the `Logger` seam is Phase 7b, which executes after
- * this phase and amends this file with its three emission sites in its own Task 9.
- *
  * @param overrides - redirect policy overrides; a zero-argument call yields the spec defaults.
  * @returns the descriptor to install in a pipeline's REDIRECT slot.
+ * @throws SchemeDowngradeError - when an HTTPS to HTTP redirect is rejected by downgrade policy (REDIR-14, REDIR-15).
+ * @throws NonReplayableBodyError - when a redirect requiring body resend encounters a single-use body (REDIR-6, REDIR-22).
+ * @throws MaxHopsExceededError - when redirects exceed maxHops (REDIR-17, REDIR-22).
  *
  * @public
  */
 export function redirectStep(
   overrides?: Partial<RedirectSettings>,
 ): StepDescriptor {
-  // Built ONCE per installed step, not per request: `redirectSettings()` validates every field and takes
-  // a defensive copy of the allowed-method set. The policy is immutable and stateless after construction,
-  // so one instance is safe to share across concurrent calls.
   const settings = redirectSettings(overrides);
   return {
     type: REDIRECT_STEP_TYPE,
@@ -105,8 +148,6 @@ export function redirectStep(
         fork !== undefined,
         'redirectStep must occupy the REDIRECT pillar stage',
       );
-      // `Request.url` hands back a FRESH `URL` on every access (HTTP-5), so read it once.
-      // REDIR-8: fixed for the whole chain. REDIR-16: seeded with the ORIGINAL request's URI.
       const seedUrl = seedRequest.url;
       const seedOrigin = originOf(seedUrl);
       const visited = new Set<string>([seedUrl.href]);
@@ -123,20 +164,23 @@ export function redirectStep(
         };
         const decision = await decideOrClose(response, context, settings);
 
-        if (decision.kind === 'return-current') return response;
+        if (decision.kind === 'return-current') {
+          if (response.status.isRedirect) emitRejected();
+          return response;
+        }
         if (decision.kind === 'fail') {
-          // REDIR-22(b): closed before the error propagates, and the DECISION's error is the one that
-          // propagates -- a failing release rides along as `suppressed` rather than replacing it.
-          throw withReleaseFailure(
-            decision.error,
-            await releaseQuietly(response),
-          );
+          const releaseError = await releaseQuietly(response);
+          emitRejected(decision.error);
+          throw withReleaseFailure(decision.error, releaseError);
         }
         if (signal?.aborted === true) return response;
 
-        // REDIR-22(a): the superseded hop, released before the next drive. NOT quieted -- unlike the
-        // two paths above there is no primary error to keep primary, and PIPE-40 makes the release
-        // itself part of the contract, so a failure to release IS this call's failure.
+        emitFollowEvents(
+          {request, nextRequest: decision.nextRequest},
+          response,
+          redirectsFollowed + 1,
+        );
+
         await response.close();
         visited.add(decision.nextRequest.url.href);
         redirectsFollowed += 1;

@@ -16,7 +16,8 @@ and says nothing about them beyond what 5b's own work touched — the one 5a fil
 (`retry/engine.ts`) is recorded at G9.
 
 Sections A–E below were written against Phase 1 and are re-verified at each review; section F is Phase 4b's,
-section G is Phase 5b's, and section H is Phase 6a's.
+section G is Phase 5b's, section H is Phase 6a's, section I is Phase 6b's,
+section J is Phase 6c's, and section K is Phase 7a's.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is either scheduled against a named phase or
@@ -1106,9 +1107,316 @@ An erratum callout was added to `07-pagination-sse-and-serialization.md` §7.1 a
 
 ---
 
+## Section K — Phase 7a (Configuration & Platform Primitives)
+
+### K1 — `clientIdentityStep` is not reachable from the public barrel — **SCHEDULED** (Phase 5c)
+
+`RECOV-33`'s step is implemented and tested (`config/client-identity-step.ts`), but it is **not** exported
+from `packages/core/src/index.ts`. It returns a `StepDescriptor`, and the whole of `pipeline/` —
+`StepDescriptor`, `Stage`, `Step`, `StepContext` — is `@internal` and absent from the barrel;
+api-extractor rejects a `@public` export whose return type is a forgotten export. The phase design assumed
+5c had already promoted the pipeline authoring surface, which has not run. Promoting it is a decision about
+4c/5c's surface, not 7a's, so it was left alone rather than widened here. **Trigger:** when the phase that
+publishes `StepDescriptor` lands, add `clientIdentityStep`/`ClientIdentitySettings` to the barrel, retag both
+`@public`, and regenerate the API report. Until then `NFR-15`'s stamping step is in-package only.
+
+### K2 — Proxy resolution implements the property tier the design doc ledgered as collapsed — **RESOLVED** (2026-08-27)
+
+`docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md` ledgers "system-property layer collapses
+into environment-only (proxy and general config alike)" and its plan's Task 7 sketch dropped `CFG-24`'s
+property tier and all of `CFG-26` accordingly. The shipped `resolveProxyOptions` implements both, against the
+substitutable property seam `Configuration` already carries for `CFG-3`/`CFG-4`. Rationale: the collapse is a
+statement about *production wiring* (Node has no ambient property store, so `defaultConfiguration()`'s
+property seam is empty and real behavior is environment-only, exactly as ledgered), not about the seam; and
+without the tier, `CFG-24`'s same-layer-port and https-only-credentials clauses and every clause of `CFG-26`
+would have been silent gaps, with `getRawProperty` left without a single consumer in the repository. The
+deviation ledger's wording is now narrowed to say the *production sources* collapse, not the resolution logic:
+`docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`'s ledger row and its §"Proxy model" prose
+were both corrected on 2026-08-27. The correction was made here rather than deferred to Phase 10 because that
+ledger is Phase 10's *input* — handing the reconciliation sweep a row that misstates the as-built code inverts
+the dependency — and because the file is this phase's own design doc, which this phase may edit.
+
+### K3 — `CFG-12` is documented, not enforced — **WATCH**
+
+"Builders SHOULD be usable single-threaded only" is a JVM statement about publication safety. A
+`ConfigurationBuilder` has no cross-thread reachability in this runtime to guard, so the requirement is
+carried as a doc comment on the class and nothing more. There is no test, because there is no observable
+behavior to assert. **Trigger:** if a worker-thread story ever puts a builder behind `postMessage`.
+
+### K4 — `CFG-28`'s global-configuration convenience resolver is not built — **DECIDE**
+
+`CFG-28` is a MAY with two halves. The prohibition half ("nothing may read proxy configuration implicitly at
+startup") holds and is asserted. The optional half — a `resolveProxyOptions()` overload defaulting to
+`getGlobalConfiguration()` — is deliberately not built: no caller exists, and a zero-argument overload that
+silently reaches for process-wide state is the kind of convenience that is easier to add later than to
+retract. **Trigger:** the first transport that wants proxy support without threading a `Configuration`.
+
+### K5 — `CFG-35`'s throwable axis is not in this phase — **SCHEDULED** (Phase 5a)
+
+`config/retryable.ts` ships the status axis (408/429/5xx-less-501-and-505) as the single shared definition.
+`CFG-35`'s second clause — "a throwable is retryable iff it or any cause in its chain is an IO/timeout error,
+cycle-safe" — needs the error taxonomy's retryability capability and belongs with 5a's `classify.ts`, which
+re-exports this module rather than defining a second status set. The checklist marks the requirement split,
+not whole.
+
+### K6 — Six defects in the phase plan's own implementation sketches — **WATCH**
+
+The plan doc at `docs/superpowers/plans/2026-07-28-phase7a-configuration.md` still contains the sketches
+below. They were corrected in the shipped code; the plan was not rewritten, so a future reader following it
+verbatim would reintroduce them. The plan now opens with a banner saying so and pointing here and at the
+checklist as the as-built record, which is the mitigation — the six sketches are deliberately left in place
+rather than rewritten, because a completed phase's plan is a historical artifact, not a maintained document.
+**Trigger:** if this plan is ever used as an execution input again.
+
+1. **Task 5's hash-consistency test asserts a false claim.** `deepEqual([1, {x: 2}, [3, 4]], [1, {x: 2}, [3,
+   4]])` is asserted `true`, but `CFG-33` makes non-arrays fall back to ordinary equality, so two distinct
+   object literals are not equal and the sketched test fails against a correct implementation.
+2. **Task 7's `CFG-22` test tests nothing.** It builds an object literal whose `toString` returns a
+   hard-coded masked string and asserts that string is masked. `ProxyOptions` in the same sketch has no
+   `toString` at all, despite the design doc's interface declaring one.
+3. **Task 6's `getInt` uses `Number.parseInt`**, which resolves `"12abc"` to `12` — `CFG-5` says an
+   unparseable value returns the default.
+4. **Task 2's parser uses `Date.UTC(year, ...)`**, which maps a four-digit year below 100 onto 1900-1999, so
+   `0026` silently parses as 1926; and it range-checks fields individually without rejecting a rolled-over
+   calendar date such as `31 Feb`.
+5. **Task 7 omits `CFG-26` entirely** — no backslash escape, no property/environment precedence, and a
+   trim-then-filter order that is the reverse of the one the requirement specifies.
+6. **Task 8 Step 6 rewrites `build` to `tsc -b`**, which would replace the working
+   `tsc -p tsconfig.build.json`. Only the `prebuild` line was added.
+
+### K7 — `eslint.config.js`'s Node-globals block was widened — **WATCH**
+
+`packages/core/scripts/gen-version.mjs` is the first build script living under a package rather than at the
+repo root, and the config's globals block listed `scripts/*.mjs` only, so its `console` call tripped
+`no-undef`. `packages/*/scripts/*.mjs` was added to the same list. **Trigger:** if package-level scripts ever
+need a different tier than the root ones.
+
+### K8 — `src/generated/version.ts` is committed and can be stale — **WATCH**
+
+The generated version constant is committed deliberately, so an unbuilt `bun test` reports a real version
+rather than a placeholder. That makes it possible for the file to disagree with `package.json` between a
+version bump and the next build. `prebuild` regenerates it on both the package and root `build` scripts, and
+release goes through `prepublishOnly`'s build, so a published artifact cannot carry a stale value — but a
+working tree can, and nothing fails if the regenerated file is left uncommitted. **Trigger:** if CI ever
+needs to assert the committed file matches `package.json`, add a `git diff --exit-code` after `prebuild`.
+
+### K9 — `Configuration.default()` ships as a free `defaultConfiguration()` — **RESOLVED** (2026-08-27)
+
+The design doc names the production wiring `Configuration.default()`. `Configuration` is an `interface` in
+this port, which cannot carry a static, so it ships as the free function `defaultConfiguration()` — the same
+placement the plan's Task 6 note offers as its alternative. Recorded so the design doc's name is not read as
+a missing export.
+
+### K10 — `CFG-24`'s warning half is not emitted — **SCHEDULED** (Phase 7b)
+
+`CFG-24` requires that malformed proxy configuration resolve to null *with a warning* — "MUST NOT throw on
+malformed input (invalid config → null + warning)", restated at `docs/knowledge/configuration.md:52`. The
+shipped `resolveProxyOptions` gets the null half right on all three rejection paths (`parseProxyUrl`'s
+`catch`, an unusable port, an absent host) and emits no diagnostic on any of them, because there is no
+`Logger` in the package until 7b ships the `OBS-*` seam. The consequence today: a typo'd `HTTPS_PROXY`
+silently routes direct instead of through the proxy, with nothing to read anywhere. **Trigger:** when 7b's
+`Logger` lands, wire the three null paths in `config/proxy.ts` to it and re-mark the checklist's `CFG-24` row
+whole. Recorded because this was the one clause in the phase with no paper trail — the checklist claimed
+`CFG-24` outright, and it is now split `✅ (null) / ⏳ (warning, Phase 7b)`.
+
+### K11 — `client-identity-step.ts`'s folder placement is provisional — **SCHEDULED** (with K1)
+
+`RECOV-33`'s step lives at `packages/core/src/config/client-identity-step.ts` because the phase design doc's
+File Layout names that path. Two arguments say it is not its long-term home, both recorded here rather than
+acted on, because relocating a file into a neighbouring phase's folder on 7a's authority is the same
+surface-widening the phase declined to do for K1:
+
+1. **It is the sole outbound `config/ → pipeline/` edge.** Three of its four imports leave the folder —
+   `../http/headers.js`, `../http/request.js`, `../pipeline/step.js` — and only `./build-info.js` stays.
+   Every other module under `config/` imports nothing beyond `../invariant.js` and `../generated/version.js`.
+   The file is grouped by which phase built it, not by feature (`docs/knowledge/module-organization.md:12`).
+   There is no cycle today; the risk is that 5a's `RetryConfig.clock` and 7b's logging step both create the
+   return edge, and nothing in CI would catch the loop (see K12).
+2. **Its `RECOV-32` sibling would land elsewhere.** The idempotency-key step — the adjacent requirement, the
+   same kind of object — is planned for `packages/core/src/recovery/idempotency-key.ts`
+   (`docs/superpowers/plans/2026-07-26-phase5a-retry.md:157,2529`). Two adjacent `RECOV-3x` steps in two
+   unrelated folders.
+
+Also noted here, since it is the same class of question: the barrel comment at `packages/core/src/index.ts`
+explains the absence of a `config/index.ts`. This repo carries both patterns — `http/`, `body/`, `io/`, and
+`seams/` have internal barrels; `pipeline/`, `context/`, and `config/` do not — and so does the knowledge
+corpus, where `docs/knowledge/module-organization.md:18` bans internal barrels outright while
+`docs/knowledge/api-design.md:8` endorses one per feature folder, with nothing in the corpus's
+`--section conflicts` reconciling them. 7a followed its design doc, which rules a `config/index.ts` out by
+name. **Trigger:** the same phase as K1 — whichever one promotes the pipeline authoring surface. Settle the
+file's folder and the barrel question together there, and record the corpus tension at that point.
+
+### K12 — No import-cycle gate exists in CI — **WATCH** (repo tooling, not this phase)
+
+`docs/knowledge/module-organization.md:20` treats any import cycle as a bug rather than a style nit, and
+`:22` requires it be gated in CI with `madge --circular src` or `eslint-plugin-import/no-cycle` as a required
+check. Neither string appears anywhere in `package.json`, `eslint.config.js`, or
+`.github/workflows/ci.yml` — verified 2026-08-27. Every other rule in that topic is either enforced or
+deliberately deviated from; this one is simply absent, so the repo's twelve-plus source folders rely on
+review alone. Deliberately **not** added by Phase 7a: a new blocking CI step is repo tooling, outside a
+feature phase's scope, and it belongs with whoever owns `.github/workflows/ci.yml`'s gate list. **Trigger:**
+the next phase that touches the CI gate list, or the first observed cycle — K11's `config/ → pipeline/` edge
+being the nearest candidate.
+
+### K13 — A `CFG-7`-valid duration can exceed what any timer can honor — **SCHEDULED** (first phase wiring a configured duration into a timer)
+
+`Clock.sleep` now rejects any `ms` above `2 ** 31 - 1` with an `InvariantViolation` naming the ceiling
+(`packages/core/src/config/clock.ts`), because `setTimeout` silently clamps a larger delay to `1` — `sleep(2 **
+31)` returned in 7ms instead of waiting 24.8 days, so an overflowed retry backoff became *no* backoff and a hot
+loop against the upstream. That closes the silent half.
+
+The residue is on the other side of the seam. `Configuration.getDuration` still returns
+`8.64e26` for `9999999999999999999d` and `8.64e27` for `P100000000000000000000D`, and it is **right** to:
+`CFG-7` defines the grammar and those parse correctly under it, so returning the caller's `fallback` there
+would invent a rejection rule the requirement does not state. Deliberately **not** bounded by 7a for that
+reason. The consequence today is contained — the value is `CFG-7`-valid, and the first thing that tries to
+*wait* it raises a named error at the point of use rather than looping — but it means a config typo is caught
+one layer later than it could be. **Trigger:** the first phase that wires a configured duration into a timer,
+which is Phase 5a's retry engine. Bound it there, at the configuration boundary, following `RECOV-34`'s
+precedent — that requirement already bounds every retry duration at "representable in nanoseconds (~292-year
+ceiling)" and rejects at construction rather than at use.
+
+### K14 — A configuration seam that fails is now silently invisible — **SCHEDULED** (Phase 7b, with K10)
+
+`CFG-5`/`CFG-6`/`CFG-7` make every typed accessor total, and `CFG-11` makes both lookup layers
+caller-supplied — so a seam backed by a file, a secrets store, or a remote key/value store can fail like any
+I/O. Until 2026-08-27 that failure escaped unwrapped out of `getString`/`getInt`/`getBoolean`/`getDuration`,
+contradicting the interface's own "never a throw" contract. `readLayer` in
+`packages/core/src/config/configuration.ts` now absorbs it: a throwing layer supplies nothing and the lookup
+falls through, exactly as it does for an absent key.
+
+That is the correct precedence — `CFG-5` is the stronger obligation — but it trades a wrong error for no
+error. An operator whose secrets-store seam is misconfigured now sees the caller's default resolve, with
+nothing anywhere to say why. The same shape as K10, the same cause, and the same blocker: there is no
+`Logger` in the package until 7b ships the `OBS-*` seam. **Trigger:** when 7b's `Logger` lands, wire
+`readLayer`'s `catch` to it **together with** K10's three null paths in `config/proxy.ts` — they are one
+change, not two.
+
+### K15 — `HTTP-17`: `hasForbiddenNameByte` permits a space inside a header name — **DECIDE** (Phase 1 code, surfaced by 7a)
+
+`packages/core/src/http/ascii-validation.ts`'s `hasForbiddenNameByte` rejects C0 controls, DEL, and every
+non-ASCII byte, but permits `SP` (0x20) and the rest of the non-`tchar` punctuation RFC 9110's `token`
+grammar excludes. Verified 2026-08-27: `Headers.newBuilder().set('User Agent', 'x')` and `set('Bad Name',
+'x')` both succeed, and the name reaches the wire with the space in it.
+
+Found while enumerating `clientIdentityStep`, which is the first caller to forward a **caller-supplied**
+`headerName` straight into that predicate — before it, every name reaching `validateName` was either a
+literal in this repo or came off an already-parsed response. Deliberately untouched by 7a: this is Phase 1
+code and `HTTP-17`'s row belongs to Phase 1's checklist, so widening the character class on a review pass in a
+different phase would change a validated surface without its owner's conformance evidence. **Trigger:**
+whoever next revisits `HTTP-17`, or Phase 9's conformance pass — decide there whether the predicate should be
+`tchar`-exact, and re-mark `HTTP-17` accordingly.
+
+### K16 — `deepEqual` / `deepHash` require acyclic, bounded-depth input — **WATCH**
+
+Both helpers in `packages/core/src/config/equality.ts` recurse with no cycle guard and no depth cap, so a
+self-referential array (`const a = []; a.push(a)`), a mutually recursive pair, or ~100k levels of nesting
+raises `RangeError: Maximum call stack size exceeded` rather than terminating. `CFG-33` says nothing either
+way; the precondition is simply undocumented. Pinned by two tests in `equality.test.ts` so the constraint is
+discoverable at review time rather than in production.
+
+Deliberately **not** fixed: the module is not exported from the package barrel (`packages/core/src/index.ts`
+records that decision) and has **zero callers** as of 2026-08-27, so a `WeakSet` cycle guard and a depth cap
+would be cost paid by nothing. **Trigger:** the first consumer. It either supplies the acyclic,
+bounded-depth guarantee itself — which every `CFG-33` use the spec describes does, since it compares
+byte arrays and header value lists — or adds the guard and the cap at that point, and this entry closes.
+
+### K17 — `formatProxyOptions` re-brackets an IPv6 host that `ProxyOptions.host` stores bare — **RESOLVED** (2026-08-27)
+
+Pass 2 normalized `ProxyOptions.host` to the bare address on both `CFG-24` layers (F13), which left
+`formatProxyOptions` rendering `http://2001:db8::1:8080` — an address and port that cannot be read back
+apart. The bracketing now lives in the formatter, keyed off a colon in the host, since no registered name or
+IPv4 literal can contain one. `host` stays bare as the stored representation; any bracketing is a rendering
+concern, which is also what a future transport's URL construction will need.
+
+### K18 — `isHeaderSafe` duplicates `http/ascii-validation.ts`'s outbound byte predicate — **WATCH** (split out of K11, 2026-08-27)
+
+`packages/core/src/config/build-info.ts` carries its own four-line printable-ASCII-plus-HTAB predicate rather
+than importing `hasForbiddenOutboundByte` from `packages/core/src/http/ascii-validation.ts`. The two encode
+the same character class for the same reason — an ambient value that RECOV-33 puts straight into an outbound
+header.
+
+The duplication is **deliberate** and the trade is stated at the call site: `config/`'s outbound edges are
+already a live concern (K11 tracks the `config/ → pipeline/` one), and adding a second one to reuse four
+lines is the wrong side of that trade while K12's import-cycle gate does not exist.
+
+Recorded separately from K11 because K11's own resolution — settle `client-identity-step.ts`'s folder and the
+`config/index.ts` barrel question — would not touch this predicate, so a reader following the old pointer
+found nothing that owned it. **Trigger:** whichever phase consolidates the ASCII predicates, or the first
+third caller of the same character class; `build-info.ts`'s `isHeaderSafe` is one of the call sites it folds
+in. Until then the risk is one-way drift — a fix to the `http/` predicate that this copy does not receive.
+Cheap to bound: both are exercised by tests that assert the same class (`build-info.test.ts`'s header-safety
+cases and `http/`'s own), so a divergence surfaces as a test failure rather than as silent behavior.
+
+### K19 — No `fast-check` property test logs its seed — **WATCH** (repo tooling, not this phase)
+
+`docs/knowledge/testing.md:44` requires the seed of a failing seeded `fast-check` property test to reach CI
+output, "or the shrunk counterexample that found the bug is lost". No `fc.assert` call anywhere under
+`packages/core/src` passes a `seed`, `numRuns`, or a `reporter` — verified 2026-08-27 across all 20
+`fc.assert` sites, of which Phase 7a contributes 12. A property failure in CI today reports the shrunk
+counterexample for that run only; re-running does not reproduce it.
+
+Deliberately **not** fixed by Phase 7a, and deliberately not fixed in this phase's tests alone: a seeding
+convention that covers half the suite is worse than none, because the half without it looks deliberate. This
+is one repo-wide decision — a shared `fc.configureGlobal({seed, verbose})` in a test preload, or a documented
+`FC_SEED` environment convention — and it belongs with whoever owns `bunfig.toml`'s test configuration.
+**Trigger:** the next phase that touches the test harness configuration, or the first property failure in CI
+that cannot be reproduced locally.
+
+### K20 — `Retry-After: <year below 100>` changed disposition from no-hint to retry-immediately — **RECORDED** (2026-08-27)
+
+Surfaced by rebasing 7a onto the branch that already carried 5a. Before 7a, `retry/pacing.ts` used a private
+RFC 1123 parser that **rejected** a four-digit year in `[0,99]`, so `Retry-After: Thu, 01 Jan 0026 00:00:00
+GMT` produced no hint and the caller fell back to backoff. 7a deletes that private copy in favour of the
+shared `config/http-date.ts`, which reads the year literally (never `Date.UTC`, whose legacy mapping would
+turn `0026` into 1926) and therefore accepts it as a well-formed instant in the past.
+
+Kept 7a's reading. `RETRY-16`'s no-hint rule is about values that are *malformed, negative, or out of
+range*; a literal year 26 CE is none of those, and `RETRY-17` is explicit that "a valid HTTP-date ... already
+in the past MUST yield a zero delay (retry immediately), distinct from an unparseable value which yields no
+hint". RFC 1123's `date1` year is `4DIGIT` with no lower bound, so rejecting `0026` was the stricter-than-spec
+half of the two implementations. `packages/core/src/retry/pacing.test.ts` now asserts `0` for that input and
+records why.
+
+The behavioral cost is real but narrow: a server sending an absurdly old `Retry-After` gets an immediate
+retry rather than a backed-off one. No such header exists in practice, and `RETRY-17` prescribes exactly this
+for every other past instant, so a plausibility floor would be a new deviation rather than a fix.
+
+**Trigger:** a real server observed to send a pre-1970 `Retry-After`, or a spec erratum giving `RETRY-16` a
+lower bound on the year.
+
+---
+
+## Section L — Phase 7b (Instrumentation & Observability)
+
+Recorded at implementation time. Verified against `docs/product-spec/15-instrumentation-and-observability.md` (`OBS-1`..`OBS-18`, `OBS-20`..`OBS-27`, `OBS-30`..`OBS-40` executed; `OBS-19`, `OBS-28`, `OBS-29` deferred per design).
+
+### L1 — Deferred HTTP-Tracer Vocabulary and Transport Policies — **SCHEDULED** (Phase 8a / Phase 9)
+
+- `OBS-19` (dropped-header verbosity policy): Deferred to Phase 8a alongside the concrete `fetch` transport that first detects unencodable caller-set headers.
+- `OBS-28` (richer HTTP-tracer vocabulary with per-attempt and transport milestones) and `OBS-29` (HTTP-tracer lifecycle ordering contract): Deferred to Phase 8a (interface + transport milestones) and Phase 9 (ordering verification). Phase 7b ships operation/attempt-level `startSpan`/`end` (`OBS-21`..`OBS-25`).
+
+**Trigger:** Phase 8a transport adapters and Phase 9 conformance sweep.
+
+### L2 — G2 Deferred Emissions Resolved — **RESOLVED** (2026-08-28)
+
+`REDIR-28` hop and rejection logging, and `REDIR-15` downgrade logging are now integrated and active through `getGlobalLogger()`.
+
+### L3 — G12, K10, K14 Config & Auth Logger Retrofit — **SCHEDULED** (Phase 9)
+
+`AUTH-37` failed background refresh logging (`auth/bearer-cache.ts`), `CFG-24` malformed proxy warning (`config/proxy.ts`), and `CFG-5` configuration layer error logging (`config/configuration.ts`) were deferred pending the `Logger` facade. With `Logger` shipped in 7b, these call sites remain for the Phase 9 conformance / hardening sweep to avoid modifying out-of-scope files in 7b.
+
+**Trigger:** Phase 9 conformance sweep.
+
+### L4 — Attempt-Level vs. Operation-Level Span and Metric Scope (PIPE-2) — **RECORDED** (2026-08-28)
+
+`PIPE-2` fixes the `LOGGING` pillar step inside `RETRY` and `REDIRECT` pipelines. Consequently, `startSpan('http.client.request')` and metric increments (`http.client.request.count`, `http.client.request.duration`) execute per HTTP transmission attempt/hop. The higher-level logical operation span and HTTP-tracer lifecycle are owned by Phase 8a / `OBS-29`.
+
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a
 checklist row marked ✅ against code that does not implement it (A1, A2 are both instances). Remove an entry
 only when the underlying requirement is genuinely satisfied *and* its checklist row agrees. When a phase
 closes, re-scan its checklist against the code rather than trusting the marks.
+

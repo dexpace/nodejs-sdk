@@ -796,3 +796,73 @@ describe('per-call state (RETRY-42, RECOV-28)', () => {
     expect(right.calls).toHaveLength(3);
   });
 });
+
+describe('Phase 7b retrofit: structured retry logging', () => {
+  test('emits attemptFailed per retry and exhausted when attempts run out', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    });
+    setGlobalLogger(testLogger);
+
+    try {
+      const config = configOf({maxAttempts: 3, fixedDelayMs: 0});
+      const dispatch = scriptedDispatch([
+        failure(new IoError('first')),
+        failure(new IoError('second')),
+        failure(new IoError('third')),
+      ]);
+
+      await runWithRetry(GET, dispatch, config);
+
+      const failedEvents = events.filter(
+        e => e.get('event') === 'http.retry.attemptFailed',
+      );
+      expect(failedEvents).toHaveLength(2);
+      expect(failedEvents[0]?.get('attempt')).toBe(1);
+      expect(failedEvents[1]?.get('attempt')).toBe(2);
+
+      const exhaustedEvents = events.filter(
+        e => e.get('event') === 'http.retry.exhausted',
+      );
+      expect(exhaustedEvents).toHaveLength(1);
+      expect(exhaustedEvents[0]?.get('attempts')).toBe(3);
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+
+  test('emits delayOverrideFailed when delayOverride throws', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    const testLogger = createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    });
+    setGlobalLogger(testLogger);
+
+    try {
+      const config: RetryConfig = {
+        ...configOf({maxAttempts: 2, fixedDelayMs: 0}),
+        delayOverride: () => {
+          throw new Error('bad override');
+        },
+      };
+      const dispatch = scriptedDispatch([
+        failure(new IoError('first')),
+        success(countingResponse(200).response),
+      ]);
+
+      await runWithRetry(GET, dispatch, config);
+
+      const overrideFailed = events.filter(
+        e => e.get('event') === 'http.retry.delayOverrideFailed',
+      );
+      expect(overrideFailed).toHaveLength(1);
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+});

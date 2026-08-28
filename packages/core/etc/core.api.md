@@ -8,6 +8,12 @@
 export function absent(): Tristate<never>;
 
 // @public
+export function activateSpan(span: Span): Scope;
+
+// @public
+export function activateSpanForCorrelation(span: Span): Scope;
+
+// @public
 export class ApiKeyCredential {
     [INSPECT](): string;
     constructor(key: string);
@@ -123,6 +129,13 @@ export interface Builder<T> {
 }
 
 // @public
+export interface BuildInfo {
+    readonly identityTokens: readonly string[];
+    readonly runtimeIdentity: string;
+    readonly sdkVersion: string;
+}
+
+// @public
 export function buildRequest(baseUrl: string | URL, operation: OperationDescriptor): Request_2;
 
 // @public
@@ -144,6 +157,21 @@ export class CancellationError extends DexpaceError {
 }
 
 // @public
+export const CFG_KEY_HTTP_PROXY = "HTTP_PROXY";
+
+// @public
+export const CFG_KEY_HTTPS_PROXY = "HTTPS_PROXY";
+
+// @public
+export const CFG_KEY_LOG_LEVEL = "DEXPACE_LOG_LEVEL";
+
+// @public
+export const CFG_KEY_MAX_RETRY_ATTEMPTS = "DEXPACE_MAX_RETRY_ATTEMPTS";
+
+// @public
+export const CFG_KEY_NO_PROXY = "NO_PROXY";
+
+// @public
 export type ChallengeHook = (response: Response_2, request: Request_2, options?: {
     readonly signal?: AbortSignal | undefined;
 }) => Promise<Request_2 | undefined>;
@@ -152,16 +180,40 @@ export type ChallengeHook = (response: Response_2, request: Request_2, options?:
 export interface Clock {
     monotonic(): number;
     now(): number;
-    sleep(ms: number, signal?: AbortSignal): Promise<void>;
+    sleep(durationMs: number, signal?: AbortSignal): Promise<void>;
 }
 
 // @public
 export function composeSignal(userSignal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined;
 
 // @public
+export interface Configuration {
+    derive(mutate: (builder: ConfigurationBuilder) => void): Configuration;
+    getBoolean(key: string, fallback: boolean): boolean;
+    getDuration(key: string, fallbackMs: number): number;
+    getInt(key: string, fallback: number): number;
+    getRawProperty(key: string, fallback?: string): string | undefined;
+    getString(key: string, fallback?: string): string | undefined;
+}
+
+// @public
+export class ConfigurationBuilder {
+    build(): Configuration;
+    put(key: string, value: string): this;
+    remove(key: string): this;
+    withEnvSource(source: SourceFn): this;
+    withPropertySource(source: SourceFn): this;
+}
+
+// @public
 export class ConsumedBodyError extends DexpaceError {
     constructor(bodyKind: string, options?: ErrorOptions);
     readonly bodyKind: string;
+}
+
+// @public
+export interface Counter {
+    add(delta: number, attributes?: Readonly<Record<string, unknown>>): void;
 }
 
 // @public
@@ -172,6 +224,23 @@ export function createAuthRequirement(scheme: AuthScheme, scopes?: readonly stri
 
 // @public
 export function createBearerToken(token: string, expiresAt?: number): BearerToken;
+
+// @public
+export function createInstrumentationBundle(tracerFactory?: (operationName: string) => Tracer): InstrumentationBundle;
+
+// @public
+export function createLogger(sink: (level: LogLevel, fields: ReadonlyMap<string, unknown>) => void, options?: CreateLoggerOptions): Logger;
+
+// @public
+export interface CreateLoggerOptions {
+    readonly diagnosticAllowList?: readonly string[] | null | undefined;
+    // (undocumented)
+    readonly globalFields?: Readonly<Record<string, unknown>> | undefined;
+    readonly isLevelEnabled?: ((level: LogLevel) => boolean) | undefined;
+}
+
+// @public
+export function createProxyOptions(init: ProxyOptionsInit): ProxyOptions;
 
 // @public
 export function cursorStrategy<T>(init: {
@@ -193,6 +262,12 @@ export interface DecodeTarget<T> {
     readonly schema: Schema<T>;
     readonly typeName?: string | undefined;
 }
+
+// @public
+export const defaultClock: Clock;
+
+// @public
+export function defaultConfiguration(): Configuration;
 
 // @public
 export class DeserializationError extends DexpaceError {
@@ -242,6 +317,9 @@ export class DomainModelError extends DexpaceError {
 }
 
 // @public
+export type DroppedHeaderPolicy = 'mark' | 'omit';
+
+// @public
 export class ETag {
     static readonly ANY: ETag;
     get isAny(): boolean;
@@ -286,6 +364,12 @@ export interface FetcherPaginationInit<T> {
 export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R;
 
 // @public
+export function formatHttpDate(epochMs: number): string;
+
+// @public
+export function formatProxyOptions(options: ProxyOptions): string;
+
+// @public
 export class FormBodyValidationError extends DexpaceError {
     constructor(field: string, value: unknown, options?: ErrorOptions);
     readonly field: string;
@@ -310,6 +394,18 @@ export type FormUrlEncodedInput = QueryParams | ReadonlyMap<string, FormUrlEncod
 
 // @public
 export type FormUrlEncodedValue = string | number | boolean | bigint | null;
+
+// @public
+export function getActiveSpan(): Span;
+
+// @public
+export function getBuildInfo(): BuildInfo;
+
+// @public
+export function getGlobalConfiguration(): Configuration;
+
+// @public
+export function getGlobalLogger(): Logger;
 
 // @public
 export class HeaderName {
@@ -346,6 +442,11 @@ export class HeaderValidationError extends DomainModelError {
     constructor(kind: 'name' | 'value', offendingName: string, _offendingValue: string | undefined);
     readonly escapedName: string;
     readonly kind: 'name' | 'value';
+}
+
+// @public
+export interface Histogram {
+    record(value: number, attributes?: Readonly<Record<string, unknown>>): void;
 }
 
 // @public
@@ -409,6 +510,9 @@ export function isPresent<T>(tristate: Tristate<T>): tristate is {
 };
 
 // @public
+export function isRetryableStatus(code: number): boolean;
+
+// @public
 export function isSerdeError(e: unknown): e is SerializationError | DeserializationError;
 
 // @public
@@ -425,6 +529,44 @@ export function linkHeaderStrategy<T>(init: {
     extract: (response: Response_2) => Promise<readonly T[]>;
     headerName?: string | undefined;
 }): PaginationStrategy<T>;
+
+// @public
+export interface LogEvent {
+    cause(error: unknown): this;
+    emit(): void;
+    event(name: string): this;
+    field(key: string, value: unknown): this;
+}
+
+// @public
+export interface Logger {
+    atLevel(level: LogLevel): LogEvent;
+    withContext(fields: Readonly<Record<string, unknown>>): Logger;
+}
+
+// @public
+export const LOGGING_STEP_TYPE: unique symbol;
+
+// @public
+export type LoggingGranularity = 'none' | 'headers' | 'body';
+
+// @public
+export function loggingStep(settings?: LoggingStepSettings): StepDescriptor;
+
+// @public
+export interface LoggingStepSettings {
+    readonly clock?: Clock | undefined;
+    readonly droppedHeaderPolicy?: DroppedHeaderPolicy | undefined;
+    readonly granularity?: LoggingGranularity | undefined;
+    readonly logger?: Logger | undefined;
+    readonly meter?: Meter | undefined;
+    readonly previewSizeBytes?: number | undefined;
+    readonly severity?: LogLevel | undefined;
+    readonly tracerFactory?: (() => Tracer) | undefined;
+}
+
+// @public
+export type LogLevel = 'error' | 'warning' | 'info' | 'verbose';
 
 // @public
 export function makeSseEvent(fields: SseEventFields): SseEvent;
@@ -466,6 +608,20 @@ export class MediaType {
 
 // @public
 export class MediaTypeParseError extends DomainModelError {
+}
+
+// @public
+export interface Meter {
+    // (undocumented)
+    createCounter(name: string, options?: {
+        readonly unit?: string;
+        readonly description?: string;
+    }): Counter;
+    // (undocumented)
+    createHistogram(name: string, options?: {
+        readonly unit?: string;
+        readonly description?: string;
+    }): Histogram;
 }
 
 // @public
@@ -517,6 +673,18 @@ export class NameKeyCredential {
 
 // @public
 export type Next = (request?: Request_2) => Promise<Response_2>;
+
+// @public
+export const NOOP_LOGGER: Logger;
+
+// @public
+export const NOOP_METER: Meter;
+
+// @public
+export const NOOP_SPAN: Span;
+
+// @public
+export const NOOP_TRACER: Tracer;
 
 // @public
 export function nullValue(): Tristate<never>;
@@ -605,6 +773,9 @@ export interface PagingOptions {
 }
 
 // @public
+export function parseHttpDate(raw: string): number | null;
+
+// @public
 export const PILLAR_STAGES: ReadonlySet<Stage>;
 
 // @public
@@ -647,6 +818,37 @@ export class ProtocolParseError extends DomainModelError {
 }
 
 // @public
+export interface ProxyCredentials {
+    readonly password: string;
+    readonly username: string;
+}
+
+// @public
+export interface ProxyOptions {
+    readonly bypassAll: boolean;
+    readonly challengeHandler?: unknown;
+    readonly credentials?: ProxyCredentials | undefined;
+    readonly host: string;
+    readonly nonProxyHosts: readonly string[];
+    readonly port: number;
+    readonly type: ProxyType;
+}
+
+// @public
+export interface ProxyOptionsInit {
+    readonly bypassAll?: boolean | undefined;
+    readonly challengeHandler?: unknown;
+    readonly credentials?: ProxyCredentials | undefined;
+    readonly host: string;
+    readonly nonProxyHosts?: readonly string[] | undefined;
+    readonly port: number;
+    readonly type: ProxyType;
+}
+
+// @public
+export type ProxyType = 'http' | 'socks4' | 'socks5';
+
+// @public
 export class QueryParams {
     encode(): string;
     equals(other: QueryParams): boolean;
@@ -663,6 +865,9 @@ export class QueryParamsBuilder implements Builder<QueryParams> {
     add(name: string, value: string | null): this;
     build(): QueryParams;
 }
+
+// @public
+export function randomUuid(): string;
 
 // @public
 export type RangeKind = 'bounded' | 'suffix' | 'open';
@@ -776,6 +981,9 @@ export class RequiredFieldError extends DomainModelError {
 }
 
 // @public
+export function resolveProxyOptions(config: Configuration): ProxyOptions | null;
+
+// @public
 class Response_2 {
     get body(): ReadableStream<Uint8Array> | null;
     bytes(): Promise<Uint8Array>;
@@ -801,6 +1009,9 @@ export class ResponseBuilder implements Builder<Response_2> {
     request(request: Request_2): this;
     status(status: Status): this;
 }
+
+// @public
+export const RETRYABLE_STATUSES: ReadonlySet<number>;
 
 // @public
 export interface RetrySettings extends BackoffSettings {
@@ -835,6 +1046,12 @@ export interface Schema<T> {
 }
 
 // @public
+export interface Scope {
+    // (undocumented)
+    close(): void;
+}
+
+// @public
 export interface Serde {
     readonly deserializer: Deserializer;
     readonly mediaType: string;
@@ -860,6 +1077,44 @@ export interface Serializer {
     serializeInto(value: unknown, target: Uint8Array, offset?: number): number;
     serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>;
     serializeToString(value: unknown): string;
+}
+
+// @public
+export function setGlobalConfiguration(config: Configuration): void;
+
+// @public
+export function setGlobalLogger(logger: Logger): void;
+
+// @public
+export function shouldBypassProxy(options: Pick<ProxyOptions, 'bypassAll' | 'nonProxyHosts'>, host: string): boolean;
+
+// @public
+export type SourceFn = (key: string) => string | undefined;
+
+// @public
+export interface Span {
+    // (undocumented)
+    end(): void;
+    // (undocumented)
+    readonly isRecording: boolean;
+    // (undocumented)
+    recordException(error: unknown): this;
+    // (undocumented)
+    setAttribute(key: string, value: unknown): this;
+    // (undocumented)
+    spanContext?(): SpanContext | undefined;
+}
+
+// @public
+export interface SpanContext {
+    // (undocumented)
+    readonly spanId: string;
+    // (undocumented)
+    readonly traceFlags?: number | undefined;
+    // (undocumented)
+    readonly traceId: string;
+    // (undocumented)
+    readonly traceState?: string | undefined;
 }
 
 // @public
@@ -941,6 +1196,7 @@ export function standardResilience(transport: Transport, options?: StandardResil
 // @public
 export interface StandardResilienceOptions {
     readonly auth?: AuthStepSettings | undefined;
+    readonly logging?: LoggingStepSettings | undefined;
     readonly redirect?: Partial<RedirectSettings> | undefined;
     readonly retry?: RetryStepOptions | undefined;
 }
@@ -1012,6 +1268,12 @@ export function toHttpError(response: Response_2): Promise<HttpStatusError | nul
 
 // @public
 export type TokenProvider = () => Promise<BearerToken>;
+
+// @public
+export interface Tracer {
+    // (undocumented)
+    startSpan(name: string): Span;
+}
 
 // @public
 export interface Transport {
