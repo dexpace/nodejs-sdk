@@ -1385,6 +1385,33 @@ for every other past instant, so a plausibility floor would be a new deviation r
 **Trigger:** a real server observed to send a pre-1970 `Retry-After`, or a spec erratum giving `RETRY-16` a
 lower bound on the year.
 
+---
+
+## Section L — Phase 7b (Instrumentation & Observability)
+
+Recorded at implementation time. Verified against `docs/product-spec/15-instrumentation-and-observability.md` (`OBS-1`..`OBS-18`, `OBS-20`..`OBS-27`, `OBS-30`..`OBS-40` executed; `OBS-19`, `OBS-28`, `OBS-29` deferred per design).
+
+### L1 — Deferred HTTP-Tracer Vocabulary and Transport Policies — **SCHEDULED** (Phase 8a / Phase 9)
+
+- `OBS-19` (dropped-header verbosity policy): Deferred to Phase 8a alongside the concrete `fetch` transport that first detects unencodable caller-set headers.
+- `OBS-28` (richer HTTP-tracer vocabulary with per-attempt and transport milestones) and `OBS-29` (HTTP-tracer lifecycle ordering contract): Deferred to Phase 8a (interface + transport milestones) and Phase 9 (ordering verification). Phase 7b ships operation/attempt-level `startSpan`/`end` (`OBS-21`..`OBS-25`).
+
+**Trigger:** Phase 8a transport adapters and Phase 9 conformance sweep.
+
+### L2 — G2 Deferred Emissions Resolved — **RESOLVED** (2026-08-28)
+
+`REDIR-28` hop and rejection logging, and `REDIR-15` downgrade logging are now integrated and active through `getGlobalLogger()`.
+
+### L3 — G12, K10, K14 Config & Auth Logger Retrofit — **SCHEDULED** (Phase 9)
+
+`AUTH-37` failed background refresh logging (`auth/bearer-cache.ts`), `CFG-24` malformed proxy warning (`config/proxy.ts`), and `CFG-5` configuration layer error logging (`config/configuration.ts`) were deferred pending the `Logger` facade. With `Logger` shipped in 7b, these call sites remain for the Phase 9 conformance / hardening sweep to avoid modifying out-of-scope files in 7b.
+
+**Trigger:** Phase 9 conformance sweep.
+
+### L4 — Attempt-Level vs. Operation-Level Span and Metric Scope (PIPE-2) — **RECORDED** (2026-08-28)
+
+`PIPE-2` fixes the `LOGGING` pillar step inside `RETRY` and `REDIRECT` pipelines. Consequently, `startSpan('http.client.request')` and metric increments (`http.client.request.count`, `http.client.request.duration`) execute per HTTP transmission attempt/hop. The higher-level logical operation span and HTTP-tracer lifecycle are owned by Phase 8a / `OBS-29`.
+
 
 ## Maintaining this file
 
@@ -1392,3 +1419,4 @@ Add an entry the moment a gap is found, not when it is fixed — the failure mod
 checklist row marked ✅ against code that does not implement it (A1, A2 are both instances). Remove an entry
 only when the underlying requirement is genuinely satisfied *and* its checklist row agrees. When a phase
 closes, re-scan its checklist against the code rather than trusting the marks.
+

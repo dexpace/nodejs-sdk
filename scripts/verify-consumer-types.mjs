@@ -46,6 +46,20 @@ const builtCodecJson = join(
   'dist',
   'index.js',
 );
+const builtLoggingPino = join(
+  repoRoot,
+  'packages',
+  'logging-pino',
+  'dist',
+  'index.js',
+);
+const builtLoggingDebug = join(
+  repoRoot,
+  'packages',
+  'logging-debug',
+  'dist',
+  'index.js',
+);
 const tsc = join(repoRoot, 'node_modules', '.bin', 'tsc');
 
 // Checked up front, not left to the catch below. A missing prerequisite reported through the
@@ -55,7 +69,12 @@ assert.ok(
   existsSync(tsc),
   `tsc not found at ${tsc} — run \`bun install\` before this gate`,
 );
-for (const artifact of [built, builtCodecJson]) {
+for (const artifact of [
+  built,
+  builtCodecJson,
+  builtLoggingPino,
+  builtLoggingDebug,
+]) {
   assert.ok(
     existsSync(artifact),
     `built package not found at ${artifact} — run \`bun run build\` before this gate`,
@@ -160,6 +179,33 @@ import {
   tristateToString,
   TypedResponse,
   valueOrNull,
+  type Counter,
+  type Histogram,
+  type Meter,
+  NOOP_METER,
+  type CreateLoggerOptions,
+  type LogEvent,
+  type LogLevel,
+  type Logger,
+  NOOP_LOGGER,
+  createLogger,
+  getGlobalLogger,
+  setGlobalLogger,
+  type Scope,
+  type Span,
+  type SpanContext,
+  type Tracer,
+  NOOP_SPAN,
+  NOOP_TRACER,
+  activateSpan,
+  activateSpanForCorrelation,
+  createInstrumentationBundle,
+  getActiveSpan,
+  type DroppedHeaderPolicy,
+  type LoggingGranularity,
+  type LoggingStepSettings,
+  LOGGING_STEP_TYPE,
+  loggingStep,
 } from ${JSON.stringify(built)};
 import {
   jsonSerde,
@@ -168,6 +214,16 @@ import {
   tristateObject,
   tristateReplacer,
 } from ${JSON.stringify(builtCodecJson)};
+import {
+  createPinoLogger,
+  type PinoLike,
+} from ${JSON.stringify(builtLoggingPino)};
+import {
+  createDebugLogger,
+  type DebugLike,
+  type DebugFactory,
+} from ${JSON.stringify(builtLoggingDebug)};
+
 
 export function readBody(response: Response): Promise<string> {
   return response.text();
@@ -367,6 +423,51 @@ export function tristateShape(inner: Schema<number>): Tristate<number> {
 }
 export function replacerRoundTrip(value: unknown): string {
   return JSON.stringify(value, tristateReplacer);
+}
+
+// --- Phase 7b Observability and Logging ---
+export function loggingSeam(logger: Logger, meter: Meter, tracer: Tracer): void {
+  const event: LogEvent = logger.atLevel('info' satisfies LogLevel);
+  event.event('test').field('k', 'v').cause(new Error('err')).emit();
+  const derived = logger.withContext({global: 'val'});
+  setGlobalLogger(derived);
+  getGlobalLogger();
+  NOOP_LOGGER.atLevel('verbose').emit();
+
+  const c: Counter = meter.createCounter('c', {unit: '{req}'});
+  c.add(1, {k: 'v'});
+  const h: Histogram = meter.createHistogram('h', {description: 'd'});
+  h.record(1.5);
+  NOOP_METER.createCounter('c').add(1);
+
+  const span: Span = tracer.startSpan('op');
+  const scope: Scope = activateSpan(span);
+  scope.close();
+  const correlatedScope = activateSpanForCorrelation(span);
+  correlatedScope.close();
+  getActiveSpan();
+  NOOP_TRACER.startSpan('op').end();
+  const bundle = createInstrumentationBundle(() => tracer);
+  traceOf(bundle);
+  const spanCtx: SpanContext | undefined = span.spanContext?.();
+  void spanCtx;
+
+  const stepOpts: LoggingStepSettings = {
+    logger,
+    meter,
+    severity: 'info',
+    granularity: 'body' satisfies LoggingGranularity,
+    previewSizeBytes: 4096,
+    tracerFactory: () => tracer,
+    droppedHeaderPolicy: 'mark',
+  };
+  const step = loggingStep(stepOpts);
+  void step;
+  void LOGGING_STEP_TYPE;
+}
+
+export function bridgeAdapters(pino: PinoLike, debug: DebugLike, debugFactory: DebugFactory): [Logger, Logger] {
+  return [createPinoLogger(pino), createDebugLogger(debugFactory, 'custom')];
 }
 `;
 
