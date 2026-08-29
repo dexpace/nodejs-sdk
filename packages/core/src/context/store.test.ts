@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/context/store.test.ts
-// Exercises: CTX-3 (all three flavors collapse to one slot, successive promotions overwriting it),
+// Exercises: XCUT-14 (a process-lived map whose key space callers influence carries a hard cap and
+// drains back under it with a LOOP after each insert, so an insert burst converges to the bound
+// instead of sitting above it -- see the burst test near the end of this file),
+// CTX-3 (all three flavors collapse to one slot, successive promotions overwriting it),
 // CTX-4 (two contexts sharing identical trace AND span id get distinct keys and both
 // register), CTX-8 (install-or-replace never throws; reject-on-duplicate fails naming the key),
 // CTX-9/CTX-10 (identity-conditional close, intermediate-link close is a no-op), CTX-11/CTX-12 (bounded,

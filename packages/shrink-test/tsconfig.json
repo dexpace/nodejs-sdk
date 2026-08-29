@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "target": "ES2023",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.AsyncIterable"
+    ]
+  },
+  "include": [
+    "src/**/*.ts",
+    "shrink-test.config.ts"
+  ]
+}

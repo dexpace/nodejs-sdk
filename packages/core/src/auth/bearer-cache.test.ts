@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/bearer-cache.test.ts
-// Exercises: AUTH-34 (fresh-zone hot-path read, no refresh), AUTH-35 (null/expired provider result
+// Exercises: XCUT-12 (hot-path credential-cache reads take no lock while valid, and refresh is
+// single-flight under a lock scoped to THIS cache -- the concurrent-coalescing tests below are the
+// SHOULD's conformance clause: "race N threads on an expiring token; assert exactly one fetch"),
+// AUTH-34 (fresh-zone hot-path read, no refresh), AUTH-35 (null/expired provider result
 // throws and is never cached; a rejecting provider propagates and is never cached), AUTH-37
 // (expiring-but-valid zone: stale value returned, background refresh fired, a FAILED background
 // refresh non-fatal and not an unhandled rejection; expired/missing zone: single-flight await,

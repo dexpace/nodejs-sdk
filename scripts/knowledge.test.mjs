@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // scripts/knowledge.test.mjs
 //
 // Run with `bun run test:scripts` (`node --test 'scripts/*.test.mjs'` — Node

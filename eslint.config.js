@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import {createRequire} from 'node:module';
 import tseslint from 'typescript-eslint';
 import gts from 'gts';

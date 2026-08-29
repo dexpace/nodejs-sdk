@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request.test.ts
-// Exercises: HTTP-6 (required fields), HTTP-7 (body/method legality), HTTP-8 (GET default / missing method),
+// Exercises: XCUT-15's alias and new-instance clauses (a model retains no alias to externally-mutable
+// state -- the returned URL is cloned per access, so mutating it cannot reach the request -- and every
+// "setter" yields a NEW instance rather than mutating in place: the HTTP-3/5 rows below. The
+// ingested-collection clause is asserted in headers.test.ts and query-params.test.ts),
+// HTTP-6 (required fields), HTTP-7 (body/method legality), HTTP-8 (GET default / missing method),
 // HTTP-9 (method), HTTP-46 (textual URL equality, no DNS), HTTP-47 (malformed URL), HTTP-3/5 (derivation,
 // immutability)
 import {describe, expect, test} from 'bun:test';

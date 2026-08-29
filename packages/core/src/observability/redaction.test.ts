@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/observability/redaction.test.ts
-// Exercises: OBS-11 (userinfo always redacted), OBS-12 (query allow-list, default {api-version}), OBS-13
+// Exercises: XCUT-19 (logging/telemetry redacts secrets BY DEFAULT: userinfo is never allow-listable,
+// query and fragment key=value tokens are redacted unless explicitly allow-listed, and header logging is
+// default-deny -- the whole clause is asserted across this file and credential.test.ts's no-secret-in-
+// string-form rows),
+// OBS-11 (userinfo always redacted), OBS-12 (query allow-list, default {api-version}), OBS-13
 // (fragment key=value tokens redacted the same way, plain fragment preserved), OBS-14 (scheme/host/port/path
 // untouched, no spurious "?"), OBS-15 (malformed URL -> fixed sentinel, never throws), OBS-16 (header-value
 // URL: absolute redacted like a request URL, relative keeps path + "?***" marker), OBS-18 (header-name

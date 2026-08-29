@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/auth-step.test.ts
-// Exercises: AUTH-27 (exactly one AUTH-stage descriptor, pinned to the pillar), AUTH-28 (HTTPS guard,
+// Exercises: XCUT-16 (a credential is NEVER stamped over a non-HTTPS transport; the refusal is loud and
+// lands before any token fetch or header write, and it applies only on the credential-attaching path --
+// a marker-suppressed cross-origin re-issue may proceed credential-free over any scheme),
+// AUTH-27 (exactly one AUTH-stage descriptor, pinned to the pillar), AUTH-28 (HTTPS guard,
 // NO_AUTH exempt, re-applied on the replay path), AUTH-29 (the cross-origin marker skips the guard and
 // stamping, is cleared from the outbound headers, and suppresses the challenge reaction too -- so the
 // credential cannot re-enter via the 401), AUTH-25 (a 407 is answered from Proxy-Authenticate into

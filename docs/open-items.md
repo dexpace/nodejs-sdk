@@ -1459,6 +1459,104 @@ reconnection stays caller-owned (`SSE-38`) and retry/backoff stays in 5a's engin
 `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` Item 1; no further action.
 
 
+## Section N — Phase 9 (Cross-Cutting Invariants & Conformance)
+
+Findings from the first systematic `XCUT-1`–`XCUT-24` / `NFR-1`–`NFR-17` pass. Every row here was found by
+driving the **composed** pipeline (`standardResilience()` over a real `fetchTransport()` against a local
+`node:http` fixture), which is the shape no earlier phase's own unit tests exercise.
+
+### N1 — Cancellation surfaces two different types depending on which layer was cancelled — **ACT**
+
+`XCUT-1` requires cancellation to surface "as a distinct, terminal, NON-retryable signal". The port has a type
+for exactly that, `CancellationError`. It is produced on one path and not the other:
+
+| Cancelled during | Surfaced as |
+|---|---|
+| the transport dispatch | `CancellationError` — `transport-shared`'s `abortToSdkError` maps the abort |
+| a retry backoff wait | `SuppressedError('retry attempts exhausted')` wrapping a bare `DOMException` `AbortError` |
+
+`retry/engine.ts` surfaces `config.signal.reason` (line 375) and whatever `Clock.sleep` rejected with (line 410)
+verbatim, so no mapping to `CancellationError` ever happens on the retry path. Verified against the composed
+pipeline: `.error` is `DOMException{name:'AbortError'}`, `.suppressed` is the prior `HttpStatusError`.
+
+**Not a MUST violation on its own reading of `XCUT-3`** — a cancellation *is* surfaced, it aborts
+near-immediately (measured well under 5s against a 60s backoff), no further attempt is dispatched, and it is
+unambiguously not a timeout, which is all `XCUT-3` demands. The defect is consistency: a caller writing
+`catch (e) { if (e instanceof CancellationError) … }` handles the transport case and silently misses the
+backoff case. `XCUT-2`'s "told apart by ambient state, not a message string" still holds either way, since
+`AbortError` vs `TimeoutError` is a `name` check.
+
+**Decision needed:** map the retry engine's two cancellation exits through the same `abortToSdkError`-shaped
+helper the transports use, or state in `CancellationError`'s own TSDoc that it is a transport-layer type and a
+caller must check the chain. Deliberately **not** patched in Phase 9 — the phase's plan says a failure found
+here "is in an earlier phase's shipped behavior, not something this task builds; file against that phase's own
+plan rather than patching around it here". Owner: 5a.
+
+`tests/conformance/xcut/cancellation-and-timeout.conformance.test.ts` asserts the invariant `XCUT-3` actually
+states (a cancellation is carried somewhere in the chain, and no timeout is) rather than pinning the current
+wrapper shape, so whichever way the decision goes the suite keeps passing.
+
+### N2 — `HttpStatusError`'s public constructor fabricates the "successful exception" `XCUT-8` forbids — **ACT**
+
+`XCUT-8` requires the status-to-exception mapping factory to reject a non-error status "rather than fabricate a
+'successful exception'", and permits a convenience form returning absent/null instead of throwing. The port
+ships only the convenience form, `toHttpError`, and it is correct — `toHttpError(200)` and `toHttpError(304)`
+both return `null` (asserted in `body/http-status-error.test.ts`). On that reading `XCUT-8` is satisfied.
+
+The hole is one level down. `HttpStatusError`'s constructor is `@public` in `core.api.md` and validates
+nothing:
+
+```
+new HttpStatusError(200, undefined, undefined)   →   HttpStatusError: HTTP 200   (status: 200)
+```
+
+That is precisely the "successful exception" the requirement names, and it contradicts the class's own TSDoc,
+which asserts `status` is "always in HTTP-11's 400-599 error band (BODY-31)" — an invariant documented but
+never enforced. Nothing in `packages/core` constructs one this way; the exposure is a consumer's.
+
+**Decision needed:** validate in the constructor and throw for a status outside 400-599 (a breaking change to a
+published constructor, so it wants a changeset), or drop the constructor from the public surface and let
+`toHttpError` be the only way to obtain one. The second is closer to the domain-model pattern the rest of
+`src/http/` follows, where a TS-`private` constructor keeps construction behind validation.
+
+Not patched in Phase 9: this is 3b's shipped surface, and Phase 9 audits rather than edits another phase's
+code. Owner: 3b, with Phase 10 as the natural landing spot since it already carries an API-surface pass.
+
+### N3 — Phase 9's plan asks for a `docs/knowledge/` grep that cannot return empty — **SCHEDULED** (Phase 10)
+
+The plan's Task 11 Step 4 runs `grep -rn "unresolved 2026-07-25" docs/knowledge/` and expects no output. It
+cannot pass as written. The design scoped §4 to the **three** markers in `tooling-and-quality-gates.md`; the
+grep is repo-wide and two further markers live elsewhere:
+
+| Marker | File | State in the code |
+|---|---|---|
+| `#private` fields as the default for model state | `http-domain-model.md:131` | Settled in practice — `#private` throughout `src/http/`, documented as the pattern in CLAUDE.md |
+| `enum` for the pipeline `Stage` ordering | `pipeline.md:179` | Settled in practice — `erasableSyntaxOnly` bans `enum`; the port ships `STAGE_ORDER`/`PILLAR_STAGES` frozen constant objects |
+
+Both are resolved *by the implementation* but never marked resolved *in the corpus*, which is exactly the
+silent-gap shape this register exists to prevent. Deliberately not marked here: writing a resolution into
+`docs/knowledge/` is a decision record, the checkpoint's rule only obliges markers its own §5 touched, and
+neither is an `XCUT`/`NFR` question — Phase 9's scope. Phase 10 owns deviation reconciliation and is the
+right place. The three markers Phase 9 *was* scoped to were already backported at planning time (`c6603aa`)
+and were confirmed still correct, not re-made.
+
+### N4 — `rxjs` version restated in three places against `NFR-14` — **ACT**
+
+`NFR-14` asks that dependency and tool versions live in a single source of truth so a bump is one edit. The
+root `workspaces.catalog` holds `@microsoft/api-extractor`, `expect-type`, `fast-check` and `typescript`.
+`rxjs@^7.8.0` is stated three times instead: root `devDependencies`, `packages/rx` `devDependencies`, and
+`packages/rx` `peerDependencies`. A bump is three edits, two of which are easy to miss.
+
+The peer range is legitimately per-package — it is part of what `@dexpace/rx` publishes, not a build
+coordinate. The two `devDependencies` restatements are the defect; a `rxjs` catalog entry collapses them.
+
+`debug >=4.0.0` and `pino >=8.0.0` are **not** defects for the same reason: each appears once, as a published
+peer range. `undici ^6.21.1` likewise appears once, as `transport-undici`'s own runtime dependency.
+
+Not fixed in Phase 9: it edits another package's manifest and changes the lockfile, which is 8b's surface.
+Owner: Phase 10, alongside its own dependency pass.
+
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a

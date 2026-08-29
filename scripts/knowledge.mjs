@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // scripts/knowledge.mjs
 //
 // Query surface over `docs/knowledge/`. The corpus is 39 topic files and ~1470
