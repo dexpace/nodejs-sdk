@@ -22,8 +22,9 @@ export default tseslint.config(
     rules: {'prettier/prettier': ['error', gtsPrettierOptions]},
   },
   {
-    // The root config, the `.mjs` verification scripts, and the Node-runtime
-    // conformance suite belong to no TypeScript project; they get the
+    // The root config, the `.mjs` verification scripts, the Node-runtime
+    // conformance suite, and the `.claude/skills` runners belong to no
+    // TypeScript project; they get the
     // gts/format baseline only, never the type-aware tiers below. gts scopes
     // its own Node globals to a fixed list of filenames that includes none of
     // these, so declare them here or `console`/`URL` trip `no-undef` — and, in
@@ -34,6 +35,7 @@ export default tseslint.config(
       'scripts/*.mjs',
       'packages/*/scripts/*.mjs',
       'test/node-conformance/*.mjs',
+      '.claude/skills/*/*.mjs',
     ],
     languageOptions: {sourceType: 'module', globals: globals.node},
   },

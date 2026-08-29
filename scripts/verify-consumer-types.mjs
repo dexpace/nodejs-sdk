@@ -60,6 +60,35 @@ const builtLoggingDebug = join(
   'dist',
   'index.js',
 );
+const builtBodyFile = join(
+  repoRoot,
+  'packages',
+  'body-file',
+  'dist',
+  'index.js',
+);
+const builtTransportShared = join(
+  repoRoot,
+  'packages',
+  'transport-shared',
+  'dist',
+  'index.js',
+);
+const builtTransportFetch = join(
+  repoRoot,
+  'packages',
+  'transport-fetch',
+  'dist',
+  'index.js',
+);
+const builtTransportUndici = join(
+  repoRoot,
+  'packages',
+  'transport-undici',
+  'dist',
+  'index.js',
+);
+const builtRx = join(repoRoot, 'packages', 'rx', 'dist', 'index.js');
 const tsc = join(repoRoot, 'node_modules', '.bin', 'tsc');
 
 // Checked up front, not left to the catch below. A missing prerequisite reported through the
@@ -74,6 +103,11 @@ for (const artifact of [
   builtCodecJson,
   builtLoggingPino,
   builtLoggingDebug,
+  builtBodyFile,
+  builtTransportShared,
+  builtTransportFetch,
+  builtTransportUndici,
+  builtRx,
 ]) {
   assert.ok(
     existsSync(artifact),
@@ -206,6 +240,9 @@ import {
   type LoggingStepSettings,
   LOGGING_STEP_TYPE,
   loggingStep,
+  IoError,
+  TransportFailureError,
+  type FileBodyDescriptor,
 } from ${JSON.stringify(built)};
 import {
   jsonSerde,
@@ -223,6 +260,25 @@ import {
   type DebugLike,
   type DebugFactory,
 } from ${JSON.stringify(builtLoggingDebug)};
+import {
+  fileBody,
+  type FileBodyOptions,
+} from ${JSON.stringify(builtBodyFile)};
+import {
+  fetchTransport,
+  type FetchTransportOptions,
+} from ${JSON.stringify(builtTransportFetch)};
+import {
+  undiciTransport,
+  type UndiciTransportOptions,
+} from ${JSON.stringify(builtTransportUndici)};
+import {
+  pageItems$,
+  pages$,
+  sseEvents$,
+  typedSse$,
+} from ${JSON.stringify(builtRx)};
+import type {Paginator, SseMapper, SseStream} from ${JSON.stringify(built)};
 
 
 export function readBody(response: Response): Promise<string> {
@@ -468,6 +524,40 @@ export function loggingSeam(logger: Logger, meter: Meter, tracer: Tracer): void 
 
 export function bridgeAdapters(pino: PinoLike, debug: DebugLike, debugFactory: DebugFactory): [Logger, Logger] {
   return [createPinoLogger(pino), createDebugLogger(debugFactory, 'custom')];
+}
+
+// Every symbol Phase 8a promotes, referenced from a consumer's own .d.ts on the declared lib with
+// types: []. @dexpace/transport-shared is deliberately absent: its exports are @internal and no
+// consumer is meant to import them, so only its build artifact's existence is asserted above.
+export function transportErrors(failure: TransportFailureError, io: IoError): string[] {
+  return [failure.name, failure.message, io.name];
+}
+
+export function transportAdapters(
+  descriptor: FileBodyDescriptor,
+  fileOptions: FileBodyOptions,
+  fetchOptions: FetchTransportOptions,
+): [Transport, FileBodyDescriptor] {
+  return [fetchTransport(fetchOptions), fileBody(descriptor.path, fileOptions)];
+}
+
+export function undiciAdapter(options: UndiciTransportOptions): Transport {
+  return undiciTransport(options);
+}
+
+export function rxBridge(
+  stream: SseStream,
+  mapper: SseMapper<number>,
+  paginator: Paginator<string>,
+): void {
+  const _e = sseEvents$(stream);
+  const _t = typedSse$(stream, mapper);
+  const _i = pageItems$(paginator);
+  const _p = pages$(paginator);
+  void _e;
+  void _t;
+  void _i;
+  void _p;
 }
 `;
 

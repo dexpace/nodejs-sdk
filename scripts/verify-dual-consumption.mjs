@@ -6,11 +6,30 @@
 // Phase 6a, when `@dexpace/codec-json` became the workspace's second package -- a check hard-coded
 // to one package silently stops covering the workspace the moment it grows.
 import assert from 'node:assert/strict';
-import {absent, present, serdeBody, Status} from '@dexpace/core';
+import {
+  absent,
+  Headers,
+  present,
+  Protocol,
+  Request,
+  Response,
+  serdeBody,
+  sseStreamFrom,
+  Status,
+} from '@dexpace/core';
 import {jsonSerde} from '@dexpace/codec-json';
 
 import {createPinoLogger} from '@dexpace/logging-pino';
 import {createDebugLogger} from '@dexpace/logging-debug';
+import {fileBody} from '@dexpace/body-file';
+import {
+  mapOutboundHeaders,
+  degradeInboundHeaders,
+} from '@dexpace/transport-shared';
+import {fetchTransport} from '@dexpace/transport-fetch';
+import {undiciTransport} from '@dexpace/transport-undici';
+import {pageItems$, pages$, sseEvents$, typedSse$} from '@dexpace/rx';
+import {firstValueFrom, toArray} from 'rxjs';
 
 assert.equal(Status.of(200).code, 200);
 assert.equal(Status.of(200).name, 'OK');
@@ -66,6 +85,53 @@ const debugLogger = createDebugLogger(fakeDebug);
 debugLogger.atLevel('info').event('dual.debug').field('k', 'v').emit();
 assert.equal(debugEvents.length, 1);
 assert.ok(debugEvents[0].includes('event=dual.debug'));
+
+// Exercise body-file
+const fb = fileBody('package.json');
+assert.equal(fb.kind, 'file');
+assert.equal(fb.replayable, true);
+
+// Exercise transport-shared: the outbound drop pass and the lenient inbound copy.
+const outbound = mapOutboundHeaders(
+  Headers.newBuilder().set('Content-Length', '10').set('X-Kept', 'v').build(),
+  ['content-length'],
+);
+assert.ok(outbound.dropped.includes('content-length'));
+assert.equal(outbound.sent.get('x-kept'), 'v');
+const inbound = degradeInboundHeaders([['Content-Type', 'text/plain']]);
+assert.equal(inbound.headers.get('content-type'), 'text/plain');
+
+// Exercise both transports far enough to prove the module graph resolved and construction runs --
+// not far enough to need a network. `close()` is the one lifecycle call that is safe with no peer.
+for (const transport of [fetchTransport(), undiciTransport()]) {
+  assert.equal(typeof transport.send, 'function');
+  assert.equal(typeof transport[Symbol.asyncDispose], 'function');
+  await transport.close();
+}
+// Exercise @dexpace/rx bridge
+const req = Request.newBuilder()
+  .method('GET')
+  .url('https://api.test/events')
+  .build();
+const sseBody = new ReadableStream({
+  start(controller) {
+    controller.enqueue(new TextEncoder().encode('data: hello\n\n'));
+    controller.close();
+  },
+});
+const sseResp = Response.newBuilder()
+  .request(req)
+  .status(Status.of(200))
+  .protocol(Protocol.HTTP_1_1)
+  .body(sseBody)
+  .build();
+const sseStream = sseStreamFrom(sseResp);
+const events = await firstValueFrom(sseEvents$(sseStream).pipe(toArray()));
+assert.equal(events.length, 1);
+assert.deepEqual(events[0].data, ['hello']);
+assert.equal(typeof typedSse$, 'function');
+assert.equal(typeof pageItems$, 'function');
+assert.equal(typeof pages$, 'function');
 
 console.log(
   'dual-consumption check passed: plain Node import resolved and executed all packages in workspace',

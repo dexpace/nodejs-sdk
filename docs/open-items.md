@@ -1413,6 +1413,52 @@ Recorded at implementation time. Verified against `docs/product-spec/15-instrume
 `PIPE-2` fixes the `LOGGING` pillar step inside `RETRY` and `REDIRECT` pipelines. Consequently, `startSpan('http.client.request')` and metric increments (`http.client.request.count`, `http.client.request.duration`) execute per HTTP transmission attempt/hop. The higher-level logical operation span and HTTP-tracer lifecycle are owned by Phase 8a / `OBS-29`.
 
 
+## Section M — Phase 8b (Async-Runtime Bridge, `@dexpace/rx`)
+
+Recorded at implementation time. Verified against `docs/product-spec/18-asynchronous-runtime-adapter-contract.md`
+(`ASYNC-1`..`ASYNC-22`) and `SSE-41`.
+
+### M1 — The `AsyncIterable`→`Observable` Bridge Is Hand-Written, Not `rxjs`'s `from()` — **RECORDED** (2026-08-28)
+
+8b's design (§1) and plan (Global Constraints) both instructed: do not hand-write the pull loop, use RxJS's own
+`from(asyncIterable)`, and prove it satisfies `ASYNC-6`/`ASYNC-13`/`ASYNC-21` rather than assuming it. The proof
+failed on one clause. `rxjs@7.8.2`'s async-iterable path tests `subscriber.closed` only *after* a pull resolves,
+so unsubscribing while a pull is suspended never reaches the source. For pagination that is invisible; for SSE it
+is the common case — an idle event stream is permanently suspended, so `unsubscribe()` would leave the response
+body unreleased and the connection open until the server next sent something.
+
+Resolved through the fallback both documents pre-authorized, scoped to that clause alone:
+`packages/rx/src/from-async-iterable.ts` (`@internal`) adds a teardown that releases the caller-supplied source
+and drives `iterator.return()`, release first so a suspended pull settles before the queued generator return.
+No scheduler, no error re-wrapping, no buffering.
+
+Full rationale in the plan's Self-Review. This is a deviation from the *plan's* implementation instruction, not
+from the product spec — `ASYNC-6`/`ASYNC-21`/`SSE-41` are satisfied as written, and
+`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`'s Phase 8b rows are unaffected.
+
+**Trigger:** an RxJS release that closes the gap. `from-async-iterable.conformance.test.ts`'s last case asserts
+the defect (`returns === 0` after an idle unsubscribe) and fails when it is fixed; at that point delete the
+module and go back to `from()`.
+
+### M2 — `ASYNC-*` IDs Marked 🚫 Are Not Yet Satisfied Anywhere — **SCHEDULED** (Phase 8a)
+
+`ASYNC-1`, `-2`, `-5`, `-15`, `-16`, `-17`, `-20`, and `-22` collapse onto `TRANSPORT-*` twins (`TRANSPORT-23`,
+`-21`, `-9`, `-15`/`-16`, `-29`, and the `SEAM-16` body-ownership invariant). The 8b checklist marks them 🚫
+"collapses onto Phase 8a," which is the correct disposition but reads, at a glance, like a closed row. **No
+shipped package implements those `TRANSPORT-*` requirements yet** — 8a (`transport-fetch`/`transport-undici`) has
+not executed. Recorded so an appendix-B sweep run between 8b and 8a does not count eight `MUST`s as covered.
+
+**Trigger:** Phase 8a landing. Its checklist owns the ✅ for each twin.
+
+### M3 — `ASYNC-18` Confirmed a Full-Port Collapse at Implementation Time — **RESOLVED** (2026-08-28)
+
+8b's design predicted that no adapter in this port needs a non-blocking scheduled-delay primitive, correcting the
+segmentation design's narrower "8b-only scope boundary" framing. The as-built package confirms it: `@dexpace/rx`
+contains no timer, no scheduler, and no backoff — the four wrappers only iterate what they are handed. SSE
+reconnection stays caller-owned (`SSE-38`) and retry/backoff stays in 5a's engine. Already reflected in
+`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` Item 1; no further action.
+
+
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a

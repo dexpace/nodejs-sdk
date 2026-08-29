@@ -7,10 +7,16 @@
       "devDependencies": {
         "@arethetypeswrong/cli": "^0.18",
         "@changesets/cli": "^2",
+        "@dexpace/body-file": "workspace:*",
         "@dexpace/codec-json": "workspace:*",
         "@dexpace/core": "workspace:*",
         "@dexpace/logging-debug": "workspace:*",
         "@dexpace/logging-pino": "workspace:*",
+        "@dexpace/rx": "workspace:*",
+        "@dexpace/transport-conformance": "workspace:*",
+        "@dexpace/transport-fetch": "workspace:*",
+        "@dexpace/transport-shared": "workspace:*",
+        "@dexpace/transport-undici": "workspace:*",
         "@eslint-community/eslint-plugin-eslint-comments": "^4",
         "@microsoft/api-extractor": "catalog:",
         "@types/bun": "latest",
@@ -20,8 +26,23 @@
         "gts": "^7",
         "mitata": "^1",
         "publint": "^0.3",
+        "rxjs": "^7.8.0",
         "typescript": "catalog:",
         "typescript-eslint": "^8",
+      },
+    },
+    "packages/body-file": {
+      "name": "@dexpace/body-file",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
       },
     },
     "packages/codec-json": {
@@ -57,13 +78,98 @@
       },
       "peerDependencies": {
         "@dexpace/core": "workspace:*",
+        "debug": ">=4.0.0",
       },
+      "optionalPeers": [
+        "debug",
+      ],
     },
     "packages/logging-pino": {
       "name": "@dexpace/logging-pino",
       "version": "0.0.0",
       "devDependencies": {
         "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+        "pino": ">=8.0.0",
+      },
+      "optionalPeers": [
+        "pino",
+      ],
+    },
+    "packages/rx": {
+      "name": "@dexpace/rx",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "rxjs": "^7.8.0",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+        "rxjs": "^7.8.0",
+      },
+    },
+    "packages/transport-conformance": {
+      "name": "@dexpace/transport-conformance",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+      },
+    },
+    "packages/transport-fetch": {
+      "name": "@dexpace/transport-fetch",
+      "version": "0.0.0",
+      "dependencies": {
+        "@dexpace/transport-shared": "workspace:*",
+      },
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@dexpace/transport-conformance": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+      },
+    },
+    "packages/transport-shared": {
+      "name": "@dexpace/transport-shared",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@microsoft/api-extractor": "catalog:",
+        "expect-type": "catalog:",
+        "fast-check": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "@dexpace/core": "workspace:*",
+      },
+    },
+    "packages/transport-undici": {
+      "name": "@dexpace/transport-undici",
+      "version": "0.0.0",
+      "dependencies": {
+        "@dexpace/transport-shared": "workspace:*",
+        "undici": "^6.21.1",
+      },
+      "devDependencies": {
+        "@dexpace/core": "workspace:*",
+        "@dexpace/transport-conformance": "workspace:*",
         "@microsoft/api-extractor": "catalog:",
         "expect-type": "catalog:",
         "fast-check": "catalog:",
@@ -134,6 +240,8 @@
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
 
+    "@dexpace/body-file": ["@dexpace/body-file@workspace:packages/body-file"],
+
     "@dexpace/codec-json": ["@dexpace/codec-json@workspace:packages/codec-json"],
 
     "@dexpace/core": ["@dexpace/core@workspace:packages/core"],
@@ -141,6 +249,16 @@
     "@dexpace/logging-debug": ["@dexpace/logging-debug@workspace:packages/logging-debug"],
 
     "@dexpace/logging-pino": ["@dexpace/logging-pino@workspace:packages/logging-pino"],
+
+    "@dexpace/rx": ["@dexpace/rx@workspace:packages/rx"],
+
+    "@dexpace/transport-conformance": ["@dexpace/transport-conformance@workspace:packages/transport-conformance"],
+
+    "@dexpace/transport-fetch": ["@dexpace/transport-fetch@workspace:packages/transport-fetch"],
+
+    "@dexpace/transport-shared": ["@dexpace/transport-shared@workspace:packages/transport-shared"],
+
+    "@dexpace/transport-undici": ["@dexpace/transport-undici@workspace:packages/transport-undici"],
 
     "@eslint-community/eslint-plugin-eslint-comments": ["@eslint-community/eslint-plugin-eslint-comments@4.7.2", "", { "dependencies": { "escape-string-regexp": "^4.0.0", "ignore": "^7.0.5" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0" } }, "sha512-LF03qURSwEWm2dz5wtdDCzNk+7Opl0X7q6I3undsaIuNsEiNvRV3BCtqu14Q/6Pzg1tBj44LcxpW2EpSLZStZw=="],
 
@@ -652,7 +770,7 @@
 
     "run-parallel": ["run-parallel@1.2.0", "", { "dependencies": { "queue-microtask": "^1.2.2" } }, "sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA=="],
 
-    "rxjs": ["rxjs@6.6.7", "", { "dependencies": { "tslib": "^1.9.0" } }, "sha512-hTdwr+7yYNIT5n4AMYp85KA6yw2Va0FLa3Rguvbpa4W3I5xynaBZo41cM3XM+4Q6fRMj3sBYIR1VAmZMXYJvRQ=="],
+    "rxjs": ["rxjs@7.8.2", "", { "dependencies": { "tslib": "^2.1.0" } }, "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA=="],
 
     "sade": ["sade@1.8.1", "", { "dependencies": { "mri": "^1.1.0" } }, "sha512-xal3CZX1Xlo/k4ApwCFrHVACi9fBqJ7V+mwhBsuf/1IOKbBy098Fex+Wa/5QMubw09pSZ/u8EY8PWgevJsXp1A=="],
 
@@ -730,7 +848,7 @@
 
     "ts-declaration-location": ["ts-declaration-location@1.0.7", "", { "dependencies": { "picomatch": "^4.0.2" }, "peerDependencies": { "typescript": ">=4.0.0" } }, "sha512-EDyGAwH1gO0Ausm9gV6T2nUvBgXT5kGoCMJPllOaooZ+4VvJiKBdZE7wK18N1deEowhcUptS+5GXZK8U/fvpwA=="],
 
-    "tslib": ["tslib@1.14.1", "", {}, "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="],
+    "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "type-check": ["type-check@0.4.0", "", { "dependencies": { "prelude-ls": "^1.2.1" } }, "sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew=="],
 
@@ -739,6 +857,8 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "typescript-eslint": ["typescript-eslint@8.65.0", "", { "dependencies": { "@typescript-eslint/eslint-plugin": "8.65.0", "@typescript-eslint/parser": "8.65.0", "@typescript-eslint/typescript-estree": "8.65.0", "@typescript-eslint/utils": "8.65.0" }, "peerDependencies": { "eslint": "^8.57.0 || ^9.0.0 || ^10.0.0", "typescript": ">=4.8.4 <6.1.0" } }, "sha512-/ggrHAwyjENDusvyxbuqxAC2dTnZg/Z8F+fgQtYIz+L6n/9HfSlEZcFGV/NsMNa6CkGk0xUjUAFwC0vHOflvIA=="],
+
+    "undici": ["undici@6.28.0", "", {}, "sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA=="],
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
 
@@ -836,6 +956,8 @@
 
     "inquirer/ansi-escapes": ["ansi-escapes@4.3.2", "", { "dependencies": { "type-fest": "^0.21.3" } }, "sha512-gKXj5ALrKWQLsYG9jlTRmR/xKluxHV+Z9QEwNIgCfM1/uwPMCuzVVnh5mwTd+OuBZcwSIMbqssNWRm1lE51QaQ=="],
 
+    "inquirer/rxjs": ["rxjs@6.6.7", "", { "dependencies": { "tslib": "^1.9.0" } }, "sha512-hTdwr+7yYNIT5n4AMYp85KA6yw2Va0FLa3Rguvbpa4W3I5xynaBZo41cM3XM+4Q6fRMj3sBYIR1VAmZMXYJvRQ=="],
+
     "js-yaml/argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
     "marked-terminal/chalk": ["chalk@5.6.2", "", {}, "sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA=="],
@@ -881,6 +1003,8 @@
     "eslint/minimatch/brace-expansion": ["brace-expansion@1.1.18", "", { "dependencies": { "balanced-match": "^1.0.0", "concat-map": "0.0.1" } }, "sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw=="],
 
     "inquirer/ansi-escapes/type-fest": ["type-fest@0.21.3", "", {}, "sha512-t0rzBq87m3fVcduHDUFhKmyyX+9eo6WQjZvf51Ea/M0Q7+T374Jp1aUiyUl0GKxp8M/OETVHSDvmkyPgvX+X2w=="],
+
+    "inquirer/rxjs/tslib": ["tslib@1.14.1", "", {}, "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="],
 
     "read-pkg-up/find-up/locate-path": ["locate-path@5.0.0", "", { "dependencies": { "p-locate": "^4.1.0" } }, "sha512-t7hw9pI+WvuwNJXwk5zVHpyhIqzg2qTlklJOf0mVxGSbe3Fp2VieZcduNYjaLDoy6p9uGpQEGWG87WpMKlNq8g=="],
 

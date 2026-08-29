@@ -37,8 +37,9 @@ Node).
 ## Membership rule
 
 **A phase that touches a runtime-divergent surface adds a case here, not only to `bun test`** (§5.9:378). That
-means Phase 4 (pipelines, where `NFR-11`'s async-framework-leak check lands) and Phase 8 (concrete
-`fetch`/`undici` transports, where this stops being precautionary and becomes the point).
+means Phase 4 (pipelines, where `NFR-11`'s async-framework-leak check lands) and Phase 8 — both halves: 8a's
+concrete `fetch`/`undici` transports, where this stops being precautionary and becomes the point, and 8b's
+RxJS bridge, whose entire reason for being hand-written is a cancellation path the runtime decides.
 
 ## Files
 
@@ -47,4 +48,6 @@ means Phase 4 (pipelines, where `NFR-11`'s async-framework-leak check lands) and
 | `seams.test.mjs` | `AbortSignal.any()` composition — folded in from the retired `scripts/verify-node-floor.mjs`, whose two assertions were the only Node coverage that existed before this suite — plus the `globalThis.crypto` floor assertion, made from ESM on purpose (Node 18 exposed `crypto` to CommonJS while leaving it undefined in ES modules) |
 | `io-byte-stream.test.mjs` | Phase 3a's `ByteQueue`, `BufferedSource` + views, `BufferedSink`, `TeeSink`, `writeAll` |
 | `body-lifecycle.test.mjs` | Phase 3b's public body surface over real Node Web Streams — reader-lock discipline, `pipeTo` ownership, multipart framing, error-body buffering |
+| `transport.test.mjs` | Phase 8a's two concrete transports against a real `node:http` server on Node's own `fetch`/`undici`, `AbortSignal`, and Web Streams — redirect passthrough, timeout and no-response classification, a single-use streaming request body, lazy response bodies, `SEAM-16`'s abort-after-delivery rule, and concurrency |
 | `redirect.test.mjs` | Phase 5b's Location resolution on Node's own WHATWG `URL` parser (relative resolution, percent-encoding preservation, userinfo clearing, bracketed IPv6, which malformed forms throw versus resolve as a relative reference) plus `PIPE-40`'s per-hop close discipline over real Node Web Streams |
+| `rx-bridge.test.mjs` | Phase 8b's `@dexpace/rx` cancellation path — unsubscribing an idle `sseEvents$`/`typedSse$` must reach the source, which depends on Node's `ReadableStream.cancel()` settling a suspended read and on Node's async-generator `return()` queueing behind an in-flight `next()`; plus `pages$`'s mid-walk page release |

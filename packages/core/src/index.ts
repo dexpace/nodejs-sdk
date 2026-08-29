@@ -31,6 +31,7 @@ export {
   isTimeoutSignal,
   CancellationError,
 } from './seams/transport.js';
+export {IoError, TransportFailureError} from './io/errors.js';
 export type {OperationDescriptor} from './seams/operation.js';
 export {buildRequest, OperationAssemblyError} from './seams/operation.js';
 
@@ -41,7 +42,7 @@ export {buildRequest, OperationAssemblyError} from './seams/operation.js';
 // `new ByteArrayBody(...)` as a field-wise constructor, which HTTP-2 forbids ("constructible only
 // through their builder or dedicated factory") and which duplicates the factory functions for no
 // stated need (NFR-3). Callers construct via the factories and annotate with the types.
-export type {Body} from './body/body.js';
+export type {Body, FileBodyDescriptor} from './body/body.js';
 export {
   ConsumedBodyError,
   FormBodyValidationError,
