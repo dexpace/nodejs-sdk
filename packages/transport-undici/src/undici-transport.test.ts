@@ -2,6 +2,9 @@
 // packages/transport-undici/src/undici-transport.test.ts
 // Exercises: TRANSPORT-2 (no redirect interceptor is composed), TRANSPORT-8 (a native-internal cancel
 // is terminal while a timeout stays retryable), TRANSPORT-11 (undici keeps `Connection`),
+// XCUT-22 (the SDK closes only resources it created: a caller-supplied dispatcher is never closed and
+// stays usable afterwards), XCUT-13 (close is idempotent -- a second call is a no-op that neither
+// throws nor blocks),
 // TRANSPORT-15/16 (ownership-aware, idempotent close), TRANSPORT-22 (an adaptation throw destroys the
 // native body), TRANSPORT-20 (a permanent argument error is terminal, a no-response failure is
 // retryable), TRANSPORT-28 (a file body dispatches its declared byte range), SEAM-14

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/digest.test.ts
-// Exercises: AUTH-15 (exactly {MD5, MD5-sess, SHA-256, SHA-256-sess}, qop=auth or absent, declines
+// Exercises: XCUT-14 (the per-nonce counter is a server-keyed, process-lived map, so it carries a hard
+// 1024-entry cap and drains back under it with a loop after each insert -- asserted below), XCUT-21
+// (the client nonce is drawn from a CSPRNG with >= 128 bits of entropy, never a non-cryptographic RNG),
+// AUTH-15 (exactly {MD5, MD5-sess, SHA-256, SHA-256-sess}, qop=auth or absent, declines
 // auth-int and unsupported algorithms), AUTH-16 (satisfiability: scheme/realm/nonce/qop/algorithm,
 // and configured-preference order over wire order), AUTH-17 (HA1/HA2/response per RFC 7616/2069,
 // verified against independently-computed vectors), AUTH-18/AUTH-19 (nonce count: starts at 1,

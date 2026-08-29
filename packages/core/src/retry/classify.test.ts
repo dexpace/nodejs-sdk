@@ -4,7 +4,11 @@
 // identity-tracking cause walk, cycle-safe), RETRY-3 (retryability derived from status, not a stored
 // flag), RETRY-4 (transport failures always retryable), RETRY-5/6/7 (re-sendability), RETRY-8 (both
 // axes required), RETRY-23/24 (cancellation vs timeout), RETRY-25 (allow-list makes the fatal
-// exclusion vacuous), RETRY-37 (configured set is authoritative -- widens AND narrows).
+// exclusion vacuous), RETRY-37 (configured set is authoritative -- widens AND narrows),
+// XCUT-5 (the baked retryability flag comes from ONE shared status classifier covering 408/429/all
+// 5xx except 501 and 505 -- asserted below. This port has no separately-cached boolean field: the
+// classifier is a pure function of HttpStatusError.status, which never changes post-construction
+// (XCUT-15), so querying it at any later time is equivalent to reading a flag baked at construction).
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {HttpStatusError} from '../body/http-status-error.js';

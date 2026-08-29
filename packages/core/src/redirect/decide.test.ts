@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/redirect/decide.test.ts
+// Exercises: XCUT-17's two clauses a plaintext conformance fixture cannot reach -- (c) userinfo embedded
+// in a Location is dropped before re-issue (REDIR-12), and (d) an HTTPS-to-HTTP downgrade is denied by
+// default and permitted only by explicit opt-in (REDIR-14/15). The stripping clauses (a)/(b) are asserted
+// end-to-end in tests/conformance/xcut/security-by-default.conformance.test.ts.
 // Exercises every numbered step of decide()'s contract: REDIR-1/REDIR-2 (the non-redirect fast path and
 // the never-followed 300/304/305), REDIR-21 (a recognized 3xx always allocates the snapshot and consults
 // the predicate, even with no usable Location; a non-redirect status never does), REDIR-20 (the predicate

@@ -27,7 +27,7 @@ bun run typecheck        # build:deps, then tsc --noEmit per package
 bun run lint             # build:deps, then gts lint . — formatting AND type-aware rules; fatal
 bun run fix              # build:deps, then gts fix . — autofixes formatting/lint
 bun run build            # build:deps, then plain tsc for the rest → each package's dist/
-bun test                 # needs `build` first (see below); coverage on by default, 80% line floor
+bun run test             # BOTH test trees (see below); needs `build` first; coverage on, 80% line floor
 bun run test:node        # Node-runtime conformance against the BUILT artifact; needs `build` first
 ```
 
@@ -38,15 +38,19 @@ reason, so every one of them works on a fresh clone. Both legs are `tsc`, so a w
 Do not drop that prefix to "save a step": without it `typecheck` fails with unresolved-module errors the
 moment `dist/` is absent, which is exactly what a CI runner sees.
 
-**`build:deps` is the list, and it grows.** It is core plus `@dexpace/transport-shared` today. A package
-belongs in it the moment another package's `src/` imports it *by name* and its `exports` point at `dist/`.
+**`build:deps` is the list, and it grows.** It is core, `@dexpace/transport-shared`, `@dexpace/codec-json` and
+`@dexpace/transport-fetch` today. A package belongs in it the moment another package's `src/` — or the top-level
+`tests/` tree — imports it *by name* and its `exports` point at `dist/`.
 Phase 8a proved the cost of missing one: `transport-shared` landed as the second such package, `build:core`
 stayed the prefix, and CI failed on `typecheck` at the first fresh clone while every local gate stayed green
-against a warm `dist/`. `@dexpace/transport-conformance` is deliberately absent — it is `private` and its
-`exports` name `./src/index.ts`, so it resolves unbuilt. Check the graph, not this sentence:
+against a warm `dist/`. Phase 9 grew it twice over for one reason: `packages/shrink-test/src/` imports `codec-json` and
+`transport-fetch` by name, and so does `tests/conformance/xcut/`. `@dexpace/transport-conformance` is
+deliberately absent — it is `private` and its `exports` name `./src/index.ts`, so it resolves unbuilt. Check the
+graph, not this sentence:
 
 ```bash
 for d in packages/*/; do grep -rhoE "from '@dexpace/[a-z-]+'" "$d/src" | sort -u; done
+grep -rhoE "from '@dexpace/[a-z-]+'" tests | sort -u          # the second test tree counts too
 ```
 
 `node .claude/skills/ci-preflight/run-ci.mjs --clean` is what catches a missing entry — it sweeps every
@@ -56,23 +60,36 @@ banner): CI resolves that file, and Bun's `fetch`/`node:http` differ enough betw
 transport rows passed on 1.4.0 and failed three ways on the pinned 1.3.14. `--clean` plus that default is the
 difference between "the gates pass here" and "CI will be green".
 
-`bun test` runs the unit suite on **Bun** and is scoped to `packages/` (`bunfig.toml`'s `[test] root`).
-**It needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach core
-through its published entry point, which Bun resolves to `packages/core/dist/`. On a fresh clone they cannot
-resolve core at all; against a stale `dist/` they report green over yesterday's core. CI is safe — its Build
-step precedes its Test step. The root `test` script deliberately does not build first, so the inner loop stays
-fast; rebuild when you have changed `packages/core/src/`.
+**There are two test trees, and `bun run test` is the only command that runs both.** Colocated unit tests
+live under `packages/*/src/`; cross-package conformance suites that drive a composed pipeline over a real
+socket live under `tests/` (styleguide 11-testing: integration tests crossing a process or network boundary
+belong in a top-level `tests/`, not beside one module). The root script is `bun test ./packages ./tests` —
+two trees, one process, one coverage report, one exit code.
+
+**A bare `bun test` silently runs only the first tree.** `bunfig.toml`'s `[test] root = "packages"` governs
+discovery, so a bare invocation never visits `tests/` and reports green over a suite it never opened, with
+no "0 files matched" to notice. Explicit `./`-prefixed paths override the root — a plain `tests/...`
+argument is treated as a name filter and matches nothing, which is its own quiet failure. The coverage floor
+does still fire on the combined run (confirmed by raising `coverageThreshold` and watching it exit 1), so
+CI's Test step is `bun run test --coverage` rather than the bare form.
+
+**Either form needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach
+core through its published entry point, which Bun resolves to `packages/core/dist/`. On a fresh clone they
+cannot resolve core at all; against a stale `dist/` they report green over yesterday's core. CI is safe — its
+Build step precedes its Test step. The root `test` script deliberately does not build first, so the inner loop
+stays fast; rebuild when you have changed `packages/core/src/`.
 
 `test:node` is a separate, thin layer under `test/node-conformance/` that runs the same built package under
 `node --test`, because Bun's Web Streams / `AbortSignal` / `Uint8Array` behavior is an independent
 implementation of Node's and `src/io/` is where they diverge. **A phase that touches a runtime-divergent
-surface adds a case there, not only to `bun test`** — see `test/node-conformance/README.md`.
+surface adds a case there, not only to `bun run test`** — see `test/node-conformance/README.md`.
 
 Single test file or single test:
 
 ```bash
 bun test packages/core/src/http/media-type.test.ts
-bun test -t 'rejects blank input'          # filter by test name
+bun test -t 'rejects blank input'                    # filter by test name
+bun test ./tests/conformance/xcut                    # a tests/ path needs the ./ prefix
 ```
 
 API surface — one committed report per package (`packages/core/etc/core.api.md`,
@@ -98,7 +115,7 @@ bun run audit                     # bun audit --audit-level=high --prod
 ```
 
 **Every one of these is a blocking CI step** (`.github/workflows/ci.yml`). Run the full set before claiming
-work is done — `bun test` passing is not sufficient evidence.
+work is done — `bun run test` passing is not sufficient evidence.
 
 `bun run test:scripts` (`node --test scripts/*.test.mjs`) tests the *gates themselves* — the knowledge CLI and
 `verify-seam-1.mjs`. It is **not** wired into CI yet (`docs/open-items.md` H13), so run it by hand after

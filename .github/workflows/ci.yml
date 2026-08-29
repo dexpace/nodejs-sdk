@@ -28,8 +28,11 @@ jobs:
       - name: Build
         run: bun run build
 
+      # `bun run test`, not a bare `bun test`: the root script passes both test
+      # trees explicitly (`./packages ./tests`), and bunfig's `root = "packages"`
+      # means a bare invocation silently skips `tests/`. See CLAUDE.md.
       - name: Test (with coverage)
-        run: bun test --coverage
+        run: bun run test --coverage
 
       - name: API surface check
         run: bun run api

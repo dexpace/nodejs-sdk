@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-fetch/src/fetch-transport.test.ts
-// Exercises: TRANSPORT-2 (no retrying/redirecting dispatcher is ever composed), TRANSPORT-15/16
+// Exercises: XCUT-13 (close is idempotent -- a repeat call is a latched no-op that neither throws nor
+// blocks), XCUT-22 (the SDK closes only what it created; this transport creates no pooled resource, so
+// its close owns nothing to release),
+// TRANSPORT-2 (no retrying/redirecting dispatcher is ever composed), TRANSPORT-15/16
 // (close is a documented no-op), TRANSPORT-17/19 (single-use body written once, abandoned producer
 // unblocked), TRANSPORT-22 (an adaptation throw still closes the native response), TRANSPORT-30
 // (no proxy option exists at all)

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/observability/logging-step.test.ts
-// Exercises: OBS-34 (granularity gates log events, not span/metrics), OBS-35 (level resolves from
+// Exercises: XCUT-20 (observability code paths NEVER throw into the caller's request path -- a failing
+// sink degrades to a self-describing http.instrumentation.* event and the request still completes),
+// XCUT-24 (diagnostic body previews are byte-capped and non-consuming: OBS-36/37/38 below),
+// OBS-34 (granularity gates log events, not span/metrics), OBS-35 (level resolves from
 // Configuration, tolerant/case-insensitive), OBS-39 (stable http.request/http.response event names/keys,
 // url.full always redacted), OBS-20 (a throwing Logger is caught and re-surfaced as http.instrumentation.*;
 // a throwing tracer/meter propagates, NOT caught), OBS-36, OBS-37, OBS-38 (body previews).

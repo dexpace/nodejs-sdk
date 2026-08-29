@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/headers.test.ts
-// Exercises: HTTP-13 (case-insensitive storage), HTTP-14 (multi-value add/set), HTTP-15 (null removes),
+// Exercises: XCUT-18 (header name/value validation is the request-splitting defense, and it lives at the
+// transport-agnostic model layer so no transport can be reached with a CR/LF-bearing header: names reject
+// every C0 control byte INCLUDING HTAB plus DEL and non-ASCII; outbound values reject the same set EXCEPT
+// HTAB; inbound values are lenient about obs-text but still reject control bytes),
+// HTTP-13 (case-insensitive storage), HTTP-14 (multi-value add/set), HTTP-15 (null removes),
 // HTTP-16 (insertion order), HTTP-3 (newBuilder derivation doesn't alias), HTTP-5 (no live-builder leak),
+// XCUT-15's ingested-collection clause (a builder defensively copies what it is handed, so mutating that
+// collection after build() cannot alter the built model, and a derived builder never aliases its source),
 // HTTP-17 (outbound name validation + trim), HTTP-18 (outbound value validation), HTTP-19 (inbound leniency),
 // HTTP-20 (no value echo, escaped name), HTTP-21 (typed HeaderName interop)
 import {describe, expect, test} from 'bun:test';

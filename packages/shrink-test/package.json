@@ -1,0 +1,15 @@
+{
+  "name": "@dexpace/shrink-test",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@dexpace/codec-json": "workspace:*",
+    "@dexpace/core": "workspace:*",
+    "@dexpace/transport-fetch": "workspace:*",
+    "esbuild": "^0.28.2"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}

@@ -2,7 +2,11 @@
 // packages/core/src/body/http-status-error.test.ts
 // Exercises: HTTP-52/BODY-30 (1 MiB cap, replayable re-serve, buffered inside close-guaranteeing scope),
 // BODY-31 (4xx/5xx only, no-body response returned unchanged), BODY-33 (non-consuming preview),
-// HTTP-42 (preview decodes with the media type's charset, falling back to UTF-8, never throwing)
+// HTTP-42 (preview decodes with the media type's charset, falling back to UTF-8, never throwing),
+// XCUT-8 (the status-to-exception mapping factory refuses to fabricate a "successful exception":
+// toHttpError returns null for 1xx/2xx/3xx rather than an error, which is the absent/null
+// convenience form XCUT-8 explicitly permits in place of a throwing strict mapper. The port ships
+// only that form -- see docs/open-items.md N2 for the constructor-level hole in the same guarantee).
 import {describe, expect, test} from 'bun:test';
 import {Headers} from '../http/headers.js';
 import {Protocol} from '../http/protocol.js';
