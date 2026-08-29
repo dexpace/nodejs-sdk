@@ -19,7 +19,7 @@
 // summary and a tail of each failure reach stdout.
 
 import {spawnSync} from 'node:child_process';
-import {mkdirSync, writeFileSync} from 'node:fs';
+import {globSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
 import {argv, cwd, exit, stdout, version} from 'node:process';
 
 // Mirrors ci.yml step for step. `ci` is the workflow's own step name, so a failure here can be
@@ -116,12 +116,19 @@ const STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const LOG_DIR = 'node_modules/.cache/ci-preflight';
 
 function parseArgs(args) {
-  const opts = {only: null, skipInstall: false, tail: 30, nodeFloor: false};
+  const opts = {
+    only: null,
+    skipInstall: false,
+    tail: 30,
+    nodeFloor: false,
+    clean: false,
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--list') opts.list = true;
     else if (arg === '--skip-install') opts.skipInstall = true;
     else if (arg === '--node-floor') opts.nodeFloor = true;
+    else if (arg === '--clean') opts.clean = true;
     else if (arg === '--only')
       opts.only = (args[++i] ?? '').split(',').filter(Boolean);
     else if (arg.startsWith('--only='))
@@ -146,6 +153,9 @@ Runs every blocking step of .github/workflows/ci.yml against the working tree.
   --skip-install  Skip the frozen-lockfile install.
   --node-floor    Additionally run test:node under Node ${NODE_FLOOR}, CI's floor
                   leg. Needs mise, fnm, or nvm; downloads the toolchain once.
+  --clean         Delete every dist/ and *.tsbuildinfo first, so the run starts
+                  from the state CI checks out. Catches missing build
+                  prerequisites that a warm tree hides. Costs ~40s.
   --tail N        Lines of a failing step's log to print (default 30).
   --list          List step ids and exit.
 
@@ -291,8 +301,25 @@ if (opts.list) {
   exit(0);
 }
 
+// CI checks out a tree with no build artifacts in it; a working tree almost never is one. That gap
+// hides a whole class of defect -- a package whose `exports` point at `dist/` being imported by name
+// from another package's `src/` without anything building it first. Every gate passes locally
+// against the stale `dist/` left over from the last build, and the fresh clone CI runs cannot
+// resolve the module at all. Sweeping the artifacts is what makes the preflight a real rehearsal.
+function cleanArtifacts() {
+  const targets = [
+    ...globSync('packages/*/dist'),
+    ...globSync('packages/*/*.tsbuildinfo'),
+  ];
+  for (const target of targets) rmSync(target, {recursive: true, force: true});
+  stdout.write(
+    `clean: removed ${targets.length} build artifact(s) — starting from CI's state\n`,
+  );
+}
+
 mkdirSync(LOG_DIR, {recursive: true});
 const steps = selectSteps(opts);
+if (opts.clean) cleanArtifacts();
 stdout.write(
   `CI preflight — ${steps.length} step(s) from .github/workflows/ci.yml, in ${cwd()}\n`,
 );

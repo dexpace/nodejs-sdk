@@ -33,15 +33,16 @@ Do not hand-run the thirteen commands instead. Two things go wrong when you do:
 ## The workflow
 
 1. **Run it.** Add `--skip-install` only if you have not touched `package.json` since the
-   last install.
+   last install. **Add `--clean` before you push** — see below; a warm run cannot see a
+   whole class of defect that CI hits on its first step.
 2. **All green** → say so plainly: CI is all good, naming the count (`all 14 steps passed`).
    Nothing else to do.
 3. **Anything red** → report the findings to the user *first*: which gates failed, what each
    one means, and the fix you intend. One line per finding, not a transcript dump.
 4. **Then resolve them**, using the playbook below.
 5. **Re-verify.** Re-run the affected gates while iterating
-   (`--only lint,api --skip-install`), then **one full clean run before reporting done**. A
-   subset pass is not a green CI — fixes cross gate boundaries constantly (a lint fix edits
+   (`--only lint,api --skip-install`), then **one full `--clean` run before reporting done**.
+   A subset pass is not a green CI — fixes cross gate boundaries constantly (a lint fix edits
    an export, which moves the API report, which fails `api`).
 
 Report honestly at every step: if a gate still fails, say so with its output. Never describe
@@ -63,6 +64,18 @@ Both of these will make you report a passing gate that CI rejects.
   run `build:core` first, so one bad type in `packages/core/src/` makes all three fail with
   the *same* `tsc` error and `gts lint .` never executes. Fix the compile error, then re-run
   `lint` — the formatting and rule findings are still there, unseen.
+- **A warm tree hides missing build prerequisites.** CI checks out a tree with no `dist/` in
+  it; yours almost never is one. A package whose `exports` point at `dist/`, imported by name
+  from another package's `src/` with nothing building it first, resolves fine locally against
+  the leftovers of your last build and fails on a fresh clone. Every gate goes green here and
+  CI dies on step 2. **`--clean` is the answer** — it sweeps every `dist/` and `*.tsbuildinfo`
+  first, so the run starts where CI starts. It costs ~40s of rebuild.
+
+  This is not hypothetical. PR #52 failed exactly this way: Phase 8a made
+  `@dexpace/transport-shared` the second published package imported by name from another
+  package's `src/`, `typecheck` and `lint` still pre-built only core, and a warm preflight
+  passed all 14 steps on the commit CI rejected. Fixed by `build:deps` — see CLAUDE.md, and
+  keep that list current when a new package crosses the same line.
 - **The coverage floor fails silently.** `bun test` enforces `bunfig.toml`'s
   `coverageThreshold` (0.8) by **exit code alone**. It prints no threshold message, and the
   summary still reads `0 fail`. The runner prints a `note:` when it detects this; without
@@ -76,7 +89,7 @@ Both of these will make you report a passing gate that CI rejects.
 | Step | A failure means | First move |
 |---|---|---|
 | `install` | `bun.lock` disagrees with a `package.json`. The tree CI installs is not yours, so nothing after it is measuring the right thing — the runner stops here. | `bun install`, then commit `bun.lock`. |
-| `typecheck` | `tsc --noEmit` over all 9 projects. | Real fix. Usual suspects: a missing `.js` extension on a relative import (NodeNext), a type import without `import type` (`verbatimModuleSyntax`), an enum/namespace/parameter property (`erasableSyntaxOnly`). |
+| `typecheck` | `tsc --noEmit` over all 9 projects. | `Cannot find module '@dexpace/…'` means a build prerequisite is missing from `build:deps`, not a bad import — check with `--clean`. Otherwise a real fix; usual suspects: a missing `.js` extension on a relative import (NodeNext), a type import without `import type` (`verbatimModuleSyntax`), an enum/namespace/parameter property (`erasableSyntaxOnly`). |
 | `lint` | Formatting **and** type-aware rules; formatting is an error, not a warning. | `bun run fix` first — it clears every prettier finding. Hand-fix what survives: 70-line function cap, `max-depth` 3, `max-params` 3, explicit return types on exported members. Every `eslint-disable` needs a `-- reason`. |
 | `build` | Emit failed. **Blocks the ten gates below it**, which the runner reports `SKIP`. | Fix this before reading anything else; the skipped gates are unknown, not passing. |
 | `test` | A failing test, *or* the silent coverage floor (see above). | If the tail says `0 fail`, it is coverage — find the file that dropped below 0.8 in the printed table and test it. Otherwise fix the test or the code. |
@@ -121,6 +134,7 @@ consumer-facing change still needs `bun run changeset`).
 | Flag | Effect |
 |---|---|
 | `--only a,b` | Run just these step ids. The iteration loop; still respects order and the build-gates-everything rule. |
+| `--clean` | Sweep every `dist/` and `*.tsbuildinfo` first, so the run starts from the tree CI checks out. The pre-push default. ~40s. |
 | `--skip-install` | Skip the frozen-lockfile install. Safe when `package.json` is untouched. |
 | `--node-floor` | Also run `test:node` under Node 20.3.0 via mise/fnm/nvm. |
 | `--tail N` | Lines of a failing log to print (default 30). Raise for a wall of tsc errors. |

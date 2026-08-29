@@ -41,12 +41,13 @@
     "fast-uri": "^3.1.5"
   },
   "scripts": {
-    "lint": "bun run build:core && gts lint .",
-    "fix": "bun run build:core && gts fix .",
+    "lint": "bun run build:deps && gts lint .",
+    "fix": "bun run build:deps && gts fix .",
     "build:core": "tsc -b packages/core/tsconfig.build.json",
-    "typecheck": "bun run build:core && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit && tsc -p packages/logging-pino/tsconfig.json --noEmit && tsc -p packages/logging-debug/tsconfig.json --noEmit && tsc -p packages/body-file/tsconfig.json --noEmit && tsc -p packages/transport-shared/tsconfig.json --noEmit && tsc -p packages/transport-conformance/tsconfig.json --noEmit && tsc -p packages/transport-fetch/tsconfig.json --noEmit && tsc -p packages/transport-undici/tsconfig.json --noEmit",
+    "build:deps": "bun run build:core && tsc -p packages/transport-shared/tsconfig.build.json",
+    "typecheck": "bun run build:deps && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/codec-json/tsconfig.json --noEmit && tsc -p packages/logging-pino/tsconfig.json --noEmit && tsc -p packages/logging-debug/tsconfig.json --noEmit && tsc -p packages/body-file/tsconfig.json --noEmit && tsc -p packages/transport-shared/tsconfig.json --noEmit && tsc -p packages/transport-conformance/tsconfig.json --noEmit && tsc -p packages/transport-fetch/tsconfig.json --noEmit && tsc -p packages/transport-undici/tsconfig.json --noEmit",
     "prebuild": "bun run --cwd packages/core prebuild",
-    "build": "bun run build:core && tsc -p packages/codec-json/tsconfig.build.json && tsc -p packages/logging-pino/tsconfig.build.json && tsc -p packages/logging-debug/tsconfig.build.json && tsc -p packages/body-file/tsconfig.build.json && tsc -p packages/transport-shared/tsconfig.build.json && tsc -p packages/transport-fetch/tsconfig.build.json && tsc -p packages/transport-undici/tsconfig.build.json",
+    "build": "bun run build:deps && tsc -p packages/codec-json/tsconfig.build.json && tsc -p packages/logging-pino/tsconfig.build.json && tsc -p packages/logging-debug/tsconfig.build.json && tsc -p packages/body-file/tsconfig.build.json && tsc -p packages/transport-fetch/tsconfig.build.json && tsc -p packages/transport-undici/tsconfig.build.json",
     "test": "bun test",
     "knowledge": "node scripts/knowledge.mjs",
     "test:scripts": "node --test 'scripts/*.test.mjs'",

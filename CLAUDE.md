@@ -20,21 +20,37 @@ All run from the repo root unless noted.
 ```bash
 bun install --frozen-lockfile
 
-bun run build:core       # tsc -b of core's declarations; incremental, and a prerequisite of the three below
-bun run typecheck        # build:core, then tsc --noEmit per package (core, then codec-json)
-bun run lint             # build:core, then gts lint . — formatting AND type-aware rules; fatal
-bun run fix              # build:core, then gts fix . — autofixes formatting/lint
-bun run build            # build:core, then plain tsc for codec-json → each package's dist/
+bun run build:core       # tsc -b of core's declarations; incremental
+bun run build:deps       # build:core + transport-shared — every package another package's src
+                         #   imports BY NAME; a prerequisite of the four below
+bun run typecheck        # build:deps, then tsc --noEmit per package
+bun run lint             # build:deps, then gts lint . — formatting AND type-aware rules; fatal
+bun run fix              # build:deps, then gts fix . — autofixes formatting/lint
+bun run build            # build:deps, then plain tsc for the rest → each package's dist/
 bun test                 # needs `build` first (see below); coverage on by default, 80% line floor
 bun run test:node        # Node-runtime conformance against the BUILT artifact; needs `build` first
 ```
 
-**Anything that resolves `@dexpace/core` by package name needs core's `dist/` to exist**, from Phase 6a on —
-`@dexpace/codec-json` reaches core only through its published entry point, and both `tsc` and Bun follow the
-`types`/`main` fields there. `typecheck`, `lint`, `fix`, and `build` each run `build:core` first for that
-reason, so every one of them works on a fresh clone. `build:core` is `tsc -b`, so a warm repeat is close to
-free. Do not drop that prefix to "save a step": without it `typecheck` fails with 30 unresolved-module errors
-the moment `dist/` is absent, which is exactly what a CI runner sees.
+**Anything that resolves a workspace package by name needs that package's `dist/` to exist**, from Phase 6a
+on — a consumer reaches it only through its published entry point, and both `tsc` and Bun follow the
+`types`/`main` fields there. `typecheck`, `lint`, `fix`, and `build` each run `build:deps` first for that
+reason, so every one of them works on a fresh clone. Both legs are `tsc`, so a warm repeat is close to free.
+Do not drop that prefix to "save a step": without it `typecheck` fails with unresolved-module errors the
+moment `dist/` is absent, which is exactly what a CI runner sees.
+
+**`build:deps` is the list, and it grows.** It is core plus `@dexpace/transport-shared` today. A package
+belongs in it the moment another package's `src/` imports it *by name* and its `exports` point at `dist/`.
+Phase 8a proved the cost of missing one: `transport-shared` landed as the second such package, `build:core`
+stayed the prefix, and CI failed on `typecheck` at the first fresh clone while every local gate stayed green
+against a warm `dist/`. `@dexpace/transport-conformance` is deliberately absent — it is `private` and its
+`exports` name `./src/index.ts`, so it resolves unbuilt. Check the graph, not this sentence:
+
+```bash
+for d in packages/*/; do grep -rhoE "from '@dexpace/[a-z-]+'" "$d/src" | sort -u; done
+```
+
+`node .claude/skills/ci-preflight/run-ci.mjs --clean` is what catches a missing entry — it sweeps every
+`dist/` and `*.tsbuildinfo` first, so the run starts from the tree CI checks out rather than a warm one.
 
 `bun test` runs the unit suite on **Bun** and is scoped to `packages/` (`bunfig.toml`'s `[test] root`).
 **It needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach core
