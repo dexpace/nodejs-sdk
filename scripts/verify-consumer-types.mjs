@@ -88,6 +88,7 @@ const builtTransportUndici = join(
   'dist',
   'index.js',
 );
+const builtRx = join(repoRoot, 'packages', 'rx', 'dist', 'index.js');
 const tsc = join(repoRoot, 'node_modules', '.bin', 'tsc');
 
 // Checked up front, not left to the catch below. A missing prerequisite reported through the
@@ -106,6 +107,7 @@ for (const artifact of [
   builtTransportShared,
   builtTransportFetch,
   builtTransportUndici,
+  builtRx,
 ]) {
   assert.ok(
     existsSync(artifact),
@@ -270,6 +272,13 @@ import {
   undiciTransport,
   type UndiciTransportOptions,
 } from ${JSON.stringify(builtTransportUndici)};
+import {
+  pageItems$,
+  pages$,
+  sseEvents$,
+  typedSse$,
+} from ${JSON.stringify(builtRx)};
+import type {Paginator, SseMapper, SseStream} from ${JSON.stringify(built)};
 
 
 export function readBody(response: Response): Promise<string> {
@@ -534,6 +543,21 @@ export function transportAdapters(
 
 export function undiciAdapter(options: UndiciTransportOptions): Transport {
   return undiciTransport(options);
+}
+
+export function rxBridge(
+  stream: SseStream,
+  mapper: SseMapper<number>,
+  paginator: Paginator<string>,
+): void {
+  const _e = sseEvents$(stream);
+  const _t = typedSse$(stream, mapper);
+  const _i = pageItems$(paginator);
+  const _p = pages$(paginator);
+  void _e;
+  void _t;
+  void _i;
+  void _p;
 }
 `;
 
