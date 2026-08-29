@@ -105,6 +105,14 @@ const STEPS = [
     cmd: 'bun run verify:runtime-floor',
     tier: 'gate',
   },
+  {
+    // Last among the gates, matching ci.yml: it sweeps every dist/ and rebuilds twice, so running it
+    // earlier would pull the tree out from under any step that resolves a workspace package by name.
+    id: 'verify:reproducible-build',
+    ci: 'Reproducible-build check (NFR-12)',
+    cmd: 'bun run verify:reproducible-build',
+    tier: 'gate',
+  },
   {id: 'audit', ci: 'Dependency audit', cmd: 'bun run audit', tier: 'gate'},
   {
     id: 'test:node',

@@ -192,7 +192,7 @@ interface DispatchPlan {
   readonly fork: ForkedSignal;
 }
 
-class FetchTransport implements Transport, AsyncDisposable {
+class FetchTransport implements Transport {
   readonly #logDrops: (dropped: readonly string[]) => void;
   readonly #fetch: FetchLike;
   readonly #defaultTimeoutMs: number | undefined;
@@ -299,15 +299,25 @@ class FetchTransport implements Transport, AsyncDisposable {
   close(): Promise<void> {
     return Promise.resolve();
   }
+}
 
-  /**
-   * Single teardown path, delegating to {@link FetchTransport.close}.
-   *
-   * @returns a promise that resolves once teardown is complete.
-   */
-  [Symbol.asyncDispose](): Promise<void> {
-    return this.close();
-  }
+// Single teardown path for `await using`, delegating to `FetchTransport.close()` and installed at run
+// time only when the symbol exists — the same guarded shape `SseStream` and `Page` use.
+//
+// DO NOT restore this as a plain `[Symbol.asyncDispose]()` class member. Node 20.3 is this package's
+// declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol, which
+// arrived in 20.4. On the floor the computed key evaluates to `undefined` and binds the method to the
+// string key `"undefined"` — a junk prototype entry, and no working disposal. Declaring it on the
+// class would also emit it into the `.d.ts` unconditionally, promising consumers on the floor a method
+// that is not there.
+if (typeof Symbol.asyncDispose === 'symbol') {
+  Object.defineProperty(FetchTransport.prototype, Symbol.asyncDispose, {
+    value: function asyncDispose(this: FetchTransport): Promise<void> {
+      return this.close();
+    },
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
@@ -316,17 +326,18 @@ class FetchTransport implements Transport, AsyncDisposable {
  * `close()` is a sanctioned no-op and `send()` keeps working after it (SEAM-15). There is no proxy
  * support at all; see {@link FetchTransportOptions}.
  *
- * The returned transport is `AsyncDisposable`, so `await using transport = fetchTransport(...)`
- * releases it at scope exit — the single teardown path `docs/knowledge/resource-management.md` asks
- * for.
+ * `close()` is the single teardown path `docs/knowledge/resource-management.md` asks for. A
+ * `[Symbol.asyncDispose]` delegating to it is installed at run time **when the runtime has the
+ * symbol**, which this package's declared floor (`engines.node >=20.3`) does not — it arrived in Node
+ * 20.4. The return type therefore does not promise `AsyncDisposable`: claiming it would type-check
+ * `await using` for a consumer sitting on the floor, where the method is genuinely absent. Call
+ * `close()`, or raise your own floor to 20.4+ and reach the symbol through a cast.
  *
  * @param options - optional transport settings.
- * @returns a transport ready to send, disposable through `await using`.
+ * @returns a transport ready to send; release it with `close()`.
  *
  * @public
  */
-export function fetchTransport(
-  options: FetchTransportOptions = {},
-): Transport & AsyncDisposable {
+export function fetchTransport(options: FetchTransportOptions = {}): Transport {
   return new FetchTransport(options);
 }

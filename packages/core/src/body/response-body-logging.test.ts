@@ -108,7 +108,7 @@ describe('withResponseLogging lifecycle (BODY-27, 28)', () => {
     expect([...logged.snapshot()]).toEqual([1, 2]);
   });
 
-  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=18.17 floor', () => {
+  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=20.3 floor', () => {
     // See Response's matching assertion: the symbol is undefined on the declared floor, so declaring
     // it binds the method to the string "undefined". Absence is the assertion.
     const logged = withResponseLogging(readableOf([1]), 100);

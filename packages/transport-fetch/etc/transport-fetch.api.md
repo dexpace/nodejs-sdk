@@ -13,7 +13,7 @@ export type FetchLike = (input: string, init: RequestInit & {
 }) => Promise<globalThis.Response>;
 
 // @public
-export function fetchTransport(options?: FetchTransportOptions): Transport & AsyncDisposable;
+export function fetchTransport(options?: FetchTransportOptions): Transport;
 
 // @public
 export interface FetchTransportOptions {

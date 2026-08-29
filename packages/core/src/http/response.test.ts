@@ -230,8 +230,8 @@ describe('close (HTTP-41/BODY-15, HTTP-43)', () => {
     expect(cancelled).toBe(true);
   });
 
-  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=18.17 floor', () => {
-    // The symbol postdates engines.node ">=18.17", where the computed key evaluates to `undefined`
+  test('teardown is close() only -- no [Symbol.asyncDispose] on the >=20.3 floor', () => {
+    // The symbol postdates engines.node ">=20.3" (it arrived in Node 20.4), where the computed key evaluates to `undefined`
     // and binds the method to the string "undefined" instead. Asserting its ABSENCE is what keeps it
     // from being reintroduced ahead of the floor bump that would make it real on every resource owner.
     const response = baseResponse(readableOf('x'));

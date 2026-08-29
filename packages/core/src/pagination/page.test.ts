@@ -85,18 +85,43 @@ test('an empty items list with a next request is a valid non-terminal page (PAGE
   expect(info.nextRequest).toBe(next);
 });
 
-test('await using releases the page via Symbol.asyncDispose (PAGE-3, PAGE-12)', async () => {
+test('the disposal member releases the page exactly once where the runtime has it (PAGE-3, PAGE-12)', async () => {
   const {response, closes} = fakeResponse();
   const page = makePage(response, [1]);
+  // Read through a cast rather than `Symbol.asyncDispose` directly: on the pinned floor (Node 20.3,
+  // which predates the symbol's 20.4 arrival) it is `undefined`, and a bare index would silently read
+  // the string key `"undefined"` instead. Same shape as `sse/stream.test.ts`.
+  const asyncDispose = (Symbol as {asyncDispose?: symbol}).asyncDispose;
 
-  {
-    await using scoped = page;
-    expect(scoped.items).toEqual([1]);
-    expect(closes()).toBe(0);
+  if (typeof asyncDispose !== 'symbol') {
+    // The guarded install is correctly a no-op here; close() is the whole teardown surface.
+    await page.close();
+    expect(closes()).toBe(1);
+    return;
   }
+
+  const dispose = (
+    page as unknown as Record<symbol, (() => Promise<void>) | undefined>
+  )[asyncDispose];
+  expect(dispose).toBeDefined();
+  expect(page.items).toEqual([1]);
+  expect(closes()).toBe(0);
+
+  await dispose?.call(page);
   expect(closes()).toBe(1);
 
   // Dispose delegates to close, so it inherits Response.close()'s idempotence rather than adding a second guard.
   await page.close();
   expect(closes()).toBe(1);
+});
+
+test('no "undefined" prototype key survives the guarded install (PAGE-12)', () => {
+  // The regression this pins: an unguarded `async [Symbol.asyncDispose]()` class member binds to the
+  // string key "undefined" on the >=20.3 floor, leaving junk on the prototype and no working disposal.
+  // `http/response.test.ts` carries the same assertion for `Response`.
+  const {response} = fakeResponse();
+  const page = makePage(response, [1]);
+  expect(Object.getOwnPropertyNames(Object.getPrototypeOf(page))).not.toContain(
+    'undefined',
+  );
 });

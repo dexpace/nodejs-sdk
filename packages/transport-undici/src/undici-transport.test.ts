@@ -421,9 +421,25 @@ describe('undiciTransport proxy dispatch (TRANSPORT-30)', () => {
     await transport.close();
   });
 
-  test('asyncDispose is the same teardown as close', async () => {
+  test('asyncDispose is the same teardown as close, where the runtime has it', async () => {
     const transport = undiciTransport();
-    await transport[Symbol.asyncDispose]();
+    // Cast rather than a bare `Symbol.asyncDispose` index: on the pinned floor (Node 20.3, which
+    // predates the symbol's 20.4 arrival) it is `undefined` and the index would read the string key
+    // `"undefined"`. The install in undici-transport.ts is guarded to match.
+    const asyncDispose = (Symbol as {asyncDispose?: symbol}).asyncDispose;
+    if (typeof asyncDispose === 'symbol') {
+      const dispose = (
+        transport as unknown as Record<
+          symbol,
+          (() => Promise<void>) | undefined
+        >
+      )[asyncDispose];
+      expect(dispose).toBeDefined();
+      await dispose?.call(transport);
+    }
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(transport)),
+    ).not.toContain('undefined');
     await transport.close();
   });
 });

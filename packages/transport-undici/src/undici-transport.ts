@@ -359,7 +359,7 @@ interface DispatchContext {
   readonly fork: ForkedSignal;
 }
 
-class UndiciTransport implements Transport, AsyncDisposable {
+class UndiciTransport implements Transport {
   readonly #dispatchers: DispatcherSet;
   readonly #proxy: ProxyOptions | undefined;
   readonly #logDrops: (dropped: readonly string[]) => void;
@@ -501,33 +501,47 @@ class UndiciTransport implements Transport, AsyncDisposable {
     })();
     return this.#closing;
   }
+}
 
-  /**
-   * Single teardown path, delegating to {@link UndiciTransport.close}.
-   *
-   * @returns a promise that resolves once teardown is complete.
-   */
-  [Symbol.asyncDispose](): Promise<void> {
-    return this.close();
-  }
+// Single teardown path for `await using`, delegating to `UndiciTransport.close()` and installed at run
+// time only when the symbol exists — the same guarded shape `SseStream` and `Page` use.
+//
+// DO NOT restore this as a plain `[Symbol.asyncDispose]()` class member. Node 20.3 is this package's
+// declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol, which
+// arrived in 20.4. On the floor the computed key evaluates to `undefined` and binds the method to the
+// string key `"undefined"` — a junk prototype entry, and no working disposal. Declaring it on the
+// class would also emit it into the `.d.ts` unconditionally, promising consumers on the floor a method
+// that is not there.
+if (typeof Symbol.asyncDispose === 'symbol') {
+  Object.defineProperty(UndiciTransport.prototype, Symbol.asyncDispose, {
+    value: function asyncDispose(this: UndiciTransport): Promise<void> {
+      return this.close();
+    },
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
  * Creates a `Transport` backed by `undici` — the full-featured option, with connection-pool control,
  * proxy support, and real `close()` semantics over the dispatchers it owns.
  *
- * The returned transport is `AsyncDisposable`, so `await using transport = undiciTransport(...)`
- * releases it at scope exit — the single teardown path `docs/knowledge/resource-management.md` asks
- * for.
+ * `close()` is the single teardown path `docs/knowledge/resource-management.md` asks for, and the one
+ * that actually destroys the dispatchers this transport owns. A `[Symbol.asyncDispose]` delegating to
+ * it is installed at run time **when the runtime has the symbol**, which this package's declared floor
+ * (`engines.node >=20.3`) does not — it arrived in Node 20.4. The return type therefore does not
+ * promise `AsyncDisposable`: claiming it would type-check `await using` for a consumer sitting on the
+ * floor, where the method is genuinely absent, and leak every pooled connection. Call `close()`, or
+ * raise your own floor to 20.4+ and reach the symbol through a cast.
  *
  * @param options - optional transport settings.
- * @returns a transport ready to send, disposable through `await using`.
+ * @returns a transport ready to send; release it with `close()`.
  * @throws `TypeError` when both `dispatcher` and `proxy` are supplied.
  *
  * @public
  */
 export function undiciTransport(
   options: UndiciTransportOptions = {},
-): Transport & AsyncDisposable {
+): Transport {
   return new UndiciTransport(options);
 }

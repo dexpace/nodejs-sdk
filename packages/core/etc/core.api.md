@@ -726,8 +726,7 @@ export interface OperationDescriptor {
 }
 
 // @public
-export class Page<T> implements AsyncDisposable {
-    [Symbol.asyncDispose](): Promise<void>;
+export class Page<T> {
     constructor(response: Response_2, items: readonly T[]);
     close(): Promise<void>;
     readonly headers: Headers_2;

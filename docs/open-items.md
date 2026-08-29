@@ -189,10 +189,20 @@ Phase 1 established the convention ("every new source file opens with `// SPDX-L
 siblings look accidental rather than scoped. NFR-13 is a review convention, not a mechanical gate, so this is a
 one-line cleanup on the one file left. Phase 9's `NFR-13` sweep owns it if it is not done sooner.
 
-### B3 — NFR-12: reproducible builds asserted, never proven — **WATCH**
+### B3 — NFR-12: reproducible builds asserted, never proven — **CLOSED 2026-08-29**
 
-`bun install --frozen-lockfile` plus plain `tsc` are deterministic by construction, but nothing demonstrates
-it. Becomes real at first publish (~Phase 10): build twice, diff artifact digests.
+Was: `bun install --frozen-lockfile` plus plain `tsc` are deterministic by construction, but nothing
+demonstrates it.
+
+Now proven, and kept proven. Two clean builds of an identical tree (every `dist/` and `*.tsbuildinfo` swept
+between them) emit **644 byte-identical files**, and `npm pack` of `@dexpace/core` twice yields an identical
+tarball digest. `bun run verify:reproducible-build` (`scripts/verify-reproducible-build.mjs`) is now a
+blocking CI step and a `ci-preflight` step, so the assertion cannot silently rot back into a claim. It was
+negative-tested by injecting a `Date.now()` into `packages/core/scripts/gen-version.mjs` — the one build-time
+codegen step — and confirming the gate fails naming the offending file.
+
+The "becomes real at first publish" framing was wrong in one respect worth recording: this needed *code*, not
+a *publish*. It was verifiable from Phase 1 onward and stayed open two phases longer than it had to.
 
 ### B4 — NFR-14: `expect-type` breaks the single-source-of-versions convention — **WATCH**
 
@@ -261,7 +271,8 @@ No action now. Each is already owned by a named phase; this table exists so none
 | `contextsEqual()`, value equality over `ExecutionContext` | CTX-5 (equality framing) | none | Built only if 4b or 4c needs one. `CTX-5`'s operative half — pinning an explicit shared key — ships via `ContextInit.key` |
 | `FakeTransport` test double | — | 4c | 4a never touches `Transport`; `PIPE-9`'s empty-pipeline dispatch is the likely first real consumer |
 | Self-identifying version metadata (real `User-Agent`) | NFR-15 | 7/8 | |
-| Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet |
+| Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet. **Sharpened 2026-08-29:** there is no release workflow at all and `--provenance` appears in no manifest, workflow, or `.npmrc`. §10's ledger claimed the flag "is scripted"; it never was. Authoring the workflow is actionable **now** — only running it against a real registry is blocked |
+| `await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | — | when `engines.node` reaches `>=20.4` | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). Raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard. See §10 ledger item 11 |
 | NFR-8 re-confirmed as a documented non-applicability | NFR-8 | 10 | No reflection-driven discovery surface exists by design |
 | Redirect structured logging — hop, rejection, and permitted-downgrade events | REDIR-28, REDIR-15 (surfacing clause), XCUT-17(d) | 7b | Task 9. 5b executes before 7b and 7b needs 5b's step, so the import cannot run either way until then. See G2 |
 | Redirect's loop-detected and malformed-Location events | REDIR-28 | none | Blocked behind a reason discriminant on `decide()`'s `'return-current'` variant, which no phase owns. See G3 |

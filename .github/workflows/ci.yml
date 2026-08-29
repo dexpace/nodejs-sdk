@@ -62,6 +62,12 @@ jobs:
       - name: Runtime-floor consistency check
         run: bun run verify:runtime-floor
 
+      # NFR-12. Deliberately last in this job: it sweeps every dist/ and rebuilds
+      # the workspace twice, so it would otherwise pull the rug from under any
+      # step above that resolves a workspace package through its dist/.
+      - name: Reproducible-build check (NFR-12)
+        run: bun run verify:reproducible-build
+
       - name: Dependency audit
         run: bun run audit
 

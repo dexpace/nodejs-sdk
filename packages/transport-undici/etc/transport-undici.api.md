@@ -11,7 +11,7 @@ import { ProxyOptions } from '@dexpace/core';
 import { Transport } from '@dexpace/core';
 
 // @public
-export function undiciTransport(options?: UndiciTransportOptions): Transport & AsyncDisposable;
+export function undiciTransport(options?: UndiciTransportOptions): Transport;
 
 // @public
 export interface UndiciTransportOptions {
