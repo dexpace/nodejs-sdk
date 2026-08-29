@@ -15,8 +15,10 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -34,6 +36,13 @@ const packagesDir = join(repoRoot, 'packages');
 
 const PACKAGES = readdirSync(packagesDir, {withFileTypes: true})
   .filter(entry => entry.isDirectory())
+  .filter(entry => {
+    const pkgJson = join(packagesDir, entry.name, 'package.json');
+    return (
+      existsSync(pkgJson) &&
+      JSON.parse(readFileSync(pkgJson, 'utf8')).private !== true
+    );
+  })
   .map(entry => entry.name);
 
 test('the workspace has more than one package, so these checks are not vacuous', () => {
@@ -58,7 +67,7 @@ test('verify-seam-1.mjs exits 0 and reports covering every package', () => {
   assert.match(
     output,
     new RegExp(
-      `SEAM-1 check passed: ${String(PACKAGES.length)} package\\(s\\) have zero runtime dependencies`,
+      `SEAM-1 check passed: ${String(PACKAGES.length)} package\\(s\\) verified against dependency boundaries`,
     ),
     `unexpected output from verify-seam-1.mjs:\n${output}`,
   );
@@ -116,11 +125,50 @@ test('verify-seam-1.mjs fails when any package declares a runtime dependency', (
   );
 });
 
+test('verify-seam-1.mjs fails when a package omits `dependencies` instead of committing to {}', () => {
+  // An omitted field is not the same as a declared empty one: the manifest has to state the
+  // invariant, not merely fail to contradict it. Phase 8a's allow-list rewrite briefly accepted
+  // `dependencies: undefined`, which is exactly how the blanket ban would erode in practice.
+  const omitted = {...CLEAN_ADAPTER};
+  delete omitted.dependencies;
+  assert.throws(
+    () => runAgainstFixture({core: CLEAN_CORE, 'codec-fake': omitted}),
+    /SEAM-1 violation: @dexpace\/codec-fake/,
+    'an omitted dependencies field did not fail the gate',
+  );
+});
+
+test('verify-seam-1.mjs allows only the dependencies NFR-2 grants a package by name', () => {
+  // The allow-listed transports may take their sanctioned dependency and nothing else. Keyed by
+  // package name, so the grant cannot be inherited by a package that merely looks similar.
+  const granted = {
+    ...CLEAN_ADAPTER,
+    name: '@dexpace/transport-undici',
+    dependencies: {'@dexpace/transport-shared': 'workspace:*', undici: '^6'},
+  };
+  assert.match(
+    runAgainstFixture({core: CLEAN_CORE, 'transport-undici': granted}),
+    /SEAM-1 check passed: 2 package\(s\)/,
+  );
+  assert.throws(
+    () =>
+      runAgainstFixture({
+        core: CLEAN_CORE,
+        'transport-undici': {
+          ...granted,
+          dependencies: {...granted.dependencies, lodash: '^4'},
+        },
+      }),
+    /NFR-2 violation: @dexpace\/transport-undici declared unexpected runtime dependencies: lodash/,
+    'a dependency outside the grant did not fail the gate',
+  );
+});
+
 test('verify-seam-1.mjs fails when core itself grows a runtime dependency', () => {
   assert.throws(
     () =>
       runAgainstFixture({
-        core: {...CLEAN_CORE, dependencies: {undici: '^6'}},
+        core: {...CLEAN_CORE, dependencies: {lodash: '^4'}},
         'codec-fake': CLEAN_ADAPTER,
       }),
     /SEAM-1 violation: @dexpace\/core/,
