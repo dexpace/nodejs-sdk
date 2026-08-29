@@ -51,6 +51,10 @@ for d in packages/*/; do grep -rhoE "from '@dexpace/[a-z-]+'" "$d/src" | sort -u
 
 `node .claude/skills/ci-preflight/run-ci.mjs --clean` is what catches a missing entry — it sweeps every
 `dist/` and `*.tsbuildinfo` first, so the run starts from the tree CI checks out rather than a warm one.
+It also pins every step to `.bun-version`'s Bun by default (via mise, falling back to PATH's with a loud
+banner): CI resolves that file, and Bun's `fetch`/`node:http` differ enough between releases that Phase 8a's
+transport rows passed on 1.4.0 and failed three ways on the pinned 1.3.14. `--clean` plus that default is the
+difference between "the gates pass here" and "CI will be green".
 
 `bun test` runs the unit suite on **Bun** and is scoped to `packages/` (`bunfig.toml`'s `[test] root`).
 **It needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach core

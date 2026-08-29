@@ -43,7 +43,15 @@ function route(
     case '/early-response':
       // Answers without ever draining the request body, so a streaming producer is still running
       // when the response is delivered -- the window TRANSPORT-19's post-delivery clause lives in.
-      res.writeHead(413, {'content-type': 'text/plain'});
+      //
+      // `connection: close` because RFC 7230 6.3 requires it of a server that answers before
+      // draining the request body: the unread remainder would otherwise sit in a reusable socket and
+      // be parsed as the start line of whatever request came next. It is hygiene, not a fix -- the
+      // client is free to ignore it, and Bun 1.3.14 did, serving the resulting 400 to a later row
+      // from its own pool no matter what this server did (a socket destroy here changed nothing).
+      // The row that provokes this therefore runs against its own origin -- see `isolatedUrl` in
+      // run-suite.ts, which is what actually contains it.
+      res.writeHead(413, {'content-type': 'text/plain', connection: 'close'});
       res.end('too large');
       return;
     case '/vendor-status':
@@ -52,11 +60,19 @@ function route(
       return;
     case '/malformed-content-type':
       // TRANSPORT-27: a syntactically invalid media type and a chunked (length-less) body.
-      res.writeHead(200, {
-        'content-type': 'not-a-media-type',
-        'transfer-encoding': 'chunked',
-      });
-      res.end('body');
+      //
+      // The chunked framing is *derived*, never declared: writing the body before `end()` with no
+      // declared length leaves the server no way to precompute one, so it must fall back to chunked.
+      // Setting `transfer-encoding: chunked` by hand looks more direct and is a trap -- Bun 1.3.14
+      // (`.bun-version`, so exactly what CI runs) honours the header in the status line but still
+      // appends `Content-Length: 4` and writes the body UNCHUNKED. That response is malformed twice
+      // over, and the two transports disagree about how: undici rejects it with "Response body length
+      // does not match content-length header", while Bun's own `fetch` blocks for the chunk framing
+      // that never arrives until the test times out. Bun 1.4.0 emits it correctly, which is why this
+      // reproduced only on CI. Verified byte-for-byte on Bun 1.3.14, Bun 1.4.0, and Node 20.3.0.
+      res.writeHead(200, {'content-type': 'not-a-media-type'});
+      res.write('body');
+      res.end();
       return;
     case '/drip': {
       // Headers land immediately, the body trickles: the shape a lazily-streamed response body and an

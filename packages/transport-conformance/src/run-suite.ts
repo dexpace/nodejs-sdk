@@ -41,6 +41,21 @@ interface SuiteContext {
   readonly capabilities: TransportCapabilities;
   /** Resolves a fixture path against the server started in `beforeAll`; read lazily, at run time. */
   url(path: string): string;
+  /**
+   * The same fixture, on a second origin, for rows that deliberately leave a connection unusable.
+   *
+   * A row that makes the server answer before draining the request body strands the remainder of
+   * that body in the socket. Whether the client then reuses it is the client's business, and a
+   * client that gets it wrong does not fail *here* -- it fails in whichever later row is handed the
+   * poisoned connection, which is a debugging problem of a different order. Bun 1.3.14 gets it
+   * wrong: it serves the resulting `400` from its pool, so `a per-call timeout is retryable` saw a
+   * 1ms resolve some thirty rows downstream. Neither `connection: close` nor destroying the socket
+   * server-side prevents it -- verified -- because the decision is entirely the client's.
+   *
+   * A separate origin is therefore the only thing this suite controls that contains the blast
+   * radius. Pathological rows get their own pool; every other row keeps the shared one.
+   */
+  isolatedUrl(path: string): string;
 }
 
 /**
@@ -281,7 +296,8 @@ function registerProducerRows(ctx: SuiteContext): void {
         };
         const request = Request.newBuilder()
           .method('POST')
-          .url(ctx.url('/early-response'))
+          // Quarantined: this row is the one that strands a request body mid-socket.
+          .url(ctx.isolatedUrl('/early-response'))
           .body(body)
           .build();
         const response = await transport.send(request);
@@ -598,17 +614,21 @@ export function runTransportConformanceSuite(
 ): void {
   describe(`${name} conformance (TRANSPORT-1..30, SEAM-12/16/30, NFR-15)`, () => {
     let server: TestServer;
+    let isolated: TestServer;
     beforeAll(async () => {
       server = await startFixtureServer();
+      isolated = await startFixtureServer();
     });
     afterAll(async () => {
       await server.close();
+      await isolated.close();
     });
 
     const ctx: SuiteContext = {
       makeTransport,
       capabilities,
       url: path => `${server.url}${path}`,
+      isolatedUrl: path => `${isolated.url}${path}`,
     };
     registerDispatchRows(ctx);
     registerStatusRows(ctx);

@@ -33,8 +33,8 @@ Do not hand-run the thirteen commands instead. Two things go wrong when you do:
 ## The workflow
 
 1. **Run it.** Add `--skip-install` only if you have not touched `package.json` since the
-   last install. **Add `--clean` before you push** — see below; a warm run cannot see a
-   whole class of defect that CI hits on its first step.
+   last install. **Before you push, add `--clean`** — a warm tree is blind to a whole class of
+   defect CI hits on its first step. (The pinned Bun needs no flag; it is the default.)
 2. **All green** → say so plainly: CI is all good, naming the count (`all 14 steps passed`).
    Nothing else to do.
 3. **Anything red** → report the findings to the user *first*: which gates failed, what each
@@ -64,6 +64,20 @@ Both of these will make you report a passing gate that CI rejects.
   run `build:core` first, so one bad type in `packages/core/src/` makes all three fail with
   the *same* `tsc` error and `gts lint .` never executes. Fix the compile error, then re-run
   `lint` — the formatting and rule findings are still there, unseen.
+- **Your Bun is not CI's Bun** — handled by default, but know why. `.bun-version` is what
+  `setup-bun` resolves, and Bun's `fetch` and `node:http` are independent implementations that
+  change between releases; a test can pass on yours and fail on CI with no code difference at
+  all. **The runner pins every step to `.bun-version` via mise automatically**, nested
+  `bun run` chains included. If mise cannot supply it, the run continues but says loudly that
+  it is measuring the wrong runtime — that banner is not decoration, and a green run under it
+  is not a green CI. `--path-bun` opts out deliberately, which is worth doing only to check
+  whether a newer Bun fixes something.
+
+  PR #52 hit this twice in one run, both invisible on Bun 1.4.0: `node:http` emitted a
+  response carrying *both* `Transfer-Encoding: chunked` and `Content-Length` with an unchunked
+  body (undici rejected it, Bun's own `fetch` hung to a 5s timeout), and `fetch` served a
+  poisoned pooled connection to a later row, failing a timeout assertion ~30 rows from its
+  cause. Reproducing each took one command on the pinned version and was guesswork without it.
 - **A warm tree hides missing build prerequisites.** CI checks out a tree with no `dist/` in
   it; yours almost never is one. A package whose `exports` point at `dist/`, imported by name
   from another package's `src/` with nothing building it first, resolves fine locally against
@@ -119,8 +133,8 @@ your report when they matter:
   async *root-level* `before` hook does not complete before subtests inside a `describe` when
   a file's only root children are suites — fixed in Node 22, and invisible to every other
   gate. Own hooks from an enclosing `describe`, never the file root.
-- **Bun version.** CI pins `.bun-version`; your local `bun` may be newer. Rarely matters,
-  but it is the first thing to check if a gate fails in CI and passes locally.
+- **Bun version.** Closed by default — the runner pins to `.bun-version` itself. The gap
+  reopens only when mise cannot supply that version, and the run says so in a banner.
 
 CI also runs `node-conformance` only after the `ci` job succeeds — so locally, a `test:node`
 failure alongside other failures is the same signal, just surfaced earlier.
@@ -135,6 +149,7 @@ consumer-facing change still needs `bun run changeset`).
 |---|---|
 | `--only a,b` | Run just these step ids. The iteration loop; still respects order and the build-gates-everything rule. |
 | `--clean` | Sweep every `dist/` and `*.tsbuildinfo` first, so the run starts from the tree CI checks out. The pre-push default. ~40s. |
+| `--path-bun` | Run on PATH's bun instead of `.bun-version`'s. The pinned Bun is the default; use this only to test a newer one. |
 | `--skip-install` | Skip the frozen-lockfile install. Safe when `package.json` is untouched. |
 | `--node-floor` | Also run `test:node` under Node 20.3.0 via mise/fnm/nvm. |
 | `--tail N` | Lines of a failing log to print (default 30). Raise for a wall of tsc errors. |

@@ -19,8 +19,14 @@
 // summary and a tail of each failure reach stdout.
 
 import {spawnSync} from 'node:child_process';
-import {globSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
-import {argv, cwd, exit, stdout, version} from 'node:process';
+import {
+  globSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import {argv, cwd, env, exit, stdout, version} from 'node:process';
 
 // Mirrors ci.yml step for step. `ci` is the workflow's own step name, so a failure here can be
 // matched to the job that would have caught it. `fix` is the mechanical remedy where one exists.
@@ -113,6 +119,8 @@ const STEPS = [
 const NODE_FLOOR = '20.3.0';
 // Comfortably past the slowest gate (`api`, ~50s) without letting a hung one stall the run.
 const STEP_TIMEOUT_MS = 10 * 60 * 1000;
+// setup-bun resolves this file, so it is the Bun every CI step actually runs on.
+const PINNED_BUN = readFileSync('.bun-version', 'utf8').trim();
 const LOG_DIR = 'node_modules/.cache/ci-preflight';
 
 function parseArgs(args) {
@@ -122,6 +130,7 @@ function parseArgs(args) {
     tail: 30,
     nodeFloor: false,
     clean: false,
+    pinnedBun: true,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -129,6 +138,8 @@ function parseArgs(args) {
     else if (arg === '--skip-install') opts.skipInstall = true;
     else if (arg === '--node-floor') opts.nodeFloor = true;
     else if (arg === '--clean') opts.clean = true;
+    else if (arg === '--pinned-bun') opts.pinnedBun = true;
+    else if (arg === '--path-bun') opts.pinnedBun = false;
     else if (arg === '--only')
       opts.only = (args[++i] ?? '').split(',').filter(Boolean);
     else if (arg.startsWith('--only='))
@@ -156,6 +167,10 @@ Runs every blocking step of .github/workflows/ci.yml against the working tree.
   --clean         Delete every dist/ and *.tsbuildinfo first, so the run starts
                   from the state CI checks out. Catches missing build
                   prerequisites that a warm tree hides. Costs ~40s.
+  --path-bun      Run on PATH's bun instead of .bun-version's (${PINNED_BUN}).
+                  The pinned Bun is the DEFAULT: Bun's fetch and node:http differ
+                  between releases enough to pass locally and fail on CI. Use this
+                  only to check whether a newer Bun fixes something.
   --tail N        Lines of a failing step's log to print (default 30).
   --list          List step ids and exit.
 
@@ -178,7 +193,45 @@ function selectSteps(opts) {
   return steps;
 }
 
-function run(step, tail) {
+// The pinned Bun is the default, not an opt-in. `.bun-version` is what `setup-bun` resolves, and
+// Bun's `fetch` and `node:http` are independent implementations that move between releases -- a
+// rehearsal on a different one is not a rehearsal. Phase 8a lost a CI round to exactly that: three
+// transport rows that pass on 1.4.0 fail on the pinned 1.3.14, two of them from malformed HTTP
+// framing the newer Bun emits correctly.
+//
+// Prepending to PATH rather than wrapping each command in `mise x`: a root script like `typecheck`
+// shells out to `bun run build:deps`, which shells out again. Only the environment reaches all of
+// them.
+function pinnedBunEnv() {
+  const active = spawnSync('bun', ['--version'], {encoding: 'utf8'});
+  if (active.status === 0 && active.stdout.trim() === PINNED_BUN) {
+    stdout.write(`bun: ${PINNED_BUN} on PATH already matches .bun-version\n`);
+    return null;
+  }
+  const probe = spawnSync('mise', ['where', `bun@${PINNED_BUN}`], {
+    encoding: 'utf8',
+  });
+  if (probe.status !== 0) {
+    // Loud, because the run that follows is measuring a runtime CI will not use. Not fatal: a
+    // preflight on the wrong Bun still catches everything that is not runtime-specific, and
+    // refusing to run at all would be worse than running with the caveat stated.
+    stdout.write(
+      `\n!! bun: .bun-version pins ${PINNED_BUN}; PATH has ` +
+        `${active.stdout.trim() || 'an unknown version'}, and mise cannot supply the pinned one.\n` +
+        '   Steps will run on the WRONG Bun — runtime-specific failures may not reproduce.\n' +
+        `   Fix with: mise install bun@${PINNED_BUN}\n\n`,
+    );
+    return null;
+  }
+  const bin = `${probe.stdout.trim()}/bin`;
+  stdout.write(
+    `bun: pinning every step to ${PINNED_BUN} from .bun-version ` +
+      `(PATH has ${active.stdout.trim() || 'unknown'})\n`,
+  );
+  return {...env, PATH: `${bin}:${env.PATH ?? ''}`};
+}
+
+function run(step, tail, childEnv) {
   const started = Date.now();
   // `2>&1` inside the shell rather than two piped streams: spawnSync hands back stdout and stderr
   // as separate buffers, and concatenating them puts bun's own `$ script` echo *after* the compiler
@@ -192,6 +245,7 @@ function run(step, tail) {
     // stalls behind it, which reads as "still running" and is the one outcome worse than a red run.
     timeout: STEP_TIMEOUT_MS,
     killSignal: 'SIGKILL',
+    ...(childEnv ? {env: childEnv} : {}),
   });
   const seconds = Math.round((Date.now() - started) / 1000);
   const output = `$ ${step.cmd}\n\n${result.stdout ?? ''}${result.stderr ?? ''}`;
@@ -254,7 +308,7 @@ function report(results, skipped, opts) {
   return 1;
 }
 
-function runNodeFloor(opts) {
+function runNodeFloor(opts, childEnv) {
   const managers = [
     [
       'mise',
@@ -288,6 +342,7 @@ function runNodeFloor(opts) {
       cmd: found[1],
     },
     opts.tail,
+    childEnv,
   );
 }
 
@@ -320,6 +375,7 @@ function cleanArtifacts() {
 mkdirSync(LOG_DIR, {recursive: true});
 const steps = selectSteps(opts);
 if (opts.clean) cleanArtifacts();
+const childEnv = opts.pinnedBun ? pinnedBunEnv() : null;
 stdout.write(
   `CI preflight — ${steps.length} step(s) from .github/workflows/ci.yml, in ${cwd()}\n`,
 );
@@ -333,7 +389,7 @@ for (const step of steps) {
     continue;
   }
   stdout.write(`  ... ${step.id}\n`);
-  const result = run(step, opts.tail);
+  const result = run(step, opts.tail, childEnv);
   results.push(result);
   if (!result.ok && step.id === 'build') buildFailed = true;
   // A frozen-lockfile failure means the dependency tree on disk is not the one CI installs.
@@ -347,7 +403,7 @@ for (const step of steps) {
 }
 
 if (opts.nodeFloor && !buildFailed) {
-  const floor = runNodeFloor(opts);
+  const floor = runNodeFloor(opts, childEnv);
   if (floor) results.push(floor);
 } else if (!opts.nodeFloor && results.some(r => r.id === 'test:node')) {
   const major = Number(version.slice(1).split('.')[0]);
