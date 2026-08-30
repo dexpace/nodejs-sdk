@@ -49,4 +49,4 @@
 | `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md` | design | `d546f9973c4e` | 2026-07-25 |
 | `docs/sdk-design-nodejs/08-instrumentation-and-configuration.md` | design | `35281a426195` | 2026-07-25 |
 | `docs/sdk-design-nodejs/09-toolchain-and-quality-gates.md` | design | `2d2fd9dcfee4` | 2026-07-25 |
-| `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` | design | `f9ecb6e7d87b` | 2026-07-25 |
+| `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` | design | `f9ecb6e7d87b` — **stale, source is now `301f1d519cd8`** | 2026-07-25 — **needs re-harvest**, see `INDEX.md`'s "Stale topics" |

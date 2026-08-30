@@ -4,16 +4,16 @@
 // Runs every blocking step of `.github/workflows/ci.yml` against the working tree, in CI's own
 // order, and reports all failures at once rather than stopping at the first.
 //
-// Two things make this more than a shell alias for thirteen `bun run` calls:
+// Two things make this more than a shell alias for fourteen `bun run` calls:
 //
 //   * Ordering is load-bearing. `bun test`, `api`, `lint:publish` and every `verify:*` gate resolve
 //     `@dexpace/core` by package name, which lands in `packages/core/dist/`. Run them before
 //     `build` and they either fail with unresolved-module noise or, worse, pass green against
 //     yesterday's artifact. CI is safe because its Build step precedes its Test step; a human
 //     running gates ad hoc is not.
-//   * A failed `build` invalidates the ten gates downstream of it. Running them anyway produces ten
-//     spurious findings that all say "cannot resolve @dexpace/core". They are reported SKIP here,
-//     so the summary names the one real defect.
+//   * A failed `build` invalidates the eleven gates downstream of it. Running them anyway produces
+//     eleven spurious findings that all say "cannot resolve @dexpace/core". They are reported SKIP
+//     here, so the summary names the one real defect.
 //
 // Logs go to node_modules/.cache/ci-preflight/<step>.log — full output stays on disk, only the
 // summary and a tail of each failure reach stdout.
@@ -125,7 +125,11 @@ const STEPS = [
 // engines.node across every publishable package, and the floor leg of ci.yml's node-conformance
 // matrix. The other leg is `lts/*`, which resolves at run time and so cannot be pinned here.
 const NODE_FLOOR = '20.3.0';
-// Comfortably past the slowest gate (`api`, ~50s) without letting a hung one stall the run.
+// Comfortably past the slowest gates (`api` ~50s, `verify:reproducible-build` ~34s warm) without
+// letting a hung one stall the run. `verify:reproducible-build` is the one worth watching as this
+// grows: it does two full swept builds and two `npm pack` passes, so a cold or loaded machine
+// multiplies its wall time. If it ever reports `timeout`, raise this rather than reading the verdict
+// as a reproducibility defect.
 const STEP_TIMEOUT_MS = 10 * 60 * 1000;
 // setup-bun resolves this file, so it is the Bun every CI step actually runs on.
 const PINNED_BUN = readFileSync('.bun-version', 'utf8').trim();

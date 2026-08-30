@@ -195,11 +195,21 @@ Was: `bun install --frozen-lockfile` plus plain `tsc` are deterministic by const
 demonstrates it.
 
 Now proven, and kept proven. Two clean builds of an identical tree (every `dist/` and `*.tsbuildinfo` swept
-between them) emit **644 byte-identical files**, and `npm pack` of `@dexpace/core` twice yields an identical
-tarball digest. `bun run verify:reproducible-build` (`scripts/verify-reproducible-build.mjs`) is now a
-blocking CI step and a `ci-preflight` step, so the assertion cannot silently rot back into a claim. It was
-negative-tested by injecting a `Date.now()` into `packages/core/scripts/gen-version.mjs` — the one build-time
-codegen step — and confirming the gate fails naming the offending file.
+between them) emit **644 byte-identical files**, and **all 9 publishable packages produce byte-identical
+`npm pack` tarballs** across the same two builds. `bun run verify:reproducible-build`
+(`scripts/verify-reproducible-build.mjs`) is now a blocking CI step and a `ci-preflight` step, so the assertion
+cannot silently rot back into a claim. It was negative-tested by injecting a `Date.now()` into
+`packages/core/scripts/gen-version.mjs` — the one build-time codegen step — and confirming the gate fails
+naming the offending file.
+
+**Widened 2026-08-30.** The tarball half was originally a **by-hand** check of `@dexpace/core` alone,
+asserted in the closing note rather than gated — the same asserted-not-verified shape this item exists to
+catch, one level down. It is now a second leg *inside* the gate: `digestTarballs()` packs every non-`private`
+package into a temp dir it owns and SHA-256s each tarball, on both builds, and the two maps are diffed
+alongside the emitted-file maps. The leg is cheap (~7s) and deterministic because `npm pack` normalizes tar
+entries rather than stamping wall-clock time; what it really pins is that normalization plus any future
+`files`/`.npmignore` change that starts shipping something time-varying from outside `dist/`. A missing `npm`
+on `PATH` fails the gate loudly rather than skipping the leg.
 
 The "becomes real at first publish" framing was wrong in one respect worth recording: this needed *code*, not
 a *publish*. It was verifiable from Phase 1 onward and stayed open two phases longer than it had to.
@@ -272,7 +282,7 @@ No action now. Each is already owned by a named phase; this table exists so none
 | `FakeTransport` test double | — | 4c | 4a never touches `Transport`; `PIPE-9`'s empty-pipeline dispatch is the likely first real consumer |
 | Self-identifying version metadata (real `User-Agent`) | NFR-15 | 7/8 | |
 | Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet. **Sharpened 2026-08-29:** there is no release workflow at all and `--provenance` appears in no manifest, workflow, or `.npmrc`. §10's ledger claimed the flag "is scripted"; it never was. Authoring the workflow is actionable **now** — only running it against a real registry is blocked |
-| `await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | — | when `engines.node` reaches `>=20.4` | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). Raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard. See §10 ledger item 11 |
+| `await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | NFR-10 | **none — decided against 2026-08-30** | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). **This row previously read "raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard." That is now a rejected option, not a pending one — the floor stays `>=20.3` and all four guarded installs stay.** Four reasons, in the order that decides it. (1) `NFR-10` is **MUST**-level and requires that "the emitted-artifact target and the visible-API level must agree" (`docs/product-spec/20-non-functional-requirements-and-quality-bar.md:29`); the unguarded class member violated it directly, and the guarded install *is* the repair — not a workaround waiting to be undone. (2) The same requirement's next clause: "A capability that genuinely requires a newer runtime MUST be isolated into its own unit that declares the higher floor explicitly; that unit MUST NOT be a hard dependency of the general-purpose core." Raising core's floor to recover `await using` is the exact inverse — it drags every consumer onto a higher runtime for one syntactic affordance. (3) **The floor is derived, not chosen.** `scripts/verify-runtime-floor.mjs:33` pairs language level `es2023` with `>=20.3`, and its own banner comment (`:22-29`) says the floor is "set by the runtime built-ins the SDK calls rather than by the syntax it emits" and that "adding or moving a row here is a reviewed choice about what runtimes the SDK supports, never a mechanical bump." `>=20.3` is the *minimum* Node that runs what this project emits — `globalThis.crypto` is absent from ESM on every Node 18, and `AbortSignal.any()` landed in 20.3.0. Moving it to satisfy a type-level convenience inverts what the gate is for. (4) **There is a decided precedent.** `docs/superpowers/plans/2026-07-26-phase4-execution-context-and-pipelines-checklist.md:208` rejected raising the floor for `SuppressedError` on the same reasoning and shipped a guarded shim instead — `packages/core/src/suppress.ts`. `close()` remains the supported teardown on every runtime; a consumer who has raised *their own* floor to 20.4+ can still reach the installed member through a cast. See §10 ledger item 11 and I3/J3 below |
 | NFR-8 re-confirmed as a documented non-applicability | NFR-8 | 10 | No reflection-driven discovery surface exists by design |
 | Redirect structured logging — hop, rejection, and permitted-downgrade events | REDIR-28, REDIR-15 (surfacing clause), XCUT-17(d) | 7b | Task 9. 5b executes before 7b and 7b needs 5b's step, so the import cannot run either way until then. See G2 |
 | Redirect's loop-detected and malformed-Location events | REDIR-28 | none | Blocked behind a reason discriminant on `decide()`'s `'return-current'` variant, which no phase owns. See G3 |
@@ -1051,8 +1061,24 @@ Node 20.3 (the pinned floor verified by `verify:runtime-floor` and CI `node-conf
 `Symbol.asyncDispose` (which landed in Node 20.4). TypeScript does not polyfill the well-known symbol for a
 library that declares the member, so declaring it on the interface would cause `.d.ts` compilation failures for
 consumers on standard `ES2023` lib without `esnext.disposable`. `SseStream` therefore installs
-`[Symbol.asyncDispose]` at run time only when the symbol exists, matching `Response` (HTTP-38). Becomes an
-unconditional `implements AsyncDisposable` when `engines.node` moves past Node 20.4.
+`[Symbol.asyncDispose]` at run time only when the symbol exists. `Response` (HTTP-38) goes further and ships
+no disposal member at all — `close()` is its whole teardown surface, and `http/response.test.ts` pins the
+absence of the `"undefined"` prototype key an unguarded declaration would leave behind. ~~Becomes an
+unconditional `implements AsyncDisposable` when `engines.node` moves past Node 20.4.~~
+
+**Widened 2026-08-30 (Phase 10).** `Page`, `FetchTransport`, and `UndiciTransport` were the three sites that
+had declared the member unguarded; all four now share `SseStream`'s shape. See the deferred-items row
+"`await using` support on `Page`, `fetchTransport()`, `undiciTransport()`" and §10 ledger item 11.
+
+**Corrected 2026-08-30 (Phase 10): the "becomes unconditional when the floor moves" sentence is struck, not
+merely deferred.** Raising `engines.node` to `>=20.4` to recover the declaration is **decided against** —
+`NFR-10` (MUST) both requires the emitted target and the visible API level to agree *and* forbids making a
+higher-floor capability a hard requirement of the general-purpose core, and the floor is derived from the
+runtime built-ins the SDK calls (`scripts/verify-runtime-floor.mjs:22-29,33`), not chosen. The guarded install
+is the permanent shape here, matching the `SuppressedError` precedent (`packages/core/src/suppress.ts`). Full
+reasoning and citations in the deferred-items row named above. This item stays **WATCH** only for the narrower
+thing it was always about: if a *future* TypeScript or `lib` change makes an optionally-typed declaration
+honest on the floor, revisit the typing — never the floor.
 
 ### I4 — `SSE-21` hash equality is N/A in JavaScript — **RECORDED**
 
@@ -1080,11 +1106,23 @@ An erratum callout was added to `07-pagination-sse-and-serialization.md` §7.1 a
 
 **Trigger:** none.
 
-### J3 — `Page<T>` implements `AsyncDisposable` with `Symbol.asyncDispose` — **RESOLVED**
+### J3 — `Page<T>` disposal is a runtime-guarded install, not `implements AsyncDisposable` — **RESOLVED**
 
-`Page<T>` implements `AsyncDisposable` unconditionally (`[Symbol.asyncDispose](): Promise<void>`), delegating to `close()`. Consumers utilizing Explicit Resource Management (`await using`) against `Page` must include `"ESNext.Disposable"` in their compiler `lib`.
+**Superseded 2026-08-30 (Phase 10).** This row previously read "`Page<T>` implements `AsyncDisposable`
+unconditionally (`[Symbol.asyncDispose](): Promise<void>`)". That was the defect Phase 10's audit found: the
+symbol arrived in Node 20.4 and `engines.node` is `>=20.3`, so on the declared floor the computed key
+evaluated to `undefined` and the method bound to the string key `"undefined"` — junk on the prototype, no
+disposal, and a `.d.ts` promising `AsyncDisposable` regardless.
 
-**Trigger:** none.
+`Page<T>` now installs `[Symbol.asyncDispose]` via `Object.defineProperty` at module scope, guarded on the
+symbol existing, exactly as `SseStream` does — and deliberately does **not** declare `implements
+AsyncDisposable`. `close()` is the supported teardown path; `Paginator.pages()`'s TSDoc names the scoped
+constructs that actually discharge `PAGE-12` (`for await`, or `.return()` from a `finally`). A consumer who
+has raised their own floor to 20.4+ can still reach the installed member through a cast.
+
+**Trigger:** none. ~~the `engines.node` bump to `>=20.4`~~ — that bump is **decided against** as of 2026-08-30
+(`NFR-10`, and the floor is derived rather than chosen); the guarded install is permanent. See I3 and the
+deferred-items row "`await using` support on `Page`, `fetchTransport()`, `undiciTransport()`" for the citations.
 
 ### J4 — WHATWG encode-set boundary & verbatim query splice (PAGE-21, PAGE-22) — **RESOLVED BY DESIGN**
 

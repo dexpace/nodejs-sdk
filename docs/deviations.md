@@ -9,20 +9,39 @@ the claim.
 contract's own mechanism is impossible on this platform, forbidden by a project constraint, or would be a
 regression. Items found to be **correctable** are deliberately **not** listed here — they were fixed instead.
 
-Audited 2026-08-29 against `25-phase-10-deviation-reconciliation` @ `d8217af`.
+**This file is the audit, not the ledger** (cross-reference added 2026-08-30; until then nothing in the repo
+linked the two, and the numbering they share had no stated owner):
 
-**What the audit changed** (working tree, uncommitted):
+- **`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (§10) is the normative
+  ledger** — the canonical list of deliberate deviations, and the **owner of the item numbers**. Every `## N`
+  heading and every table row below is keyed to §10's numbering and has no independent identity. **If §10
+  renumbers, this file must be renumbered in the same commit.** §10 now carries the matching pointer back here.
+- **This file is the as-built audit of that ledger** — it re-derives each item from source, carries the
+  `file:line` evidence, and records which of §10's claims did not survive contact with the code.
+- **A new deviation is recorded in neither.** It goes in the owning phase spec's own `## Deviation Ledger (for
+  Phase 10)` section; §10 is the consolidated **output** of those, not their intake.
+- **Do not confuse either with `docs/knowledge/deliberate-deviations.md`.** Despite the near-identical name it
+  is a harvested corpus topic file queried by `bun run knowledge`, derived from an older revision of §10 and
+  currently stale. It is `knowledge-harvest`'s output and is never hand-edited as a ledger.
+
+Audited 2026-08-29 against `25-phase-10-deviation-reconciliation` @ `d8217af`; the audit's own changes landed
+on that branch as `27fb81f`, which is the tree this file describes.
+
+**What the audit changed** (committed as `27fb81f`):
 
 | Was | Outcome |
 |---|---|
 | Item 11 — `Symbol.asyncDispose` declared as a plain class member on `Page`, `FetchTransport`, `UndiciTransport` | **Code fixed.** All three now install it guarded, matching `SseStream`. On the `>=20.3` floor the computed key evaluated to `undefined`, leaving a junk `"undefined"` prototype entry and no working disposal — verified on real Node 20.3.0, before and after. `implements AsyncDisposable` and the factories' `& AsyncDisposable` return types dropped as untrue on the floor. Changeset added; API reports regenerated |
 | Item 11 — the `Page` node-conformance test asserted `typeof page[Symbol.asyncDispose] === 'function'` | **Test fixed.** On the floor that read `page['undefined']`, which *was* the junk method, so the assertion passed over a `Page` that could not be disposed. Now branches on the symbol and asserts the junk key's absence on both matrix legs |
-| Item 14 — `NFR-12` recorded as unverifiable | **Closed on evidence.** 644 emitted files byte-identical across two clean builds; identical `npm pack` digest. Added `bun run verify:reproducible-build` as a blocking CI step, negative-tested by injecting a `Date.now()` into `gen-version.mjs` |
+| Item 14 — `NFR-12` recorded as unverifiable | **Closed on evidence.** 644 emitted files **and 9 `npm pack` tarballs** byte-identical across two clean builds. Added `bun run verify:reproducible-build` as a blocking CI step, negative-tested by injecting a `Date.now()` into `gen-version.mjs`. (Widened 2026-08-30: the tarball comparison was a by-hand check of `@dexpace/core` alone at audit time; it is now a second leg inside the gate, over every publishable package, on both builds) |
 | Item 7 — "three tiers, not four" | **Ledger corrected.** The code implements all four; only the default production binding of the property layer is empty |
 | Item 4 — "never bare structural interfaces" | **Ledger corrected.** 61 exported interfaces vs 58 classes; `Configuration` is builder-built and exported structurally |
 | Item 14 — "`npm publish --provenance` is scripted" | **Ledger corrected.** It is not scripted anywhere; only `prepublishOnly` is |
 
-Everything below is what remains genuinely uncorrectable.
+Everything below is what remains genuinely uncorrectable: **fifteen** of the ledger's seventeen items. Items
+**7** and **11** are gone from the count because they were correctable and were corrected; item **14** stays,
+because only its `NFR-12` half closed. (`27fb81f`'s commit message says "fourteen"; it counted the split item
+14 as gone. The list below is the authoritative count — fifteen `##` sections, fifteen table rows.)
 
 | Ledger item | Verdict |
 |---|---|
@@ -194,13 +213,35 @@ project: `Request.url` clones per access because the native `URL` really is muta
 ## 10. `NFR-8` (shrinker keep/retain configuration) is not applicable
 
 **Verified.** `packages/shrink-test/` exists and targets the dual-package `instanceof` hazard
-(`packages/shrink-test/src/fixture-app.ts:47`, `run-shrink-guard.test.ts:5`). Nothing in the workspace
-carries a keep-rule, and there is no reflective lookup for one to protect.
+(`packages/shrink-test/src/fixture-app.ts:111`, `run-shrink-guard.test.ts:8` — both line numbers refreshed
+2026-08-30 after the fixture grew a third probe). Nothing in the workspace carries a keep-rule, and there is
+no reflective lookup for one to protect.
 
 **Why it cannot be corrected.** A keep-rule names a symbol a static analyzer cannot see is reachable.
 `NFR-8`'s premise is JVM reflection; JS bundlers have no equivalent blind spot, and item 2 already retired
 the one discovery mechanism the port might have had. There is no symbol to keep-configure, so the
 configuration file would be empty by construction. The structurally equivalent JS risk is covered instead.
+
+**What the guard now also pins, and why it is the standing evidence for a manifest decision (added
+2026-08-30).** The `[Symbol.asyncDispose]` repair replaced three class members with a **module-scope
+`Object.defineProperty` statement** — a top-level side effect — in four files across three packages that all
+declare `"sideEffects": false` (`packages/core/src/sse/stream.ts:209`,
+`packages/core/src/pagination/page.ts:114`, `packages/transport-fetch/src/fetch-transport.ts:314`,
+`packages/transport-undici/src/undici-transport.ts:566`; the manifest field at `packages/core/package.json:20`,
+`packages/transport-fetch/package.json:21`, `packages/transport-undici/package.json:21`). That field entitles a
+bundler to drop a module whose exports go unused, and nothing forbids a future one from also dropping a
+top-level statement it judges inert — which would silently un-install disposal in the shipped artifact while
+every type still checks, the same failure shape this guard already exists for. `fixture-app.ts`'s
+`probeDisposalSymbol` therefore constructs a `Page` and a `FetchTransport` **inside the bundled, minified,
+tree-shaken artifact** and asserts the member is present and callable; `run-shrink-guard.ts` exits non-zero on
+any `false` field of `FixtureResult`, so the check is blocking.
+
+**`sideEffects` was deliberately not narrowed** to the four file paths that carry an install. Narrowing is
+more fragile, not less: the list would silently go stale on any file move or rename, and a stale narrow list
+fails *open* — the bundler drops the module and nothing complains. The shrink guard tests the property that
+actually matters (the install survives a real `bundle + minify + treeShaking` pass) rather than a manifest
+proxy for it, and it needs no maintenance when a file moves. Budget note: the added probe took the measured
+bundle from 16,671 to 17,689 bytes against a 24 KiB budget (`packages/shrink-test/shrink-test.config.ts`).
 
 ---
 
@@ -277,9 +318,13 @@ produce that evidence; it unblocks at first release and not before.
 > is an outward-facing artifact whose shape (trigger, environment, tag convention, who may publish) is a
 > project decision rather than a defect repair.
 >
-> **`NFR-12` was split out of this row and closed on evidence** — 644 emitted files byte-identical across two
-> clean builds, an identical `npm pack` digest, and a new blocking CI gate
-> (`scripts/verify-reproducible-build.mjs`). It is no longer part of this file's scope.
+> **`NFR-12` was split out of this row and closed on evidence** — 644 emitted files and 9 `npm pack` tarballs
+> byte-identical across two clean builds, and a new blocking CI gate
+> (`scripts/verify-reproducible-build.mjs`). It is no longer part of this file's scope. *Widened 2026-08-30:
+> at audit time the tarball evidence was a by-hand `npm pack` of `@dexpace/core` alone, asserted rather than
+> gated. Both legs now run inside the gate — `digestTarballs()` packs every non-`private` package on each of
+> the two builds and diffs the SHA-256 maps — so the claim above is verified on every CI run rather than on
+> the day it was written.*
 
 ---
 

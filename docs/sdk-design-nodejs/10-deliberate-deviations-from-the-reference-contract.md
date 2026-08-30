@@ -7,6 +7,23 @@ MUST-level correctness guarantee; each is a case where the JVM-specific mechanis
 does not exist in Node, and an equivalent, differently-shaped mechanism is substituted instead. Reconciled by
 Phase 10 (`docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-design.md`), 2026-07-28.
 
+**Three files carry "deviations" in their name. They are not interchangeable** (cross-reference added
+2026-08-30, after the first of them was corrected against source without the other two being touched):
+
+| File | What it is | Numbering |
+|---|---|---|
+| **This section (§10)** | The **normative ledger** of deliberate deviations — the canonical, as-built list. Every item's number is the one the other files cite. | Owns items 1-17 |
+| `docs/deviations.md` | The **as-built audit** of this ledger, performed against source rather than against the phase specs that produced it. Carries the `file:line` evidence for each item, and the record of which items this ledger got wrong. Restates §10's item numbers; it does not assign its own. | Follows §10's |
+| `docs/knowledge/deliberate-deviations.md` | Neither. A **harvested corpus topic file** queried by `bun run knowledge`, derived from an *older* revision of this section. Confusingly named; it is not a ledger and must not be edited as one — it is `knowledge-harvest`'s output. **Currently stale** — see its own head banner. | None |
+
+**Renumbering this section renumbers `docs/deviations.md`.** Its section headings and its two summary tables are
+keyed to the numbers above, with no independent identity to fall back on; change one and the other must change in
+the same commit.
+
+**Where a *new* deviation is recorded:** in the owning phase spec's own `## Deviation Ledger (for Phase 10)`
+section, never here directly. This section is Phase 10's **output** — the consolidation of those per-phase
+ledgers — not their intake.
+
 1. **Single execution model eliminates every thread/CAS/interrupt-flag primitive, and collapses the sync/async
    transport seam into one.** **SEAM-11** describes a synchronous, blocking transport contract as distinct from
    **SEAM-16**'s asynchronous one; Node has no blocking-I/O execution model to give that distinction meaning, so

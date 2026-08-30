@@ -95,9 +95,14 @@ export class Page<T> {
   }
 }
 
-// PAGE-12's scoped teardown for `await using`, installed at run time only when the symbol exists —
-// the same guarded shape `SseStream` uses, and the shape `Response`'s own regression test
-// (`http/response.test.ts`) exists to enforce.
+// PAGE-12's scoped teardown, installed at run time only when the symbol exists — the same guarded
+// shape `SseStream` uses. `Response` ships no disposal member at all (HTTP-38), and
+// `http/response.test.ts` pins the absence of the junk key this guard exists to prevent.
+//
+// Because the install is conditional, this class deliberately does NOT declare `implements
+// AsyncDisposable`: `await using page` therefore does not type-check on the declared floor, where the
+// method is genuinely absent. `close()` is the supported teardown path — see `Paginator.pages()`,
+// which tells consumers which scoped constructs actually give PAGE-12's guarantee.
 //
 // DO NOT restore this as a plain `async [Symbol.asyncDispose]()` class member. Node 20.3 is this
 // package's declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol,

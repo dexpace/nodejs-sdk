@@ -359,6 +359,25 @@ interface DispatchContext {
   readonly fork: ForkedSignal;
 }
 
+/**
+ * Destroys every dispatcher in reverse acquisition order and returns whatever failed, rather than
+ * stopping at the first rejection. Teardown is best-effort by definition: a dispatcher that cannot be
+ * released is not a reason to leak the ones behind it (TRANSPORT-15/16).
+ */
+async function releaseAll(
+  dispatchers: readonly Dispatcher[],
+): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const dispatcher of [...dispatchers].reverse()) {
+    try {
+      await dispatcher.destroy();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+
 class UndiciTransport implements Transport {
   readonly #dispatchers: DispatcherSet;
   readonly #proxy: ProxyOptions | undefined;
@@ -396,11 +415,21 @@ class UndiciTransport implements Transport {
     );
     if (composed?.aborted) throw abortToSdkError(composed, composed.reason);
 
+    // Headers BEFORE the body, deliberately -- the fetch twin evaluates them in this order too.
+    // `prepareBody` starts a streaming producer eagerly, while `toUndiciHeaders` reads
+    // `request.body.mediaType`, a getter on a caller-supplied Body that may throw. Preparing the
+    // body first leaves such a throw with a live producer nobody can abandon, whose own later
+    // rejection then reaches Node's default unhandledRejection policy (TRANSPORT-19, SEAM-30).
+    const headers = toUndiciHeaders(
+      request,
+      this.#forbiddenHeaders,
+      this.#logDrops,
+    );
     const prepared = await prepareBody(request.body);
     // Dispatched with a fork the caller cannot reach: cancellation stays live for the whole in-flight
     // window and goes inert the moment the response is handed over (SEAM-16).
     const context: DispatchContext = {
-      headers: toUndiciHeaders(request, this.#forbiddenHeaders, this.#logDrops),
+      headers,
       body: prepared.init,
       fork: forkSignal(composed),
     };
@@ -491,12 +520,33 @@ class UndiciTransport implements Transport {
    * SEAM-15 post-close mode: a send issued after `close()` cannot succeed over a dispatcher that no
    * longer exists, so it is not reported as a retryable failure.
    *
+   * A dispatcher that fails to release does not strand the rest: every owned dispatcher is destroyed
+   * before the failure is reported, so one bad pool cannot leak the others.
+   *
    * @returns a promise that resolves once the owned dispatchers are released.
+   * @throws `TransportFailureError` when one or more owned dispatchers failed to release. The
+   * rejection is memoized like the success path, so a later `close()` reports the same failure rather
+   * than falsely claiming a clean teardown.
    */
   close(): Promise<void> {
     this.#closing ??= (async () => {
-      for (const dispatcher of [...this.#dispatchers.owned].reverse()) {
-        await dispatcher.destroy();
+      // Every owned dispatcher is destroyed even when an earlier one rejects. A bare `for … await`
+      // loop propagates on the first failure and leaks the pooled connections of every dispatcher
+      // after it -- and `owned` is walked in reverse, so with a proxy configured the ProxyAgent
+      // actually holding those connections is the one destroyed last.
+      const failures = await releaseAll(this.#dispatchers.owned);
+      if (failures.length > 0) {
+        // A raw undici error would otherwise escape a public method untyped (NFR-7); the causes are
+        // preserved rather than flattened to a message.
+        throw new TransportFailureError(
+          'one or more owned dispatchers failed to release',
+          {
+            cause:
+              failures.length === 1
+                ? failures[0]
+                : new AggregateError(failures),
+          },
+        );
       }
     })();
     return this.#closing;
