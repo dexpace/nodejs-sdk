@@ -115,7 +115,7 @@ async function hashHex({base, input, isUtf8}: HashInput): Promise<string> {
  *
  * The eviction is an insert-THEN-drain, never a pre-insert check-then-evict: `next()` admits the
  * nonce first and only then brings the map back under the cap, which is how
- * `docs/knowledge/concurrency-and-async.md` (XCUT-14) and AUTH-19 both word it — "drained back under
+ * `docs/knowledge/harvested/concurrency-and-async.md` (XCUT-14) and AUTH-19 both word it — "drained back under
  * the cap after admitting a nonce". The key space is the SERVER's, since it picks the nonces, so a
  * pre-insert evict would leave a burst sitting above the cap rather than converging to it.
  *

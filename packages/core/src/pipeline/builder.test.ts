@@ -348,7 +348,7 @@ describe('PipelineBuilder edit-order independence (PIPE-22)', () => {
 
 // The two ordering laws the design calls for (PIPE-38's split across an append and a prepend test, one act
 // each). `build()` is an invariant-bearing assembler, which
-// docs/knowledge/testing.md:29 puts in property-test territory; the examples above pin concrete regressions,
+// docs/knowledge/harvested/testing.md:29 puts in property-test territory; the examples above pin concrete regressions,
 // these prove the law over generated input. Generated over the non-pillar stages only: a generator that also
 // emitted pillar stages would spend most of its cases hitting PIPE-5's collision instead of exercising order.
 const editableStages = STAGE_ORDER.filter(

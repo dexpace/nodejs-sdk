@@ -36,7 +36,7 @@ describe('randomUuid (CFG-32)', () => {
   test('names the missing dependency when the runtime exposes no WebCrypto', () => {
     // The random source is passed in rather than read off `globalThis`, so this branch is reachable
     // without deleting or reassigning a global -- which would break parallel execution
-    // (`docs/knowledge/testing.md:50`). Reading `getRandomValues` off `undefined` would otherwise
+    // (`docs/knowledge/harvested/testing.md:50`). Reading `getRandomValues` off `undefined` would otherwise
     // report only `TypeError: Cannot read properties of undefined`.
     expect(() => randomUuidFrom(undefined)).toThrow(InvariantViolation);
     expect(() => randomUuidFrom(undefined)).toThrow(/globalThis\.crypto/u);

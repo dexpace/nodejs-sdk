@@ -11,7 +11,7 @@ const HEX_BY_BYTE: readonly string[] = Array.from({length: 256}, (_, byte) =>
  *
  * Parameterized for the same reason `build-info.ts`'s `detectRuntimeIdentity(host)` is: the
  * missing-WebCrypto branch is then reachable from a test without deleting or reassigning a global,
- * which no test may do (`docs/knowledge/testing.md:50` -- every test must survive parallel
+ * which no test may do (`docs/knowledge/harvested/testing.md:50` -- every test must survive parallel
  * execution).
  *
  * @param webCrypto - the WebCrypto implementation, or `undefined` on a runtime that exposes none.

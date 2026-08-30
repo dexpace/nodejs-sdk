@@ -14,7 +14,7 @@ Phase 10 (`docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-de
 |---|---|---|
 | **This section (§10)** | The **normative ledger** of deliberate deviations — the canonical, as-built list. Every item's number is the one the other files cite. | Owns items 1-17 |
 | `docs/deviations.md` | The **as-built audit** of this ledger, performed against source rather than against the phase specs that produced it. Carries the `file:line` evidence for each item, and the record of which items this ledger got wrong. Restates §10's item numbers; it does not assign its own. | Follows §10's |
-| `docs/knowledge/deliberate-deviations.md` | Neither. A **harvested corpus topic file** queried by `bun run knowledge`, derived from an *older* revision of this section. Confusingly named; it is not a ledger and must not be edited as one — it is `knowledge-harvest`'s output. **Currently stale** — see its own head banner. | None |
+| `docs/knowledge/notes/deliberate-deviations.md` | Neither. A one-entry **pointer** in the knowledge corpus saying that this register is not harvested and must be read here. The harvested copy that used to sit at `docs/knowledge/deliberate-deviations.md` was dropped on 2026-08-31: it held about a third of this section, at a three-revision-old sha, with two entries substantively false. A register accumulates rows; a harvest of one is a snapshot that goes stale on the next append. | None |
 
 **Renumbering this section renumbers `docs/deviations.md`.** Its section headings and its two summary tables are
 keyed to the numbers above, with no independent identity to fall back on; change one and the other must change in

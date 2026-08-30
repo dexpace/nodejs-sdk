@@ -5,7 +5,7 @@
 // priority.
 //
 // Neither branch of the guard is forced here by mutating `globalThis` — a test that deletes a
-// global does not survive parallel execution, which docs/knowledge/testing.md:50 requires. The
+// global does not survive parallel execution, which docs/knowledge/harvested/testing.md:50 requires. The
 // branch selection is covered where it is real instead: `suppress()` is asserted on its shape,
 // which holds on either runtime, `FallbackSuppressedError` is constructed directly, and the
 // `test:node` matrix runs both legs — `lts/*` has the native class, the pinned `20.3.0` floor does

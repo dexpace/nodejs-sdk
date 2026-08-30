@@ -36,7 +36,7 @@ export function createAuthRequirement(
   scopes: readonly string[] = [],
   params: ReadonlyMap<string, string> = new Map(),
 ): AuthRequirement {
-  // `Object.freeze` is SHALLOW. `docs/knowledge/data-modeling.md` requires a frozen value object to
+  // `Object.freeze` is SHALLOW. `docs/knowledge/harvested/data-modeling.md` requires a frozen value object to
   // hold only primitives or already-frozen/read-only values, never a mutable object that stays
   // writable behind the freeze. `new Map(params)` satisfies AUTH-2's literal clause -- caller-side
   // mutation cannot reach the stored value -- but leaves the copy itself writable behind the

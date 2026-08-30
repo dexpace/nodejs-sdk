@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/invariant.test.ts
 // Exercises: the project's sole assertion primitive (styleguide 5.6), its error class, and the
-// discriminated-union exhaustiveness helper docs/knowledge/data-modeling.md requires every switch to
+// discriminated-union exhaustiveness helper docs/knowledge/harvested/data-modeling.md requires every switch to
 // close with.
 import {describe, expect, test} from 'bun:test';
 import {assertNever, invariant, InvariantViolation} from './invariant.js';

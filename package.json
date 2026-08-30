@@ -66,6 +66,8 @@
     "verify:sse-37": "node scripts/verify-sse-37.mjs",
     "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs",
     "verify:test-partition": "node scripts/verify-test-partition.mjs",
+    "verify:knowledge-structure": "node scripts/verify-knowledge-structure.mjs",
+    "knowledge:drift": "node scripts/knowledge-drift.mjs",
     "verify:reproducible-build": "node scripts/verify-reproducible-build.mjs"
   }
 }

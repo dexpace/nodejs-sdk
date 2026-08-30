@@ -45,7 +45,7 @@ function hasOwnToString(options: ProxyOptions): boolean {
  * A fresh bypass-options value per test. Never a shared `const` at describe scope: the array is
  * mutable, and `proxy.ts` keys its compiled-glob cache by that exact array *identity*, so a shared
  * fixture would be shared into module-level state that outlives the describe
- * (`docs/knowledge/testing.md:52`, `:50`).
+ * (`docs/knowledge/harvested/testing.md:52`, `:50`).
  */
 function bypassOptions(
   ...nonProxyHosts: string[]

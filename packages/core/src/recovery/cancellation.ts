@@ -15,7 +15,7 @@ import {failure, type Outcome} from './outcome.js';
  * It deliberately does **not** crash on a `CancellationError` whose paired signal never aborted.
  * `Transport` is a pluggable seam, so that mismatch is a misbehaving third-party implementation —
  * an operational failure, not a violated precondition of this codebase, and crash-loud treatment is
- * reserved for the latter (`docs/knowledge/error-handling.md`). It would also break RECOV-2: this
+ * reserved for the latter (`docs/knowledge/harvested/error-handling.md`). It would also break RECOV-2: this
  * runs inside `dispatchWithRecovery`'s own `catch`, so throwing here would let a transport failure
  * skip the response and recovery chains entirely, which is precisely what RECOV-2 forbids. A
  * transport that aborts its in-flight requests from `close()` — which SEAM-14 permits — produces

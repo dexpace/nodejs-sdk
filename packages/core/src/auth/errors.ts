@@ -13,7 +13,7 @@ import {DexpaceError} from '../http/errors.js';
  *
  * The scheme lists are `readonly` FIELDS, not only interpolated prose. AUTH-6 requires the error to
  * carry both the required schemes in preference order and the available schemes, and
- * `docs/knowledge/error-handling.md` requires identifying inputs to be `readonly` fields "so they
+ * `docs/knowledge/harvested/error-handling.md` requires identifying inputs to be `readonly` fields "so they
  * survive serialization and appear in structured logs". Both are `undefined` on the AUTH-35
  * construction path, which has no scheme lists to carry.
  *
@@ -79,7 +79,7 @@ export class AuthResolutionError extends DexpaceError {
  * AUTH-28: a credential would have been attached to a non-HTTPS URL.
  *
  * The offending URL is deliberately NOT carried — a URL can hold userinfo and query-string secrets,
- * and `docs/knowledge/error-handling.md` bars interpolating secrets into a message that travels into
+ * and `docs/knowledge/harvested/error-handling.md` bars interpolating secrets into a message that travels into
  * logs. The step name and scheme identify the fault without that risk.
  *
  * @public

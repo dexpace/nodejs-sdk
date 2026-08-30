@@ -70,7 +70,7 @@ function toUsableToken(value: unknown): string | null {
  *
  * Takes the host explicitly rather than reading `globalThis` inline: the branches this phase cannot
  * execute on its own runners are then reachable from a test without deleting a global, which no test
- * may do (`docs/knowledge/testing.md:50` -- tests must survive parallel execution).
+ * may do (`docs/knowledge/harvested/testing.md:50` -- tests must survive parallel execution).
  *
  * @param host - the ambient global object to interrogate.
  * @returns a non-blank runtime identity token.
@@ -107,7 +107,7 @@ function resolveBuildInfo(): BuildInfo {
 }
 
 /**
- * Module-level mutable state, which `docs/knowledge/variables-and-declarations.md:22` bans outright.
+ * Module-level mutable state, which `docs/knowledge/harvested/variables-and-declarations.md:22` bans outright.
  * Deliberate: CFG-36's descriptor is resolved once per process, and the alternative -- re-running the
  * feature detection per request -- is the cost the memo exists to avoid. Safe against the rule's
  * stated hazard because `resolveBuildInfo` is deterministic within a process, so no test can observe

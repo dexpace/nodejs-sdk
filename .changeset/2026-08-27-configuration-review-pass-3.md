@@ -8,7 +8,7 @@ which is the whole of the `etc/core.api.md` diff:
 - `Clock.sleep(ms, signal)` becomes `Clock.sleep(durationMs, signal)`. A bare `ms` is a unit with no concept
   attached, and the report carried it two lines above `composeSignal(userSignal, timeoutMs)` — the same
   package stating the same kind of quantity two different ways
-  (`docs/knowledge/naming-conventions.md:36`).
+  (`docs/knowledge/harvested/naming-conventions.md:36`).
 - `Configuration.getDuration(key, fallback)` becomes `getDuration(key, fallbackMs)`. The accessor returns
   and accepts milliseconds, and said so only in prose while its own private collaborator is named
   `parseDurationMs`.

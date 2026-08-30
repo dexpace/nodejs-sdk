@@ -275,7 +275,7 @@ function withTrail(
  * port), and rejects promptly for a signal that aborted earlier. Duplicating it here would be the
  * same second-implementation the Phase 7a retrofit removed for the RFC 1123 parser and the
  * retryable-status set, and it would put the wait outside the injected seam -- forcing real timers
- * into a unit suite `docs/knowledge/testing.md` requires to be deterministic.
+ * into a unit suite `docs/knowledge/harvested/testing.md` requires to be deterministic.
  *
  * A non-positive delay short-circuits before `sleep` is reached: it continues inline with no timer
  * (RETRY-31), which is reachable after RETRY-17's past-instant hint and after the budget clamp, and

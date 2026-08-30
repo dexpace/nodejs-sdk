@@ -18,7 +18,7 @@ const NO_EVICTION_GENERATION = -1;
  * One token fetch's inputs.
  *
  * Bundled rather than passed positionally: `max-params` is 3, and
- * `docs/knowledge/function-design.md` requires an options object at three or more parameters anyway.
+ * `docs/knowledge/harvested/function-design.md` requires an options object at three or more parameters anyway.
  *
  * @internal
  */
@@ -87,7 +87,7 @@ async function invokeProvider(provider: TokenProvider): Promise<BearerToken> {
  * assignment and the generation bump un-interleaved.
  *
  * `new Promise` with a synchronous executor adapting an event-emitter callback is the one shape
- * `docs/knowledge/concurrency-and-async.md` sanctions for it, and the listener is removed on every
+ * `docs/knowledge/harvested/concurrency-and-async.md` sanctions for it, and the listener is removed on every
  * exit so a long-lived caller signal does not accumulate one per token fetch.
  *
  * A `pending` that rejects after losing the race is still settled through `Promise.race`'s own

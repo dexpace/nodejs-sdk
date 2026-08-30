@@ -184,7 +184,7 @@ export function credentialKey(
  * this is a class with a private field and deliberately NO `equals` override: `===`, the language
  * default, already gives exactly those semantics.
  *
- * `#key`, not `private key`, is the deliberate exception to `docs/knowledge/data-modeling.md`'s
+ * `#key`, not `private key`, is the deliberate exception to `docs/knowledge/harvested/data-modeling.md`'s
  * `private`-by-default rule, and the same note requires the justification be written down: AUTH-8's
  * redaction is a RUNTIME-privacy requirement, not a compile-time one. `private` is erased, leaving the
  * secret reachable through `credential['key']`, `Object.keys`, `JSON.stringify`, and a default
@@ -306,7 +306,7 @@ export class NameKeyCredential {
  * const provider: TokenProvider = () => fetchToken({signal: AbortSignal.timeout(5_000)});
  * ```
  *
- * `docs/knowledge/concurrency-and-async.md`'s "every external I/O call must carry a deadline" is the
+ * `docs/knowledge/harvested/concurrency-and-async.md`'s "every external I/O call must carry a deadline" is the
  * rule this discharges; its "pass the caller's signal down to the I/O primitive" rule is the one
  * deliberately not applied here, because the premise it rests on -- that the call owns the I/O -- is
  * false for a coalesced fetch. Recorded in the phase checklist's Deviation Ledger.

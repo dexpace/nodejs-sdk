@@ -45,7 +45,7 @@ export interface SseStreamFromOptions extends SseStreamOptions {
 
   /**
    * Cancellation for this long-running operation
-   * (`docs/knowledge/concurrency-and-async.md:18`, `docs/knowledge/api-design.md:34`).
+   * (`docs/knowledge/harvested/concurrency-and-async.md:18`, `docs/knowledge/harvested/api-design.md:34`).
    *
    * Aborting closes the stream, which is the only cancellation a pull-based reader needs: an iterator sitting
    * *between* pulls then ends cleanly (SSE-27) and one blocked *in* a read surfaces an `IoError` (SSE-31).
@@ -254,11 +254,11 @@ export function sseStreamFrom(
  * Make an abort close the stream.
  *
  * This lives here rather than in `SseStream`'s constructor because a constructor may only assign its arguments
- * to fields — no branching, no listener registration (`docs/knowledge/data-modeling.md:24`). The listener is
+ * to fields — no branching, no listener registration (`docs/knowledge/harvested/data-modeling.md:24`). The listener is
  * registered with `{once: true}` and removed upon close, and the close promise is explicitly
  * discarded with `void` plus a `.catch`, because an unhandled rejection on this path would take the process
  * down under Node's default `unhandledRejection` policy
- * (`docs/knowledge/cancellation-and-timeouts.md:26`).
+ * (`docs/knowledge/harvested/cancellation-and-timeouts.md:26`).
  */
 function bindAbort(
   stream: SseStream,

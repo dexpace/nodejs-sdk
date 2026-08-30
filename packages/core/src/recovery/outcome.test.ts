@@ -68,7 +68,7 @@ describe('fold (RECOV-1)', () => {
 });
 
 describe('fold identity law (RECOV-1)', () => {
-  // Canonical law for an invariant-bearing function (docs/knowledge/testing.md): folding a success
+  // Canonical law for an invariant-bearing function (docs/knowledge/harvested/testing.md): folding a success
   // through the identity success-handler, and a failure through the identity failure-handler, must
   // each recover the original payload, for arbitrary values.
   test('fold(success(x), id, _) === x for arbitrary x', () => {

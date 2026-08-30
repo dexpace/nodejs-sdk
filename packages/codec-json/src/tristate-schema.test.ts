@@ -103,7 +103,7 @@ test('a field schema rejection propagates out of tristateObject', () => {
 test("tristateObject preserves each field's element type through the mapped return (SERDE-16)", () => {
   // `tristateObject`'s return is a mapped-plus-conditional type built behind an `as never`, so a
   // runtime test cannot catch an inference regression here — only `expectTypeOf` can
-  // (docs/knowledge/testing.md:30).
+  // (docs/knowledge/harvested/testing.md:30).
   const parsed = tristateObject({age: numberSchema, name: stringSchema}).parse(
     {},
   );

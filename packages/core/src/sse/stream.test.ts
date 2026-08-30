@@ -257,7 +257,7 @@ test('aborting the signal closes the stream, ending an idle iterator cleanly (SS
 });
 
 test('sseStreamFrom releases the byte source as well as the response (SSE-23, SSE-32)', async () => {
-  // docs/knowledge/sse-streaming.md:84 — the facade's release must reach `response.body.cancel()` exactly once.
+  // docs/knowledge/harvested/sse-streaming.md:84 — the facade's release must reach `response.body.cancel()` exactly once.
   // The BufferedSource holds the reader lock on that body, so unless the facade closes the *source*, a real
   // Response.close() would be cancelling a locked stream. A close-counting double cannot catch this; asserting
   // the body's own cancel hook fired is what does.

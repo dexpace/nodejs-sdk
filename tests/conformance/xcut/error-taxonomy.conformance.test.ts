@@ -103,7 +103,7 @@ describe('XCUT-6: a custom error type participates without editing the classifie
   test('retries an error type declared in this test file, unknown to classify.ts', async () => {
     // The port's retryability capability is subtyping, not a duck-typed `isRetryable` flag: the
     // cause-walk returns true for anything `instanceof IoError`, so extending it is what opts a new
-    // failure in with no classifier edit (deviation ledger item 17, deliberate-deviations.md:168).
+    // failure in with no classifier edit (deviation ledger item 17, docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md).
     class CustomTransientError extends IoError {}
     const pipeline = buildComposedPipeline({
       transport: new ThrowingTransport(new CustomTransientError('transient')),

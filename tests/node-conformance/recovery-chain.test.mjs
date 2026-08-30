@@ -6,7 +6,7 @@
 // Management proposal and is absent on this package's declared floor (`engines.node ">=20.3"`). A
 // `new SuppressedError(...)` written straight into `response-chain.ts` would pass `bun test` and then throw
 // `ReferenceError: SuppressedError is not defined` at a consumer's call time — exactly the `NFR-10` trap
-// `docs/knowledge/tooling-and-quality-gates.md:60-61` describes. `suppress()` guards on the global; this
+// `docs/knowledge/harvested/tooling-and-quality-gates.md:60-61` describes. `suppress()` guards on the global; this
 // file is what proves the guarded path actually works on the runtime the SDK ships to, at both ends of the
 // matrix.
 //
@@ -51,7 +51,7 @@ describe('suppress() on the declared Node floor', () => {
 
   it('takes the branch this runtime actually has, and both legs of the matrix are covered', () => {
     // Not forced by deleting the global — that would not survive parallel execution
-    // (docs/knowledge/testing.md:50). The matrix is the forcing function: the pinned 20.3.0 leg has
+    // (docs/knowledge/harvested/testing.md:50). The matrix is the forcing function: the pinned 20.3.0 leg has
     // no native class and takes the fallback, `lts/*` has one and takes the native branch. Either
     // way the result must be usable without the caller knowing which.
     const native = globalThis.SuppressedError;

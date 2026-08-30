@@ -125,7 +125,7 @@ Two ways out, both defensible:
 1. **Give default keys a distinguishing description** — `Symbol('dispatch-context#' + n)` from a module-scoped
    counter. The counter would label only the description; `Symbol()` remains the identity, so CTX-4/5/6's
    uniqueness is untouched and the ledger's rejection of a `traceId:spanId`+counter *string key* still stands.
-   Costs a second module-level mutable binding (`docs/knowledge/variables-and-declarations.md:22`), on top of
+   Costs a second module-level mutable binding (`docs/knowledge/harvested/variables-and-declarations.md:22`), on top of
    the `contextStore` singleton that already takes that deviation.
 2. **Record a deliberate partial deviation** in the Phase 4a design's Deviation Ledger, on the grounds that a
    symbol has no unique rendering and the typed `.key` field identifies the key more precisely than a message
@@ -343,7 +343,7 @@ Phase 5's retry step being the first real third-party-shaped consumer.
 
 ### F3 — Zero `invariant()` assertions across `recovery/` — **SCHEDULED** (Phase 10)
 
-`docs/knowledge/assertions.md:6-7` sets a 2-per-function module average; this phase ships none across roughly a
+`docs/knowledge/harvested/assertions.md:6-7` sets a 2-per-function module average; this phase ships none across roughly a
 dozen functions. Project-wide inconsistency rather than 4b's — Phases 1/2/3b/4a ship zero, 4c's plan ships
 fifteen — so adding them to 4b alone would deepen the split. Recorded in the phase design's Deviation Ledger.
 
@@ -376,7 +376,7 @@ step lands without giving it behavior, inline it there and carry the disposition
 
 `suppress()` returns the native `SuppressedError` where the runtime has one and `FallbackSuppressedError` where
 it does not. No test forces the other branch by deleting the global — that cannot survive parallel execution
-(`docs/knowledge/testing.md:50`). Coverage comes from the `test:node` matrix instead: `lts/*` exercises the
+(`docs/knowledge/harvested/testing.md:50`). Coverage comes from the `test:node` matrix instead: `lts/*` exercises the
 native branch, the pinned `20.3.0` exercises the fallback. **Trigger:** if the matrix ever collapses to one
 runtime, or the floor rises past Node 24 (where the fallback becomes dead code to be deleted, not guarded).
 
@@ -706,10 +706,10 @@ reachable through the public barrels, which `index.public.test.ts` and `cross-pa
 ### H6 — assertion density — **DEFERRED to Phase 10, project-wide**
 
 This phase ships one `invariant()` call across roughly fifteen functions, against
-`docs/knowledge/assertions.md:6-7`'s 2-per-function module average. Phase 4b raised the identical gap and
+`docs/knowledge/harvested/assertions.md:6-7`'s 2-per-function module average. Phase 4b raised the identical gap and
 resolved it to a ledger row rather than fixing 4b alone, on the grounds that the split is project-wide
 (Phases 1/2/3b/4a ship zero, 4c ships fifteen) and half-migrating it is what
-`docs/knowledge/styleguide-overview.md:32-33` forbids. 6a follows 4b, deliberately.
+`docs/knowledge/harvested/styleguide-overview.md:32-33` forbids. 6a follows 4b, deliberately.
 
 **Trigger:** Phase 10, which settles the density rule once.
 
@@ -827,7 +827,7 @@ The positional form is what the plan's Task 2 Interfaces block specifies and it 
 — three parameters, inside `max-params`, and an SPI a third-party codec *implements*, where a positional shape
 is the smaller burden. The object form exists because positionally the handlers would be four parameters, which
 is a lint error. So each layer's choice is locally right and the pair is globally inconsistent: a codec author
-implements one spelling, a caller uses the other. `docs/knowledge/api-design.md:14` ("optional parameters
+implements one spelling, a caller uses the other. `docs/knowledge/harvested/api-design.md:14` ("optional parameters
 collected into a single options object rather than a positional list past two parameters") points at the object
 form for both.
 
@@ -862,7 +862,7 @@ mid-implementation. Raised in the Phase 6a shape review as F11.
 
 ### H12 — `seams/index.ts` is an unimported internal barrel — **OPEN**
 
-`docs/knowledge/module-organization.md:18` bans internal folder-level barrels outright ("never create internal
+`docs/knowledge/harvested/module-organization.md:18` bans internal folder-level barrels outright ("never create internal
 barrels; import the specific file directly"), and `api-design.md:6` makes `index.ts` the package's *sole*
 barrel. `packages/core/src/seams/index.ts` is one, from Phase 2, and 6a grew it by three re-exports
 (`Deserializer`, `Schema`, `Serializer`).
@@ -882,8 +882,8 @@ maintain it; out of scope for a review pass because it is Phase 2 surface.
 
 Closed by the `Gate self-tests (scripts/*.test.mjs)` step in the `ci` job, placed directly after the `Test`
 step and mirrored in `.claude/skills/ci-preflight/run-ci.mjs` as step id `test:scripts`. The glob now covers
-`knowledge.test.mjs`, `verify-seam-1.test.mjs`, `verify-sse-37.test.mjs` and `verify-test-partition.test.mjs`
-— 64 cases.
+`knowledge.test.mjs`, `verify-seam-1.test.mjs`, `verify-sse-37.test.mjs`,
+`verify-knowledge-structure.test.mjs` and `verify-test-partition.test.mjs` — 123 cases.
 
 **The trigger had already fired when this was closed.** `knowledge.test.mjs` was failing on `main`:
 `--list-topics` reports how many of the 39 topic files carry no requirement ID, the test pinned that at 16,
@@ -901,7 +901,15 @@ Original finding kept below for provenance.
 
 `scripts/*.test.mjs` runs only under `bun run test:scripts`, and `.github/workflows/ci.yml` has no step that
 invokes it. As of 6b that glob covered `scripts/knowledge.test.mjs`, `scripts/verify-seam-1.test.mjs`, and
-`scripts/verify-sse-37.test.mjs`; Phase 10's `tests/` merge added `scripts/verify-test-partition.test.mjs`.
+`scripts/verify-sse-37.test.mjs`; the 2026-08-31 knowledge-corpus split added
+`scripts/verify-knowledge-structure.test.mjs`, and Phase 10's `tests/` merge added
+`scripts/verify-test-partition.test.mjs`.
+
+**Raised in priority 2026-08-31.** `verify:knowledge-structure` is now a blocking CI step, and it reads the
+corpus through `scripts/knowledge.mjs`'s parser. A parser regression that makes `loadCorpus` return fewer
+entries turns that gate into a no-op that prints OK — the failure mode a hand edit to `harvested/` is supposed
+to hit. The gate carries its own floor assertion against a vacuous parse (`MIN_HARVESTED_ENTRIES`), which is a
+backstop, not a substitute for running the parser's tests.
 
 The script was named `test:knowledge` until the Phase 6a reader pass renamed it: the glob had outgrown the
 name the moment `verify-seam-1.test.mjs` landed, and both places that cite it had to explain the mismatch in
@@ -982,7 +990,7 @@ other callers exposed.
 Raised by the Phase 6a adversarial review as G10. Ledgered rather than fixed: adding `{signal}` to four public
 APIs is a design decision, not a review-pass edit, and some of the sites would breach `max-params`.
 
-`docs/knowledge/concurrency-and-async.md:18` ("every long-running async API must accept an options object with
+`docs/knowledge/harvested/concurrency-and-async.md:18` ("every long-running async API must accept an options object with
 `{ signal }`"), `:20` (accepting must be paired with honoring), and `:44` (a signal must reach the actual I/O
 primitive) all apply. Four sites accept none: `Serializer.serializeTo`, `Deserializer.deserializeFrom`
 (`packages/core/src/seams/serde.ts`), `decodeResponse` and `decodeSuccessResponse`
@@ -1302,7 +1310,7 @@ a missing export.
 ### K10 — `CFG-24`'s warning half is not emitted — **SCHEDULED** (Phase 7b)
 
 `CFG-24` requires that malformed proxy configuration resolve to null *with a warning* — "MUST NOT throw on
-malformed input (invalid config → null + warning)", restated at `docs/knowledge/configuration.md:52`. The
+malformed input (invalid config → null + warning)", restated at `docs/knowledge/harvested/configuration.md:52`. The
 shipped `resolveProxyOptions` gets the null half right on all three rejection paths (`parseProxyUrl`'s
 `catch`, an unusable port, an absent host) and emits no diagnostic on any of them, because there is no
 `Logger` in the package until 7b ships the `OBS-*` seam. The consequence today: a typo'd `HTTPS_PROXY`
@@ -1321,7 +1329,7 @@ surface-widening the phase declined to do for K1:
 1. **It is the sole outbound `config/ → pipeline/` edge.** Three of its four imports leave the folder —
    `../http/headers.js`, `../http/request.js`, `../pipeline/step.js` — and only `./build-info.js` stays.
    Every other module under `config/` imports nothing beyond `../invariant.js` and `../generated/version.js`.
-   The file is grouped by which phase built it, not by feature (`docs/knowledge/module-organization.md:12`).
+   The file is grouped by which phase built it, not by feature (`docs/knowledge/harvested/module-organization.md:12`).
    There is no cycle today; the risk is that 5a's `RetryConfig.clock` and 7b's logging step both create the
    return edge, and nothing in CI would catch the loop (see K12).
 2. **Its `RECOV-32` sibling would land elsewhere.** The idempotency-key step — the adjacent requirement, the
@@ -1332,15 +1340,15 @@ surface-widening the phase declined to do for K1:
 Also noted here, since it is the same class of question: the barrel comment at `packages/core/src/index.ts`
 explains the absence of a `config/index.ts`. This repo carries both patterns — `http/`, `body/`, `io/`, and
 `seams/` have internal barrels; `pipeline/`, `context/`, and `config/` do not — and so does the knowledge
-corpus, where `docs/knowledge/module-organization.md:18` bans internal barrels outright while
-`docs/knowledge/api-design.md:8` endorses one per feature folder, with nothing in the corpus's
+corpus, where `docs/knowledge/harvested/module-organization.md:18` bans internal barrels outright while
+`docs/knowledge/harvested/api-design.md:8` endorses one per feature folder, with nothing in the corpus's
 `--section conflicts` reconciling them. 7a followed its design doc, which rules a `config/index.ts` out by
 name. **Trigger:** the same phase as K1 — whichever one promotes the pipeline authoring surface. Settle the
 file's folder and the barrel question together there, and record the corpus tension at that point.
 
 ### K12 — No import-cycle gate exists in CI — **WATCH** (repo tooling, not this phase)
 
-`docs/knowledge/module-organization.md:20` treats any import cycle as a bug rather than a style nit, and
+`docs/knowledge/harvested/module-organization.md:20` treats any import cycle as a bug rather than a style nit, and
 `:22` requires it be gated in CI with `madge --circular src` or `eslint-plugin-import/no-cycle` as a required
 check. Neither string appears anywhere in `package.json`, `eslint.config.js`, or
 `.github/workflows/ci.yml` — verified 2026-08-27. Every other rule in that topic is either enforced or
@@ -1442,7 +1450,7 @@ cases and `http/`'s own), so a divergence surfaces as a test failure rather than
 
 ### K19 — No `fast-check` property test logs its seed — **WATCH** (repo tooling, not this phase)
 
-`docs/knowledge/testing.md:44` requires the seed of a failing seeded `fast-check` property test to reach CI
+`docs/knowledge/harvested/testing.md:44` requires the seed of a failing seeded `fast-check` property test to reach CI
 output, "or the shrunk counterexample that found the bug is lost". No `fc.assert` call anywhere under
 `packages/core/src` passes a `seed`, `numRuns`, or a `reporter` — verified 2026-08-27 across all 20
 `fc.assert` sites, of which Phase 7a contributes 12. A property failure in CI today reports the shrunk
@@ -1647,6 +1655,62 @@ peer range. `undici ^6.21.1` likewise appears once, as `transport-undici`'s own 
 
 Not fixed in Phase 9: it edits another package's manifest and changes the lockfile, which is 8b's surface.
 Owner: Phase 10, alongside its own dependency pass.
+
+
+## Section O — Knowledge-corpus split (2026-08-31)
+
+### O1 — The `knowledge-harvest` skill's default `--corpus` still points at the tree no query reads — **WATCH**
+
+`docs/knowledge/` is now two trees, `harvested/` and `notes/`, and `bun run knowledge` reads only those two.
+The producing skill lives outside this repository (`~/.claude/skills/knowledge-harvest/`, user-global, shared
+across projects) and its documented default is `<cwd>/docs/knowledge/`, with its canonical stored-run command
+naming `--corpus docs/knowledge`. A run that forgets `--corpus docs/knowledge/harvested` therefore writes a
+third copy of the corpus at the root, which no query reads.
+
+Separately, `merge.py` emits a `## Superseded` heading unconditionally and offers `supersede` as one of its
+four conflict resolutions. A harvest that writes one into `harvested/` produces an entry the structure gate
+rejects, correctly — the resolution has to be hand-moved to `notes/`.
+
+Neither can be fixed from inside this repository. The compensating controls are all here and all blocking:
+`verify:knowledge-structure` rejects a `.md` stranded at the root of `docs/knowledge/` and rejects a
+`Superseded` entry under `harvested/`, and the invocation is stated in `CLAUDE.md`, `docs/knowledge/README.md`
+and the `knowledge-lookup` skill.
+
+**Trigger:** anyone changing the global skill — make `harvested/` its default when the two-tree layout is
+present, and stop emitting `Superseded` into a harvest target that has a sibling `notes/`.
+
+### O2 — A note's key citation is checked by a report, not by a gate — **OPEN**
+
+A note names the harvested rule it overrides by that rule's stable key (`<topic>/<8 hex>`, digested from the
+entry's text). `bun run knowledge:drift` reports a citation that no entry carries any more, `--key` resolves
+one on demand, and a harvested entry that a note overrides prints `[overridden by notes/…]`. None of that is
+blocking: a re-harvest that rewords a rule silently breaks every note citing it, and only a hand-run report
+says so.
+
+The issue that introduced the split specified three structural rules and this is not among them, so it was not
+added unilaterally. Two candidate mechanisms were reviewed:
+
+1. **Fail `verify:knowledge-structure` on an unresolvable key.** Ten lines, no new file, and it makes a
+   re-harvest that orphans a note a red build rather than a silent rot. It also means a legitimate re-harvest
+   cannot land until the notes it invalidates are updated in the same commit — which is arguably the point.
+2. **Commit a key manifest** (`harvested/KEYS.md`) regenerated only by a harvest, and fail when the live key
+   set diverges without a matching `SOURCES.md` sha change. This catches strictly more: it detects *any* hand
+   edit to harvested text, including one that keeps the role, the section and the source and so passes all
+   four current rules. Cost is a new generated artifact and a coupling to a skill this repo does not own.
+
+**Trigger:** the next re-harvest, whichever lands first. Until then `bun run knowledge:drift` is the check, and
+it is named in the phase-start section of the `knowledge-lookup` skill.
+
+### O3 — `docs/superpowers/` still carries pre-split corpus paths — **WON'T FIX**
+
+The move to `harvested/` invalidated every `docs/knowledge/<topic>.md:<line>` citation in the repository. The
+107 in `packages/`, `test/`, `tests/` and `.changeset/` were repointed in the same commit, per the rule that a
+comment that no longer matches is corrected with the change that staled it.
+
+The ~200 in `docs/superpowers/plans/` and `docs/superpowers/specs/` were deliberately left. Those files are
+dated records of what a phase planned and found at the time; they are not retro-edited, and a phase plan
+citing the path that existed when it was written is accurate about its own moment. `CLAUDE.md` states the
+split so a reader does not read it as an oversight.
 
 
 ## Maintaining this file

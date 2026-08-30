@@ -54,7 +54,7 @@ describe('parseDurationMs (CFG-7)', () => {
   });
 
   test('reads the three grammars onto one scale', () => {
-    // The canonical law CFG-7 implies (`docs/knowledge/testing.md:28`): ISO-8601, shorthand, and a
+    // The canonical law CFG-7 implies (`docs/knowledge/harvested/testing.md:28`): ISO-8601, shorthand, and a
     // bare number are three spellings of one duration, so for any whole number of seconds all three
     // must land on the same milliseconds. A totality property cannot see the two scales drift apart.
     fc.assert(

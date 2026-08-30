@@ -6,8 +6,10 @@
 // declared Node floor are still present and callable after tree-shaking -- see
 // `fixture-app.ts`'s `probeDisposalSymbol`).
 // Substitutes for NFR-8's keep-configuration, which this port ships nothing for by design -- see the
-// Phase 9 deviation ledger and docs/knowledge/deliberate-deviations.md:55 (that corpus file is flagged
-// stale as of 2026-08-30; docs/deviations.md section 10 is the current statement).
+// Phase 9 deviation ledger and item 11 of
+// docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md, the normative ledger
+// (docs/deviations.md is its as-built audit). The knowledge corpus deliberately holds no copy: a
+// register goes stale on the next append -- see docs/knowledge/notes/deliberate-deviations.md.
 import {describe, expect, test} from 'bun:test';
 import {runShrinkGuard} from './run-shrink-guard.js';
 

@@ -576,7 +576,7 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  * Creates a `Transport` backed by `undici` — the full-featured option, with connection-pool control,
  * proxy support, and real `close()` semantics over the dispatchers it owns.
  *
- * `close()` is the single teardown path `docs/knowledge/resource-management.md` asks for, and the one
+ * `close()` is the single teardown path `docs/knowledge/harvested/resource-management.md` asks for, and the one
  * that actually destroys the dispatchers this transport owns. A `[Symbol.asyncDispose]` delegating to
  * it is installed at run time **when the runtime has the symbol**, which this package's declared floor
  * (`engines.node >=20.3`) does not — it arrived in Node 20.4. The return type therefore does not

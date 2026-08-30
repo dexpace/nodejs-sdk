@@ -32,7 +32,7 @@ export function invariant(cond: unknown, msg: string): asserts cond {
 
 /**
  * Closes an exhaustive discriminated-union `switch`'s `default` case
- * (`docs/knowledge/data-modeling.md`). If a new union variant is ever added without a matching
+ * (`docs/knowledge/harvested/data-modeling.md`). If a new union variant is ever added without a matching
  * `case`, the call stops type-checking; if one reaches this at runtime anyway — a value crossing a
  * seam that the type says cannot exist — it crashes loudly rather than falling through silently.
  *
@@ -47,7 +47,7 @@ export function assertNever(value: never, message?: string): never {
 /**
  * `String(value)` is not total: it throws on a null-prototype object (no `toString` to reach) and
  * on any value whose `toString`/`Symbol.toPrimitive` throws — the same hazard
- * `docs/knowledge/error-handling.md:18` makes `toError` guard. An assertion helper that throws from
+ * `docs/knowledge/harvested/error-handling.md:18` makes `toError` guard. An assertion helper that throws from
  * its own message construction reports the wrong failure at the worst moment, so the fallback is a
  * fixed string.
  */

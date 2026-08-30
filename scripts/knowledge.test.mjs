@@ -15,7 +15,10 @@ import {
   buildFilters,
   citationIndex,
   compareIds,
+  danglingKeys,
   derivePrefixes,
+  entryKey,
+  entryLocation,
   extractIds,
   loadCanonicalIds,
   loadCorpus,
@@ -25,6 +28,7 @@ import {
   renderCoverage,
   renderEntries,
   renderListTopics,
+  renderNoMatches,
   isRollup,
   chaptersOf,
   topicFiles,
@@ -163,7 +167,9 @@ test('the standard four-field <sub> splits role from source correctly', () => {
 
 test('the real corpus parses with one <sub> per bullet and no orphans', () => {
   const entries = loadCorpus(prefixes);
-  assert.equal(entries.length, 1470);
+  const harvested = entries.filter(entry => entry.origin === 'harvested');
+  assert.equal(harvested.length, 1457);
+  assert.ok(entries.length > harvested.length, 'the notes tree is non-empty');
   for (const entry of entries) {
     assert.ok(entry.subLine, `${entry.file}:${entry.line} lost its <sub> line`);
     assert.ok(
@@ -361,25 +367,44 @@ test('an unknown chapter or role fails loudly, like an unknown section', () => {
 
 // --- topic listing ----------------------------------------------------------
 
-test('--list-topics covers every topic file and counts the ID-less ones', () => {
+test('--list-topics covers every topic file in both trees', () => {
   const entries = loadCorpus(prefixes);
   const report = renderListTopics(entries);
 
-  assert.equal(topicFiles().length, 39);
-  for (const name of topicFiles()) {
-    assert.ok(
-      report.includes(name.replace(/\.md$/, '')),
-      `${name} missing from --list-topics`,
-    );
+  const files = topicFiles();
+  assert.equal(
+    files.filter(file => file.origin === 'harvested').length,
+    38,
+    'the harvested corpus is 38 topic files, the register having been dropped',
+  );
+  assert.ok(
+    files.some(file => file.origin === 'note'),
+    'the notes tree is discovered too',
+  );
+  for (const {topic} of files) {
+    assert.ok(report.includes(topic), `${topic} missing from --list-topics`);
   }
+  const topics = new Set(files.map(file => file.topic));
+  const harvested = new Set(
+    files.filter(file => file.origin === 'harvested').map(file => file.topic),
+  );
+  assert.match(
+    report,
+    new RegExp(
+      `^${topics.size} topics, ${harvested.size} of them harvested\\.`,
+      'm',
+    ),
+    'the topic count is the union of both trees — deliberate-deviations is note-only',
+  );
   // The prose count must agree with the table it summarises. This half tests the renderer, and it
-  // holds whatever the corpus says.
+  // holds whatever the corpus says. The count is scoped to harvested topics: a note-only topic is
+  // not styleguide-derived, so its row (entries 0) is not an ID-less harvested topic.
   const stated = Number(
-    /(\d+) carry no requirement ID at all/.exec(report)?.[1],
+    /(\d+) harvested topics carry no requirement ID at all/.exec(report)?.[1],
   );
   const zeroIdRows = report
     .split('\n')
-    .filter(line => /^\S+\t\d+\t0$/.test(line)).length;
+    .filter(line => /^\S+\t[1-9]\d*\t0\t\d+$/.test(line)).length;
   assert.equal(
     stated,
     zeroIdRows,
@@ -398,6 +423,7 @@ test('--list-topics covers every topic file and counts the ID-less ones', () => 
     15,
     'ID-less topic count changed — update CLAUDE.md and knowledge-lookup/SKILL.md with it',
   );
+  assert.match(report, /carry a hand-written note/);
 });
 
 test('--coverage pins the substantive / roll-up / uncited split the docs quote', () => {
@@ -430,7 +456,335 @@ test('--coverage pins the substantive / roll-up / uncited split the docs quote',
   );
   assert.deepEqual(
     {substantive, rollup, uncited},
-    {substantive: 386, rollup: 255, uncited: 4},
+    {substantive: 385, rollup: 256, uncited: 4},
     'corpus coverage changed — update CLAUDE.md and knowledge-lookup/SKILL.md with the new numbers',
   );
+});
+
+test('a note and its harvested topic share a name but not a tree', () => {
+  const files = topicFiles();
+  const pagination = files.filter(file => file.topic === 'pagination');
+  assert.deepEqual(
+    pagination.map(file => file.origin).sort(),
+    ['harvested', 'note'],
+    'pagination.md exists in both trees',
+  );
+  assert.ok(pagination.every(file => file.path.endsWith('pagination.md')));
+});
+
+test('an entry location names the tree, so the two are never confused', () => {
+  const entries = loadCorpus(prefixes);
+  const note = entries.find(entry => entry.origin === 'note');
+  const harvested = entries.find(entry => entry.origin === 'harvested');
+  assert.match(entryLocation(note), /^notes\/[a-z-]+\.md:\d+$/);
+  assert.match(entryLocation(harvested), /^[a-z-]+\.md:\d+$/);
+});
+
+// --- the two trees ----------------------------------------------------------
+
+test('an entry records which tree it came from', () => {
+  const body = [
+    '## Superseded',
+    '- A hand-written note.',
+    '  <sub>review · `docs/superpowers/specs/x.md` · high · sha:manual-note</sub>',
+    '',
+  ].join('\n');
+
+  const [harvested] = parseFile(fixture(body), prefixes, 'harvested');
+  const [note] = parseFile(fixture(body), prefixes, 'note');
+
+  assert.equal(harvested.origin, 'harvested');
+  assert.equal(note.origin, 'note');
+});
+
+test('--origin selects one tree and rejects an unknown name', () => {
+  const harvested = {origin: 'harvested', roles: ['spec'], reqs: []};
+  const note = {origin: 'note', roles: ['review'], reqs: []};
+
+  assert.ok(matches(note, filtersFor({origin: ['note']})));
+  assert.ok(!matches(harvested, filtersFor({origin: ['note']})));
+  assert.ok(matches(harvested, filtersFor({origin: ['harvested']})));
+  assert.throws(
+    () => filtersFor({origin: ['notes']}),
+    /unknown origin 'notes'/,
+  );
+});
+
+test('the corpus is both trees, and only notes carry the review role', () => {
+  const entries = loadCorpus(prefixes);
+  const notes = entries.filter(entry => entry.origin === 'note');
+
+  assert.ok(notes.length > 0, 'the notes tree should hold entries');
+  assert.ok(
+    notes.every(entry => entry.roles.includes('review')),
+    'every note is a review-role entry',
+  );
+  assert.ok(
+    entries
+      .filter(entry => entry.origin === 'harvested')
+      .every(entry => !entry.roles.includes('review')),
+    'no harvested entry carries the review role',
+  );
+});
+
+// --- --prefix ---------------------------------------------------------------
+
+test('--prefix selects a whole requirement family', () => {
+  const http = {reqs: ['HTTP-7'], roles: ['spec']};
+  const retry = {reqs: ['RETRY-1'], roles: ['spec']};
+  const idless = {reqs: [], roles: ['styleguide']};
+
+  assert.ok(matches(http, filtersFor({prefix: ['HTTP']})));
+  assert.ok(!matches(retry, filtersFor({prefix: ['HTTP']})));
+  assert.ok(!matches(idless, filtersFor({prefix: ['HTTP']})));
+  assert.ok(matches(retry, filtersFor({prefix: ['HTTP,RETRY']})));
+});
+
+test('--prefix rejects a name appendix C does not define', () => {
+  assert.throws(
+    () => filtersFor({prefix: ['UTF']}),
+    /'UTF' is not a requirement-ID prefix in appendix C/,
+  );
+});
+
+test('--prefix beats a --req list at reaching a whole family', () => {
+  const entries = loadCorpus(prefixes);
+  const hits = entries.filter(entry =>
+    matches(entry, filtersFor({prefix: ['PAGE']})),
+  );
+  assert.ok(hits.length > 0);
+  assert.ok(
+    hits.every(entry => entry.reqs.some(id => id.startsWith('PAGE-'))),
+    'every hit cites a PAGE id',
+  );
+});
+
+// --- the stable entry key ---------------------------------------------------
+
+test('an entry key is <topic>/<8 hex> derived from the entry text alone', () => {
+  const [entry] = parseFile(
+    fixture(
+      [
+        '## Rules',
+        '- A rule about HTTP-1.',
+        '  <sub>spec · `docs/product-spec/04-core-http-domain-model.md:9` · high · sha:abc123</sub>',
+        '',
+      ].join('\n'),
+    ),
+    prefixes,
+    'harvested',
+  );
+
+  assert.match(entry.key, /^topic\/[0-9a-f]{8}$/);
+  assert.equal(entry.key, entryKey('topic', 'A rule about HTTP-1.'));
+});
+
+test('an entry key survives a re-order but not a re-wording', () => {
+  const rule = '- A rule about HTTP-1.';
+  const sub =
+    '  <sub>spec · `docs/product-spec/04-core-http-domain-model.md:9` · high · sha:abc123</sub>';
+
+  const first = parseFile(
+    fixture(['## Rules', rule, sub, '- Another rule.', sub, ''].join('\n')),
+    prefixes,
+    'harvested',
+  );
+  const moved = parseFile(
+    fixture(['## Rules', '- Another rule.', sub, rule, sub, ''].join('\n')),
+    prefixes,
+    'harvested',
+  );
+
+  assert.notEqual(first[0].line, moved[1].line, 'the entry did move');
+  assert.equal(first[0].key, moved[1].key, 'the key does not follow the line');
+  assert.notEqual(
+    first[0].key,
+    first[1].key,
+    'a different rule, a different key',
+  );
+  assert.notEqual(
+    entryKey('topic', 'A rule about HTTP-1.'),
+    entryKey('topic', 'A rule about HTTP-2.'),
+  );
+});
+
+test('the key ignores trailing whitespace and the topic scopes it', () => {
+  assert.equal(entryKey('t', 'A rule.  '), entryKey('t', 'A rule.'));
+  assert.notEqual(entryKey('a', 'A rule.'), entryKey('b', 'A rule.'));
+});
+
+// --- parser robustness ------------------------------------------------------
+
+test('a CRLF topic file parses, rather than silently yielding nothing', () => {
+  const body = [
+    '## Rules',
+    '- A rule about HTTP-1.',
+    '  <sub>spec · `docs/product-spec/04-core-http-domain-model.md:9` · high · sha:abc123</sub>',
+    '',
+  ].join('\r\n');
+  const entries = parseFile(fixture(body), prefixes, 'harvested');
+
+  assert.equal(entries.length, 1, 'CRLF must not empty the file');
+  assert.equal(entries[0].section, 'Rules');
+  assert.equal(entries[0].sources.length, 1);
+  assert.equal(entries[0].text, 'A rule about HTTP-1.');
+});
+
+test('a BOM does not orphan every entry from its section', () => {
+  const body =
+    '﻿' +
+    [
+      '## Rules',
+      '- A rule.',
+      '  <sub>spec · `docs/product-spec/04-core-http-domain-model.md:9` · high · sha:abc</sub>',
+      '',
+    ].join('\n');
+  const [entry] = parseFile(fixture(body), prefixes, 'harvested');
+  assert.equal(entry.section, 'Rules');
+});
+
+test('a second <sub> adds its sources instead of hiding the first', () => {
+  const [entry] = parseFile(
+    fixture(
+      [
+        '## Rules',
+        '- A rule.',
+        '  <sub>review · `docs/superpowers/specs/x.md` · high · sha:manual</sub>',
+        '  <sub>spec · `docs/product-spec/04-core-http-domain-model.md:9` · high · sha:abc</sub>',
+        '',
+      ].join('\n'),
+    ),
+    prefixes,
+    'harvested',
+  );
+  assert.deepEqual(entry.roles, ['review', 'spec']);
+  assert.equal(entry.sources.length, 2);
+});
+
+test('an unreadable topic file names itself in the error', () => {
+  assert.throws(
+    () => parseFile(join(tmpdir(), 'knowledge-test-nonexistent.md'), prefixes),
+    /cannot read the topic file .*knowledge-test-nonexistent\.md/,
+  );
+});
+
+// --- empty filter values ----------------------------------------------------
+
+test('an empty filter value is rejected, not treated as "match everything"', () => {
+  assert.throws(
+    () => filtersFor({topic: ['']}),
+    /--topic was given only empty/,
+  );
+  assert.throws(() => filtersFor({}, ['']), /--grep was given only empty/);
+  assert.throws(() => filtersFor({req: [',']}), /--req was given only empty/);
+});
+
+test('a trailing comma is dropped, not turned into a whole-corpus query', () => {
+  const filters = filtersFor({topic: ['pipeline,']});
+  assert.deepEqual(filters.topics, ['pipeline']);
+});
+
+// --- --key and note overrides ----------------------------------------------
+
+test('--key selects the single entry with that key', () => {
+  const entries = loadCorpus(prefixes);
+  const target = entries.find(entry => entry.origin === 'harvested');
+  const hits = entries.filter(entry =>
+    matches(entry, filtersFor({key: [target.key]})),
+  );
+  assert.deepEqual(
+    hits.map(entry => entry.key),
+    [target.key],
+  );
+});
+
+test('--key rejects anything that is not <topic>/<8 hex>', () => {
+  assert.throws(() => filtersFor({key: ['pagination']}), /is not an entry key/);
+  assert.throws(
+    () => filtersFor({key: ['pagination/xyz']}),
+    /is not an entry key/,
+  );
+});
+
+test('a note links to the harvested entry it names, in both directions', () => {
+  const entries = loadCorpus(prefixes);
+  const note = entries.find(
+    entry => entry.origin === 'note' && entry.section === 'Superseded',
+  );
+  assert.ok(note.overrides.length > 0, 'the note cites at least one key');
+
+  for (const key of note.overrides) {
+    const target = entries.find(entry => entry.key === key);
+    assert.ok(target, `${key} resolves`);
+    assert.ok(
+      target.overriddenBy.includes(entryLocation(note)),
+      'the harvested entry points back at the note',
+    );
+  }
+});
+
+test('every key a note cites resolves — a dangling one is a stale note', () => {
+  assert.deepEqual(danglingKeys(loadCorpus(prefixes)), []);
+});
+
+test('danglingKeys reports a citation whose entry has been reworded', () => {
+  const note = {
+    origin: 'note',
+    file: 'pagination.md',
+    line: 8,
+    text: 'Supersedes `pagination/deadbeef`.',
+  };
+  assert.deepEqual(danglingKeys([note]), [
+    {note: 'notes/pagination.md:8', cited: 'pagination/deadbeef'},
+  ]);
+});
+
+test('an overridden harvested entry says so in its rendered header', () => {
+  const entries = loadCorpus(prefixes);
+  const overridden = entries.find(entry => entry.overriddenBy.length > 0);
+  const rendered = renderEntries([overridden], true, {reqs: []});
+  assert.match(rendered, /\[overridden by notes\//);
+});
+
+// --- zero-result diagnosis --------------------------------------------------
+
+test('an empty intersection is reported as one, not blamed on a filter', () => {
+  const entries = loadCorpus(prefixes);
+  const filters = filtersFor({prefix: ['HTTP'], req: ['PAGE-11']});
+  const index = citationIndex(entries);
+
+  assert.equal(entries.filter(entry => matches(entry, filters)).length, 0);
+  const rendered = renderNoMatches(filters, entries, index, canonicalIds);
+  assert.match(rendered, /every filter matches something on its own/);
+  assert.ok(
+    !rendered.includes('no entry cites it yet'),
+    'PAGE-11 is cited; blaming it would be a false statement',
+  );
+});
+
+test('a genuinely uncited ID is still named, and never as its own neighbour', () => {
+  const entries = loadCorpus(prefixes);
+  const filters = filtersFor({req: ['PAGE-9999']});
+  const rendered = renderNoMatches(
+    filters,
+    entries,
+    citationIndex(entries),
+    canonicalIds,
+  );
+  assert.match(rendered, /PAGE-9999 is not a canonical requirement ID/);
+  assert.match(rendered, /nearest cited PAGE IDs/);
+  assert.ok(!/nearest cited PAGE IDs:.*PAGE-9999/.test(rendered));
+});
+
+test('a stale key is diagnosed as a reworded rule, not as a typo', () => {
+  const entries = loadCorpus(prefixes);
+  const filters = filtersFor({key: ['pagination/deadbeef']});
+  const rendered = renderNoMatches(
+    filters,
+    entries,
+    citationIndex(entries),
+    canonicalIds,
+  );
+  assert.match(rendered, /no entry carries the key pagination\/deadbeef/);
+  assert.match(rendered, /a key digests the entry's text/i);
 });

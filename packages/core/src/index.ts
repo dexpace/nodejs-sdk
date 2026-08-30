@@ -21,7 +21,7 @@
 export * from './http/index.js';
 
 // Deliberately NOT `export * from './seams/index.js';`. That file is a folder-level barrel, which
-// docs/knowledge/module-organization.md:18 bans outright and api-design.md:6 makes this file the sole
+// docs/knowledge/harvested/module-organization.md:18 bans outright and api-design.md:6 makes this file the sole
 // one of; nothing imports it and the right end state is deleting it (docs/open-items.md H12). Naming
 // each public export here keeps the package's surface a decision made in one place rather than a
 // consequence of what a folder happens to re-export.
@@ -242,8 +242,8 @@ export {PaginationError} from './pagination/errors.js';
 // design doc rules one out by name. Not because the question is settled: this repo carries both
 // patterns — `http/`, `body/`, `io/`, and `seams/` each have an internal barrel, while `pipeline/`,
 // `context/`, and `config/` do not — and so does the knowledge corpus, where
-// docs/knowledge/module-organization.md:18 bans internal barrels outright and
-// docs/knowledge/api-design.md:8 endorses one per feature folder, with no entry in the corpus's
+// docs/knowledge/harvested/module-organization.md:18 bans internal barrels outright and
+// docs/knowledge/harvested/api-design.md:8 endorses one per feature folder, with no entry in the corpus's
 // `--section conflicts` reconciling them. 7a followed its design doc and names each symbol here
 // against its own file; see docs/open-items.md K11 for the standing note.
 // Deliberately NOT exported: `config/equality.js`'s deepEqual/deepHash — no requirement gives a

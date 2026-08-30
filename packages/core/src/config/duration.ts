@@ -65,7 +65,7 @@ function parseShorthandDuration(raw: string): number | null {
  * unit, a negative, anything else -- yields `null` so the caller falls back to its default.
  *
  * Its own module rather than a helper inside `configuration.ts`: the grammar is a concept separate
- * from the layered lookup that happens to consume it (`docs/knowledge/module-organization.md:42`).
+ * from the layered lookup that happens to consume it (`docs/knowledge/harvested/module-organization.md:42`).
  * `Configuration.getDuration` is its only caller today.
  *
  * @param raw - the candidate duration; surrounding whitespace is tolerated.

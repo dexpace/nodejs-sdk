@@ -111,7 +111,7 @@ export class ResponseRecoveryChain {
  * A close failure rides along as `suppressed` on the ORIGINAL throwable — built by hand through
  * {@link suppress}, original first — never via `using` / `await using`, whose auto-generated
  * `SuppressedError` puts the *teardown* failure first and would silently invert which error the
- * caller ends up seeing (`docs/knowledge/resource-management.md:72`).
+ * caller ends up seeing (`docs/knowledge/harvested/resource-management.md:72`).
  *
  * **This function is total: it never throws, for any argument.** RECOV-8 makes "`apply()` MUST NOT
  * throw under any input" absolute, and this runs inside both phases' `catch` blocks — the last place

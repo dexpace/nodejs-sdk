@@ -37,7 +37,7 @@ Three design calls worth recording:
 Two known deviations, both already in the deferral register (`docs/open-items.md`):
 
 - `contextStore` is a module-level mutable singleton, which
-  `docs/knowledge/variables-and-declarations.md:22` bans. Accepted because threading a store handle through
+  `docs/knowledge/harvested/variables-and-declarations.md:22` bans. Accepted because threading a store handle through
   builder → runtime → every step would be a wide API change for no observable gain; logged in the design's
   Deviation Ledger for Phase 10. Tests build their own `new ContextStore()` rather than asserting through the
   singleton, which is shared by every file in a `bun test` run.
