@@ -193,11 +193,18 @@ export class SseStream implements AsyncIterable<SseEvent> {
   }
 }
 
-// Guarded install: installed at run time only when the symbol exists, matching Response (HTTP-38).
-// Node 20.3 (the pinned floor verified by verify:runtime-floor) predates Symbol.asyncDispose (which
-// landed in Node 20.4). TypeScript does not polyfill the well-known symbol for a library that declares
-// the method, so declaring it on the interface would break consumers compiling on ES2023 without
-// esnext.disposable.
+// Scoped teardown for `await using` (styleguide 13.1/13.2), installed at run time only when the symbol
+// exists. This is the original of the shape `Page` and both transport adapters now repeat.
+//
+// DO NOT restore this as a plain `[Symbol.asyncDispose]()` class member. Node 20.3 is this package's
+// declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol, which
+// arrived in 20.4. On the floor the computed key evaluates to `undefined` and binds the method to the
+// string key `"undefined"` — a junk prototype entry, and no working disposal. TypeScript does not
+// polyfill the well-known symbol either, so declaring it on the class would emit it into the `.d.ts`
+// unconditionally and break consumers compiling on ES2023 without esnext.disposable.
+//
+// `Response` (HTTP-38) goes one step further and ships no disposal member at all — `close()` is its
+// whole teardown surface, and `http/response.test.ts` pins the junk key's absence there.
 if (typeof Symbol.asyncDispose === 'symbol') {
   Object.defineProperty(SseStream.prototype, Symbol.asyncDispose, {
     value: function asyncDispose(this: SseStream): Promise<void> {

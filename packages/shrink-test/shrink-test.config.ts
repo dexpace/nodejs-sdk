@@ -19,11 +19,13 @@ export interface ShrinkTestConfig {
 }
 
 /**
- * Measured at 16,671 bytes on 2026-08-29 (esbuild 0.28.2; `@dexpace/core` + `@dexpace/transport-fetch`
- * + `@dexpace/codec-json`, all three reached through their published entry points). The budget is
- * 24 KiB -- ~47% headroom, which absorbs ordinary growth while still catching the failure this guard
- * exists for: a tree-shaking regression pulls in core's barrel wholesale and shows up as a multiple
- * of this figure, not a few percent over it. A loose budget would catch nothing.
+ * Measured at 16,671 bytes on 2026-08-29, and 17,689 bytes on 2026-08-30 once the fixture also
+ * constructed a `Page` to probe the disposal-symbol install (esbuild 0.28.2; `@dexpace/core` +
+ * `@dexpace/transport-fetch` + `@dexpace/codec-json`, all three reached through their published entry
+ * points). The budget is 24 KiB -- ~39% headroom, which absorbs ordinary growth while still catching
+ * the failure this guard exists for: a tree-shaking regression pulls in core's barrel wholesale and
+ * shows up as a multiple of this figure, not a few percent over it. A loose budget would catch
+ * nothing.
  */
 export const SHRINK_TEST_CONFIG: ShrinkTestConfig = Object.freeze({
   budgetBytes: 24_576,

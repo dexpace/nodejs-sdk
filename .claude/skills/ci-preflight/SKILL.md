@@ -7,7 +7,7 @@ description: Use before pushing a branch, opening or updating a PR, or whenever 
 
 ## Overview
 
-`.github/workflows/ci.yml` is 14 blocking steps across two jobs. Every one of them can run
+`.github/workflows/ci.yml` is 15 blocking steps across two jobs. Every one of them can run
 locally, so a red CI run is always avoidable — `bun test` passing is not evidence, and it is
 the single most common reason work gets handed over broken.
 
@@ -19,10 +19,10 @@ node .claude/skills/ci-preflight/run-ci.mjs
 
 ~2.5 minutes warm on a green tree. Full output per step goes to
 `node_modules/.cache/ci-preflight/<step>.log`; only a summary and a tail of each failure
-reach stdout, so a red run costs a few hundred tokens rather than the ~40k that thirteen
+reach stdout, so a red run costs a few hundred tokens rather than the ~40k that fourteen
 raw `bun run` calls would.
 
-Do not hand-run the thirteen commands instead. Two things go wrong when you do:
+Do not hand-run the fourteen commands instead. Two things go wrong when you do:
 
 - **Order is load-bearing.** `test`, `api`, `lint:publish` and every `verify:*` gate resolve
   `@dexpace/core` by package name, which lands in `packages/core/dist/`. Run any of them
@@ -35,7 +35,7 @@ Do not hand-run the thirteen commands instead. Two things go wrong when you do:
 1. **Run it.** Add `--skip-install` only if you have not touched `package.json` since the
    last install. **Before you push, add `--clean`** — a warm tree is blind to a whole class of
    defect CI hits on its first step. (The pinned Bun needs no flag; it is the default.)
-2. **All green** → say so plainly: CI is all good, naming the count (`all 14 steps passed`).
+2. **All green** → say so plainly: CI is all good, naming the count (`all 15 steps passed`).
    Nothing else to do.
 3. **Anything red** → report the findings to the user *first*: which gates failed, what each
    one means, and the fix you intend. One line per finding, not a transcript dump.
@@ -88,7 +88,7 @@ Both of these will make you report a passing gate that CI rejects.
   This is not hypothetical. PR #52 failed exactly this way: Phase 8a made
   `@dexpace/transport-shared` the second published package imported by name from another
   package's `src/`, `typecheck` and `lint` still pre-built only core, and a warm preflight
-  passed all 14 steps on the commit CI rejected. Fixed by `build:deps` — see CLAUDE.md, and
+  passed every step on the commit CI rejected. Fixed by `build:deps` — see CLAUDE.md, and
   keep that list current when a new package crosses the same line.
 - **The coverage floor fails silently.** `bun test` enforces `bunfig.toml`'s
   `coverageThreshold` (0.8) by **exit code alone**. It prints no threshold message, and the
@@ -105,7 +105,7 @@ Both of these will make you report a passing gate that CI rejects.
 | `install` | `bun.lock` disagrees with a `package.json`. The tree CI installs is not yours, so nothing after it is measuring the right thing — the runner stops here. | `bun install`, then commit `bun.lock`. |
 | `typecheck` | `tsc --noEmit` over all 9 projects. | `Cannot find module '@dexpace/…'` means a build prerequisite is missing from `build:deps`, not a bad import — check with `--clean`. Otherwise a real fix; usual suspects: a missing `.js` extension on a relative import (NodeNext), a type import without `import type` (`verbatimModuleSyntax`), an enum/namespace/parameter property (`erasableSyntaxOnly`). |
 | `lint` | Formatting **and** type-aware rules; formatting is an error, not a warning. | `bun run fix` first — it clears every prettier finding. Hand-fix what survives: 70-line function cap, `max-depth` 3, `max-params` 3, explicit return types on exported members. Every `eslint-disable` needs a `-- reason`. |
-| `build` | Emit failed. **Blocks the ten gates below it**, which the runner reports `SKIP`. | Fix this before reading anything else; the skipped gates are unknown, not passing. |
+| `build` | Emit failed. **Blocks the eleven gates below it**, which the runner reports `SKIP`. | Fix this before reading anything else; the skipped gates are unknown, not passing. |
 | `test` | A failing test, *or* the silent coverage floor (see above). | If the tail says `0 fail`, it is coverage — find the file that dropped below 0.8 in the printed table and test it. Otherwise fix the test or the code. |
 | `api` | The committed `etc/<pkg>.api.md` no longer matches the built surface, or an export lacks TSDoc. | Intended export change: `cd packages/<pkg> && bun run api:local`, then commit the regenerated report. `(undocumented)` in the diff means the export needs a `@public` block, plus `@throws` naming each catchable error class. **Unintended** change: revert the export, don't bless the report. |
 | `lint:publish` | `publint` + `attw` on every built package's `exports` map, `types`/`main` fields, and declaration resolution. | Fix the manifest. `cjs-resolves-to-esm` is already ignored by design (ESM-only); every other rule is real. |
@@ -114,8 +114,17 @@ Both of these will make you report a passing gate that CI rejects.
 | `verify:seam-1` | A package gained a runtime dependency outside the allow-list, or dropped its committed empty `dependencies` object (an omitted field is a violation too). | Remove the dependency — SEAM-1 is the constraint, not the gate. `@dexpace/core` is a **peer** of the satellites, never a dependency. |
 | `verify:sse-37` | Core's SSE code reached for serde or a codec package. | Remove the import; SSE-37/38 forbid the coupling. |
 | `verify:runtime-floor` | `engines.node` and the `target`/`lib` a package compiles to have drifted apart. | Move both together, deliberately — never raise one to silence this. |
+| `verify:reproducible-build` | Two clean builds of an identical source tree disagreed (NFR-12) — either in an emitted `dist/` file or in an `npm pack` tarball. | The assertion names what differed. A wall-clock or random value reaching a build-time codegen step is the usual cause; `packages/core/scripts/gen-version.mjs` is the only such step today, and injecting a `Date.now()` there is this gate's own negative test (it fails naming `packages/core/dist/generated/version.js` and `npm-pack:dexpace-core-0.0.0.tgz`). If the log instead ends in `tsc` errors, the **build inside the gate** failed and there is no difference to read — fix that first. The gate sweeps every `dist/` and rebuilds twice itself, so it is last in the job and leaves the tree freshly built. |
 | `audit` | A high-severity advisory in production dependencies. | `bun audit --prod` for detail. Note the tree is tiny (zero runtime deps by design), so a hit here is usually a transitive dev-dep misclassification worth reading carefully. |
 | `test:node` | Bun-vs-Node runtime divergence, almost always in `packages/core/src/io/` — Web Streams, `AbortSignal`, `Uint8Array` chunking. | Fix against Node's semantics. A phase touching a runtime-divergent surface should be *adding* cases here; see `test/node-conformance/README.md`. |
+
+**A `timeout` verdict is not the same finding as a red one.** Every step is capped at
+`STEP_TIMEOUT_MS` (10 minutes) in `run-ci.mjs`, and a step that hits the cap is reported `timeout`
+whether it hung or was merely slow. Nearly all of them finish in seconds;
+`verify:reproducible-build` is the exception, performing **two full swept builds plus two `npm pack`
+passes** — ~34s observed warm, but a cold or loaded machine multiplies that, and it is the one step
+with any real chance of approaching the cap. If *it* comes back `timeout`, raise `STEP_TIMEOUT_MS`
+and re-run before reading the verdict as a reproducibility defect.
 
 ## Local-vs-CI divergences worth stating
 
@@ -153,7 +162,7 @@ consumer-facing change still needs `bun run changeset`).
 | `--skip-install` | Skip the frozen-lockfile install. Safe when `package.json` is untouched. |
 | `--node-floor` | Also run `test:node` under Node 20.3.0 via mise/fnm/nvm. |
 | `--tail N` | Lines of a failing log to print (default 30). Raise for a wall of tsc errors. |
-| — | Each step is capped at 10 minutes and reported `timeout` if it hangs. A gate *can* hang rather than fail — a conformance test holding the event loop open on an unclosed server does exactly that. |
+| — | Each step is capped at 10 minutes (`STEP_TIMEOUT_MS`) and reported `timeout` if it hangs. A gate *can* hang rather than fail — a conformance test holding the event loop open on an unclosed server does exactly that. It can also just be slow: `verify:reproducible-build` builds the workspace twice and packs it twice, so raise the cap rather than diagnosing a `timeout` there as a real failure. |
 | `--list` | Step ids and the command each runs. |
 
 Exit code is 0 only when every selected step ran and passed. `SKIP` is never a pass.

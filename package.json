@@ -64,7 +64,8 @@
     "verify:consumer-types": "node scripts/verify-consumer-types.mjs",
     "verify:seam-1": "node scripts/verify-seam-1.mjs",
     "verify:sse-37": "node scripts/verify-sse-37.mjs",
-    "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs"
+    "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs",
+    "verify:reproducible-build": "node scripts/verify-reproducible-build.mjs"
   }
 }
 

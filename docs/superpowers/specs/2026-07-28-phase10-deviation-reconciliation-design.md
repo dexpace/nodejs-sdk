@@ -25,6 +25,21 @@ draft's revision voids: Phase 9 has since shipped its own design and plan (2026-
 conformance only, and will never produce that evidence. Phase 10 decides those four directly instead (§Group L);
 nothing in this phase's own scope is left waiting on Phase 9.
 
+> **Corrected 2026-08-30 — the scope above is what was planned, not what shipped.** Phase 10 shipped code, in
+> three published packages. Two premises this paragraph rests on were false by the time it executed. The first
+> is "docs-only repository state": Phases 1-9 had all shipped by then, so `NFR-12` needed a *build*, not a
+> *release*, and it closed on evidence rather than staying open (see the correction on Group N below). The
+> second is "consolidation and cross-referencing, not new investigation": the audit was performed against
+> as-built source rather than against the phase specs that produced the ledger, and that method found a live
+> defect — `Page`, `FetchTransport` and `UndiciTransport` declared `[Symbol.asyncDispose]` as a plain computed
+> class member, which on the declared `engines.node ">=20.3"` floor bound the method to the string key
+> `"undefined"` (`NFR-10`; the symbol landed in Node 20.4). Fixing it is a breaking type change with two
+> changesets, and three later review passes found three more defects behind it. The full inventory, with the
+> reasoning for breaking this scope and for holding the line on the project-wide convention sweeps that also
+> named this phase, is the roadmap's **Status note (2026-08-30, Phase 10 EXECUTED — scope corrected)**; the
+> per-item as-built evidence is `docs/deviations.md`. This paragraph is left standing rather than rewritten so
+> the planned-versus-actual gap stays legible.
+
 **Governing documents:** `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (the
 document this phase rewrites), the roadmap's own Deferred Items Log, and every Phase 2, 3a–8b, and 9 spec's
 Deviation Ledger section plus the handful of plan-level "Deviation Ledger Additions" sections (5c, 6a, 6b, 6c)
@@ -202,6 +217,19 @@ Phase 10 records the intended verification method (double-build the workspace, d
 the already-scripted `prepublishOnly` + `npm publish --provenance` path for real, for `NFR-16`) and leaves both
 open with "first real release" as the unblock trigger, exactly as the roadmap's Deferred Items Log already states
 — Phase 10 doesn't manufacture a false close here.
+
+> **Corrected 2026-08-30 — `NFR-12`'s half of this group was wrong, and it closed.** The premise "needs a real
+> build artifact… neither exists in this docs-only repo state" expired the moment Phases 1-9 shipped code.
+> `NFR-12` needed a *build*, not a *publish*, and was verifiable from Phase 1 onward; it sat open two phases
+> longer than it had to. It is now closed on evidence and kept closed by a gate:
+> `scripts/verify-reproducible-build.mjs` sweeps every `dist/` and `*.tsbuildinfo`, builds twice, and compares a
+> SHA-256 per emitted file **and** per `npm pack` tarball across all nine publishable packages — 644 emitted
+> files and 9 tarballs byte-identical. It is a blocking CI step and a `ci-preflight` step, and was
+> negative-tested by injecting a `Date.now()` into `packages/core/scripts/gen-version.mjs`, the one build-time
+> codegen step. **`NFR-16` is unaffected and this group's disposition still holds for it:** its conformance test
+> is behavioral and needs a real registry and a real OIDC token. One sub-claim about `NFR-16` was also wrong and
+> is corrected in §10 itself — `npm publish --provenance` was never scripted; only `prepublishOnly` is. See
+> `docs/deviations.md` §14 and the roadmap's `NFR-12` / `NFR-16` rows.
 
 **Group O — HTTP-18 vs. HTTP-48/50 ETag obs-text replay tension (decision made now).** Not in the original 12;
 flagged by Phase 1's plan as unresolved and explicitly targeted at Phase 10. `RequestConditions.applyTo` writes

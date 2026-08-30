@@ -1,5 +1,28 @@
 # deliberate-deviations
 
+> **STALE — do not treat these entries as current (flagged 2026-08-30, Phase 10).** Every entry below was
+> harvested on 2026-07-25 from the **pre-implementation** revision of
+> `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (`05d649a`) — the 12-item
+> *prediction*, not the as-built ledger. That source has been rewritten and then corrected repeatedly since:
+> Phase 10's reconciliation replaced the 12 predictions with a 16-item as-built ledger (`293f2e5`), Phase 8
+> added item 17 for `TransportFailureError`'s third error-tree level (`a0d734d`), and Phase 10's as-built audit
+> corrected items 4, 7, 11 and 14 against source (`27fb81f`). Consequences for a `bun run knowledge` consumer:
+>
+> - **The `sha:f9ecb6e7d87b` pin on every `<sub>` line matches only `05d649a`, the oldest revision in that
+>   file's history.** The source file's current sha-256 prefix is `301f1d519cd8`.
+> - **Every `file:line` anchor below is wrong.** They point into a 62-line file; the source is now 238 lines and
+>   restructured, so the ranges resolve to unrelated text.
+> - **Two entries are substantively false**, not merely mis-anchored — the structural-interfaces mitigation and
+>   the "three tiers, not four" configuration claim. Both carry an inline `**Stale…**` marker below so the
+>   correction travels with the entry in CLI output.
+>
+> **Trigger for removing this banner:** a `knowledge-harvest` run over
+> `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`, re-pinning
+> `docs/knowledge/SOURCES.md` and the `<sub>` lines to the current sha and refreshing
+> `docs/knowledge/INDEX.md`'s row. Phase 10 did **not** re-harvest: `knowledge-harvest` is explicitly
+> user-invoked only, which its own design doc records as a scope boundary. Until then, read §10 and
+> `docs/deviations.md` directly — see §10's own three-file disambiguation table.
+
 ## Rules
 
 ## Constraints
@@ -15,7 +38,7 @@
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:17-21` · high · sha:f9ecb6e7d87b</sub>
 - The two retry stacks collapse into one, with the total-timeout budget made explicitly opt-in, a substitution the spec itself sanctions by requiring that a port that unifies retry entry points MUST make that budget explicitly opt-in.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:22-24` · high · sha:f9ecb6e7d87b</sub>
-- True runtime encapsulation of domain models is not fully achievable because TypeScript's structural typing means a hand-built object literal can still impersonate a public interface type and bypass builder validation, even though ECMAScript `#private` fields close the "official construction path" hole; this acknowledged language-level limitation is mitigated, not eliminated, by exporting only concrete classes rather than bare structural interfaces from each package's public entry point.
+- True runtime encapsulation of domain models is not fully achievable because TypeScript's structural typing means a hand-built object literal can still impersonate a public interface type and bypass builder validation, even though ECMAScript `#private` fields close the "official construction path" hole; this acknowledged language-level limitation is mitigated, not eliminated, by exporting only concrete classes rather than bare structural interfaces from each package's public entry point. **Stale (Phase 10 audit, 2026-08-30): the limitation holds; the mitigation clause is false as stated.** §10 item 4 was corrected against the API report — `packages/core/etc/core.api.md` exports 61 interfaces against 58 classes, and `Configuration` is a builder-built type exported as a bare interface and accepted structurally by `setGlobalConfiguration()`. The mitigation is real for the `http/` wire models it was written about, not a package-wide property. See `docs/deviations.md` §4.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:25-30` · high · sha:f9ecb6e7d87b</sub>
 - The generic-erasure defense uses schema-as-witness rather than reflective type capture, because TypeScript erases types more completely than JVM generic erasure and leaves no raw class token to reflect over, and this substitution is argued to be at least as strong a guarantee, not a weaker one.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:31-35` · high · sha:f9ecb6e7d87b</sub>
@@ -23,7 +46,7 @@
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:36-40` · high · sha:f9ecb6e7d87b</sub>
 - Digest MD5 needs a vendored implementation while SHA-256 does not, because the Web Crypto API deliberately excludes MD5, so the port vendors a small, dependency-free MD5 implementation for RFC 7616 interoperability and uses `crypto.subtle` directly for SHA-256/SHA-256-sess.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:41-43` · high · sha:f9ecb6e7d87b</sub>
-- Configuration layering has three tiers rather than four because the system-property tier is lost outright, Node having no ambient key/value store distinct from environment variables to fill that slot, and the port does not fabricate one.
+- Configuration layering has three tiers rather than four because the system-property tier is lost outright, Node having no ambient key/value store distinct from environment variables to fill that slot, and the port does not fabricate one. **Stale (Phase 10 audit, 2026-08-30): false as stated.** §10 item 7 was corrected against the code — all four of `CFG-1`'s tiers are implemented, and the property layer is a first-class caller-supplyable seam (`ConfigurationBuilder.withPropertySource()` and `getRawProperty()` are both public API), so a host that *does* have an ambient store can bind it. What deviates is only the default production wiring: `defaultConfiguration()` binds a property source that always returns `undefined`. See §10 item 7; this item is not in `docs/deviations.md` precisely because it was correctable and was corrected.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:44-46` · high · sha:f9ecb6e7d87b</sub>
 - Cancellation is `AbortController`/`AbortSignal` end-to-end rather than an interrupt-and-restore-a-flag discipline, composing the same signal type across the transport call, the retry backoff wait, and a derived per-call timeout; since `Promise` has no public `cancel()` unlike `CompletableFuture`, cancellation is cooperative end-to-end, and a `send()` implementation must check `signal.aborted` after resuming from an `await` before treating a resolved value as deliverable.
   <sub>design · `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:47-53` · high · sha:f9ecb6e7d87b</sub>

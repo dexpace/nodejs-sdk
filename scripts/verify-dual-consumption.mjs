@@ -103,9 +103,27 @@ assert.equal(inbound.headers.get('content-type'), 'text/plain');
 
 // Exercise both transports far enough to prove the module graph resolved and construction runs --
 // not far enough to need a network. `close()` is the one lifecycle call that is safe with no peer.
+// Never index with a bare `Symbol.asyncDispose` here. This gate runs on whatever `node` is on PATH,
+// which includes the declared `engines.node` floor of >=20.3 -- and the symbol arrived in 20.4. On the
+// floor the computed key is `undefined`, so `transport[Symbol.asyncDispose]` reads the STRING key
+// `"undefined"`. That used to resolve to the junk prototype entry left by an unguarded
+// `[Symbol.asyncDispose]()` class member, so this assertion passed over a transport that could not be
+// disposed; since the guarded install it resolves to `undefined` and the assertion fails outright.
+// Branch on the symbol, and assert the junk key's absence on BOTH legs -- the same shape
+// `packages/transport-fetch/src/fetch-transport.test.ts` uses.
+const asyncDispose = Symbol.asyncDispose;
 for (const transport of [fetchTransport(), undiciTransport()]) {
   assert.equal(typeof transport.send, 'function');
-  assert.equal(typeof transport[Symbol.asyncDispose], 'function');
+  if (typeof asyncDispose === 'symbol') {
+    assert.equal(typeof transport[asyncDispose], 'function');
+    await transport[asyncDispose]();
+  }
+  assert.ok(
+    !Object.getOwnPropertyNames(Object.getPrototypeOf(transport)).includes(
+      'undefined',
+    ),
+    'transport prototype carries an "undefined" key: [Symbol.asyncDispose] was declared as a plain class member ahead of the floor bump',
+  );
   await transport.close();
 }
 // Exercise @dexpace/rx bridge

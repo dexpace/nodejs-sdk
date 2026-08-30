@@ -40,8 +40,10 @@ function runInChild(runnerPath: string): Promise<boolean> {
  * emitted, which is what a downstream consumer ships.
  *
  * The child is spawned with `stdio: 'ignore'` and reports through its exit code alone; the runner it
- * executes exits non-zero when either fixture check comes back false, so a stripped `instanceof`
- * surfaces as a failed guard rather than as parsed output this function would have to trust.
+ * executes exits non-zero when any fixture check comes back false, so a stripped `instanceof` or a
+ * dropped `[Symbol.asyncDispose]` install surfaces as a failed guard rather than as parsed output
+ * this function would have to trust. Which check failed is not carried back — read `fixture-app.ts`,
+ * whose `FixtureResult` names them all.
  *
  * @returns the measured size, the configured budget, and whether the artifact still worked. The
  *   caller decides what fails the build -- see `run-shrink-guard.test.ts`.
@@ -58,7 +60,10 @@ export async function runShrinkGuard(): Promise<ShrinkGuardResult> {
       [
         `import {runFixtureApp} from ${JSON.stringify(entryPath)};`,
         'const result = await runFixtureApp();',
-        'process.exit(result.caughtViaCoreImport && result.serdeRoundTripOk ? 0 : 1);',
+        // Every FixtureResult field is a check that must come back true, so this stays correct when
+        // the fixture grows a new probe -- there is no list here to forget to update.
+        'const failed = Object.values(result).filter(ok => ok !== true);',
+        'process.exit(failed.length === 0 ? 0 : 1);',
         '',
       ].join('\n'),
       'utf8',

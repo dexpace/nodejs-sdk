@@ -359,7 +359,26 @@ interface DispatchContext {
   readonly fork: ForkedSignal;
 }
 
-class UndiciTransport implements Transport, AsyncDisposable {
+/**
+ * Destroys every dispatcher in reverse acquisition order and returns whatever failed, rather than
+ * stopping at the first rejection. Teardown is best-effort by definition: a dispatcher that cannot be
+ * released is not a reason to leak the ones behind it (TRANSPORT-15/16).
+ */
+async function releaseAll(
+  dispatchers: readonly Dispatcher[],
+): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const dispatcher of [...dispatchers].reverse()) {
+    try {
+      await dispatcher.destroy();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+
+class UndiciTransport implements Transport {
   readonly #dispatchers: DispatcherSet;
   readonly #proxy: ProxyOptions | undefined;
   readonly #logDrops: (dropped: readonly string[]) => void;
@@ -396,11 +415,21 @@ class UndiciTransport implements Transport, AsyncDisposable {
     );
     if (composed?.aborted) throw abortToSdkError(composed, composed.reason);
 
+    // Headers BEFORE the body, deliberately -- the fetch twin evaluates them in this order too.
+    // `prepareBody` starts a streaming producer eagerly, while `toUndiciHeaders` reads
+    // `request.body.mediaType`, a getter on a caller-supplied Body that may throw. Preparing the
+    // body first leaves such a throw with a live producer nobody can abandon, whose own later
+    // rejection then reaches Node's default unhandledRejection policy (TRANSPORT-19, SEAM-30).
+    const headers = toUndiciHeaders(
+      request,
+      this.#forbiddenHeaders,
+      this.#logDrops,
+    );
     const prepared = await prepareBody(request.body);
     // Dispatched with a fork the caller cannot reach: cancellation stays live for the whole in-flight
     // window and goes inert the moment the response is handed over (SEAM-16).
     const context: DispatchContext = {
-      headers: toUndiciHeaders(request, this.#forbiddenHeaders, this.#logDrops),
+      headers,
       body: prepared.init,
       fork: forkSignal(composed),
     };
@@ -491,43 +520,78 @@ class UndiciTransport implements Transport, AsyncDisposable {
    * SEAM-15 post-close mode: a send issued after `close()` cannot succeed over a dispatcher that no
    * longer exists, so it is not reported as a retryable failure.
    *
+   * A dispatcher that fails to release does not strand the rest: every owned dispatcher is destroyed
+   * before the failure is reported, so one bad pool cannot leak the others.
+   *
    * @returns a promise that resolves once the owned dispatchers are released.
+   * @throws `TransportFailureError` when one or more owned dispatchers failed to release. The
+   * rejection is memoized like the success path, so a later `close()` reports the same failure rather
+   * than falsely claiming a clean teardown.
    */
   close(): Promise<void> {
     this.#closing ??= (async () => {
-      for (const dispatcher of [...this.#dispatchers.owned].reverse()) {
-        await dispatcher.destroy();
+      // Every owned dispatcher is destroyed even when an earlier one rejects. A bare `for … await`
+      // loop propagates on the first failure and leaks the pooled connections of every dispatcher
+      // after it -- and `owned` is walked in reverse, so with a proxy configured the ProxyAgent
+      // actually holding those connections is the one destroyed last.
+      const failures = await releaseAll(this.#dispatchers.owned);
+      if (failures.length > 0) {
+        // A raw undici error would otherwise escape a public method untyped (NFR-7); the causes are
+        // preserved rather than flattened to a message.
+        throw new TransportFailureError(
+          'one or more owned dispatchers failed to release',
+          {
+            cause:
+              failures.length === 1
+                ? failures[0]
+                : new AggregateError(failures),
+          },
+        );
       }
     })();
     return this.#closing;
   }
+}
 
-  /**
-   * Single teardown path, delegating to {@link UndiciTransport.close}.
-   *
-   * @returns a promise that resolves once teardown is complete.
-   */
-  [Symbol.asyncDispose](): Promise<void> {
-    return this.close();
-  }
+// Single teardown path for `await using`, delegating to `UndiciTransport.close()` and installed at run
+// time only when the symbol exists — the same guarded shape `SseStream` and `Page` use.
+//
+// DO NOT restore this as a plain `[Symbol.asyncDispose]()` class member. Node 20.3 is this package's
+// declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol, which
+// arrived in 20.4. On the floor the computed key evaluates to `undefined` and binds the method to the
+// string key `"undefined"` — a junk prototype entry, and no working disposal. Declaring it on the
+// class would also emit it into the `.d.ts` unconditionally, promising consumers on the floor a method
+// that is not there.
+if (typeof Symbol.asyncDispose === 'symbol') {
+  Object.defineProperty(UndiciTransport.prototype, Symbol.asyncDispose, {
+    value: function asyncDispose(this: UndiciTransport): Promise<void> {
+      return this.close();
+    },
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
  * Creates a `Transport` backed by `undici` — the full-featured option, with connection-pool control,
  * proxy support, and real `close()` semantics over the dispatchers it owns.
  *
- * The returned transport is `AsyncDisposable`, so `await using transport = undiciTransport(...)`
- * releases it at scope exit — the single teardown path `docs/knowledge/resource-management.md` asks
- * for.
+ * `close()` is the single teardown path `docs/knowledge/resource-management.md` asks for, and the one
+ * that actually destroys the dispatchers this transport owns. A `[Symbol.asyncDispose]` delegating to
+ * it is installed at run time **when the runtime has the symbol**, which this package's declared floor
+ * (`engines.node >=20.3`) does not — it arrived in Node 20.4. The return type therefore does not
+ * promise `AsyncDisposable`: claiming it would type-check `await using` for a consumer sitting on the
+ * floor, where the method is genuinely absent, and leak every pooled connection. Call `close()`, or
+ * raise your own floor to 20.4+ and reach the symbol through a cast.
  *
  * @param options - optional transport settings.
- * @returns a transport ready to send, disposable through `await using`.
+ * @returns a transport ready to send; release it with `close()`.
  * @throws `TypeError` when both `dispatcher` and `proxy` are supplied.
  *
  * @public
  */
 export function undiciTransport(
   options: UndiciTransportOptions = {},
-): Transport & AsyncDisposable {
+): Transport {
   return new UndiciTransport(options);
 }

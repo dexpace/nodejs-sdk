@@ -51,7 +51,7 @@ export function pageInfo<T>(
  *
  * @public
  */
-export class Page<T> implements AsyncDisposable {
+export class Page<T> {
   /** Materialized, frozen items that remain readable after close (PAGE-2). */
   readonly items: readonly T[];
   /** The HTTP response status code and reason phrase (PAGE-1). */
@@ -93,11 +93,29 @@ export class Page<T> implements AsyncDisposable {
   async close(): Promise<void> {
     await this.#response.close();
   }
+}
 
-  /**
-   * Scoped teardown for `await using`, delegating to {@link Page.close} (PAGE-12).
-   */
-  async [Symbol.asyncDispose](): Promise<void> {
-    await this.close();
-  }
+// PAGE-12's scoped teardown, installed at run time only when the symbol exists — the same guarded
+// shape `SseStream` uses. `Response` ships no disposal member at all (HTTP-38), and
+// `http/response.test.ts` pins the absence of the junk key this guard exists to prevent.
+//
+// Because the install is conditional, this class deliberately does NOT declare `implements
+// AsyncDisposable`: `await using page` therefore does not type-check on the declared floor, where the
+// method is genuinely absent. `close()` is the supported teardown path — see `Paginator.pages()`,
+// which tells consumers which scoped constructs actually give PAGE-12's guarantee.
+//
+// DO NOT restore this as a plain `async [Symbol.asyncDispose]()` class member. Node 20.3 is this
+// package's declared floor (`engines.node`, checked by verify:runtime-floor) and predates the symbol,
+// which arrived in 20.4. On the floor the computed key evaluates to `undefined` and binds the method
+// to the string key `"undefined"` — a junk prototype entry, and no working disposal. Declaring it on
+// the class would also emit it into the `.d.ts` unconditionally, promising consumers on the floor a
+// method that is not there.
+if (typeof Symbol.asyncDispose === 'symbol') {
+  Object.defineProperty(Page.prototype, Symbol.asyncDispose, {
+    value: function asyncDispose<T>(this: Page<T>): Promise<void> {
+      return this.close();
+    },
+    writable: true,
+    configurable: true,
+  });
 }

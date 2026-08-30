@@ -6,7 +6,8 @@
 // TRANSPORT-2 (no retrying/redirecting dispatcher is ever composed), TRANSPORT-15/16
 // (close is a documented no-op), TRANSPORT-17/19 (single-use body written once, abandoned producer
 // unblocked), TRANSPORT-22 (an adaptation throw still closes the native response), TRANSPORT-30
-// (no proxy option exists at all)
+// (no proxy option exists at all), SEAM-30 (no producer is left running for its rejection to reach
+// Node's default unhandledRejection policy)
 import {describe, expect, test} from 'bun:test';
 import {
   byteArrayBody,
@@ -192,6 +193,39 @@ describe('fetchTransport request-body failures', () => {
     expect(recorder.calls.length).toBe(0);
   });
 
+  test('a header-mapping throw never strands a started body producer (TRANSPORT-19, SEAM-30)', async () => {
+    // This transport builds its DispatchPlan as one object literal, so the safety here rests on
+    // property EVALUATION ORDER: `headers` must be computed before `prepared`. `prepareBody` starts
+    // a streaming producer eagerly and `toNativeHeaders` reads `request.body.mediaType`, a
+    // caller-supplied getter that may throw -- reversing the two would leave a live producer nobody
+    // can abandon, whose later rejection reaches Node's default unhandledRejection policy. The
+    // undici twin had exactly that ordering bug; this row keeps it from appearing here.
+    let producerStarted = false;
+    const recorder = recordingFetch();
+    const transport = fetchTransport({fetch: recorder.fetch});
+    const request = Request.newBuilder()
+      .method('POST')
+      .url('http://127.0.0.1:1/x')
+      .body({
+        kind: 'stream',
+        get mediaType(): string | undefined {
+          throw new Error('mediaType getter exploded');
+        },
+        // -1 / non-replayable forces the streaming branch rather than the buffered one.
+        contentLength: -1,
+        replayable: false,
+        writeTo: () => {
+          producerStarted = true;
+          return Promise.resolve();
+        },
+      })
+      .build();
+
+    await rejection(transport.send(request));
+    expect(producerStarted).toBe(false);
+    expect(recorder.calls.length).toBe(0);
+  });
+
   test('a network failure is wrapped as TransportFailureError with its cause kept', async () => {
     const cause = new Error('connect ECONNREFUSED');
     const transport = fetchTransport({fetch: () => Promise.reject(cause)});
@@ -215,9 +249,25 @@ describe('fetchTransport lifecycle', () => {
     expect(recorder.calls.length).toBe(1);
   });
 
-  test('asyncDispose is the same teardown as close', async () => {
+  test('asyncDispose is the same teardown as close, where the runtime has it', async () => {
     const transport = fetchTransport();
-    await transport[Symbol.asyncDispose]();
+    // Cast rather than a bare `Symbol.asyncDispose` index: on the pinned floor (Node 20.3, which
+    // predates the symbol's 20.4 arrival) it is `undefined` and the index would read the string key
+    // `"undefined"`. The install in fetch-transport.ts is guarded to match.
+    const asyncDispose = (Symbol as {asyncDispose?: symbol}).asyncDispose;
+    if (typeof asyncDispose === 'symbol') {
+      const dispose = (
+        transport as unknown as Record<
+          symbol,
+          (() => Promise<void>) | undefined
+        >
+      )[asyncDispose];
+      expect(dispose).toBeDefined();
+      await dispose?.call(transport);
+    }
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(transport)),
+    ).not.toContain('undefined');
     await transport.close();
   });
 

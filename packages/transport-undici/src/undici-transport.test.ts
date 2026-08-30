@@ -7,7 +7,9 @@
 // throws nor blocks),
 // TRANSPORT-15/16 (ownership-aware, idempotent close), TRANSPORT-22 (an adaptation throw destroys the
 // native body), TRANSPORT-20 (a permanent argument error is terminal, a no-response failure is
-// retryable), TRANSPORT-28 (a file body dispatches its declared byte range), SEAM-14
+// retryable), TRANSPORT-28 (a file body dispatches its declared byte range), SEAM-14,
+// TRANSPORT-19 (a header-mapping throw leaves no started body producer stranded), SEAM-30 (so no
+// producer rejection reaches Node's default unhandledRejection policy)
 import {createRequire} from 'node:module';
 import {mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {createServer, type Server} from 'node:http';
@@ -23,10 +25,11 @@ import {
   IoError,
   setGlobalLogger,
   TransportFailureError,
+  type Body,
   type FileBodyDescriptor,
   type Logger,
 } from '@dexpace/core';
-import type {Dispatcher} from 'undici';
+import type {Agent, Dispatcher, ProxyAgent} from 'undici';
 import {undiciTransport} from './undici-transport.js';
 
 const require = createRequire(import.meta.url);
@@ -75,6 +78,120 @@ function captureDroppedHeaders(): {
     dropped,
     restore: () => {
       setGlobalLogger(previous);
+    },
+  };
+}
+
+/**
+ * DispatcherBase's public `destroyed` getter, which undici's shipped `Dispatcher` and `ProxyAgent`
+ * types omit even though every concrete dispatcher exposes it.
+ */
+interface DestroyableDispatcher {
+  readonly destroyed: boolean;
+}
+
+/**
+ * A streaming body whose `mediaType` getter throws, recording whether its producer was ever started.
+ * The shape header mapping trips over: `mediaType` is read during mapping, while `writeTo` only runs
+ * once `pumpBody` has taken ownership.
+ */
+function bodyWithThrowingMediaType(): {
+  body: Body;
+  producerStarted: () => boolean;
+} {
+  let started = false;
+  return {
+    body: {
+      kind: 'stream',
+      get mediaType(): string | undefined {
+        throw new Error('mediaType getter exploded');
+      },
+      // -1 / non-replayable forces the streaming branch rather than the buffered one.
+      contentLength: -1,
+      replayable: false,
+      writeTo: () => {
+        started = true;
+        return Promise.resolve();
+      },
+    },
+    producerStarted: () => started,
+  };
+}
+
+/**
+ * Swaps undici's exported `Agent` binding for a capturing subclass, so the dispatcher a transport
+ * constructs for *itself* is reachable from the test. `destroyed` is DispatcherBase's own public getter,
+ * so teardown stays observable without patching `destroy` at all.
+ */
+function captureOwnedAgents(): {
+  agents: DestroyableDispatcher[];
+  restore: () => void;
+} {
+  const bindings = undici as unknown as Record<string, unknown>;
+  const RealAgent = undici.Agent;
+  const agents: DestroyableDispatcher[] = [];
+
+  class CapturingAgent extends RealAgent {
+    constructor(opts?: Agent.Options) {
+      super(opts);
+      // No cast needed here: undici's shipped `Agent` type declares `destroyed`, unlike its bare
+      // `Dispatcher` and `ProxyAgent` types.
+      agents.push(this);
+    }
+  }
+
+  bindings.Agent = CapturingAgent;
+  return {
+    agents,
+    restore: () => {
+      bindings.Agent = RealAgent;
+    },
+  };
+}
+
+/**
+ * Swaps undici's exported `Agent` / `ProxyAgent` bindings so a transport built afterwards gets a
+ * direct `Agent` whose `destroy()` rejects, and captures the `ProxyAgent` constructed alongside it.
+ *
+ * The exported CLASS BINDINGS are swapped, not `DispatcherBase.prototype.destroy`: the transport
+ * reads `undici.Agent` / `undici.ProxyAgent` off this exports object at construction time, while
+ * ProxyAgent's own internal Agent comes from its private `require('./agent')`. Patching the shared
+ * prototype instead makes the injected failure fire inside ProxyAgent's internals too, which is a
+ * different bug than the one under test.
+ *
+ * The ProxyAgent is captured rather than intercepted: overriding its `destroy` would also catch
+ * DispatcherBase's internal `this.destroy(err, callback)` re-dispatch and recurse. `destroyed` is
+ * DispatcherBase's own public getter, so the effect is observable without touching teardown at all.
+ */
+function explodeDirectAgentDestroy(): {
+  proxyAgents: DestroyableDispatcher[];
+  restore: () => void;
+} {
+  const bindings = undici as unknown as Record<string, unknown>;
+  const RealAgent = undici.Agent;
+  const RealProxyAgent = undici.ProxyAgent;
+  const proxyAgents: DestroyableDispatcher[] = [];
+
+  class ExplodingAgent extends RealAgent {
+    override destroy(): Promise<void> {
+      return Promise.reject(new Error('agent destroy exploded'));
+    }
+  }
+  class CapturingProxyAgent extends RealProxyAgent {
+    constructor(opts: ProxyAgent.Options) {
+      super(opts);
+      // Cast because undici's shipped ProxyAgent type omits DispatcherBase's `destroyed` getter.
+      proxyAgents.push(this as unknown as DestroyableDispatcher);
+    }
+  }
+
+  bindings.Agent = ExplodingAgent;
+  bindings.ProxyAgent = CapturingProxyAgent;
+  return {
+    proxyAgents,
+    restore: () => {
+      bindings.Agent = RealAgent;
+      bindings.ProxyAgent = RealProxyAgent;
     },
   };
 }
@@ -148,6 +265,40 @@ describe('undiciTransport construction and ownership', () => {
     await transport.close();
   });
 
+  test('a failing dispatcher destroy still releases every other owned dispatcher (TRANSPORT-15/16)', async () => {
+    // owned is [ProxyAgent, Agent] and close() walks it reversed, so the direct Agent is destroyed
+    // first. When that destroy rejects, a naive `for … await` loop propagates immediately and the
+    // ProxyAgent -- the dispatcher actually holding the pooled proxy connections -- is never
+    // released.
+    const {proxyAgents, restore} = explodeDirectAgentDestroy();
+    try {
+      const transport = undiciTransport({
+        proxy: createProxyOptions({
+          type: 'http',
+          host: '127.0.0.1',
+          port: 3128,
+        }),
+      });
+      expect(proxyAgents.length).toBe(1);
+      // The failure is reported -- teardown must not swallow it (TRANSPORT-16) -- and it is reported
+      // with the underlying cause intact rather than flattened to a message.
+      const error = await rejection(transport.close());
+      expect(error).toBeInstanceOf(TransportFailureError);
+      expect(error).toMatchObject({
+        cause: {message: 'agent destroy exploded'},
+      });
+      // Idempotent even on the failure path: the rejection is memoized, so a second close reports the
+      // same failure rather than falsely claiming a clean teardown (TRANSPORT-16, XCUT-13).
+      expect(await rejection(transport.close())).toBe(error);
+      // ... but every other owned dispatcher is released regardless. This is the leak: with the
+      // naive `for … await` loop the direct Agent's rejection aborts the walk and this stays false.
+      expect(proxyAgents[0]?.destroyed).toBe(true);
+    } finally {
+      // Restoration must never be skipped, so this block stays assertion-free.
+      restore();
+    }
+  });
+
   test('supplying both a dispatcher and a proxy fails loudly at construction', () => {
     const agent = new undici.Agent();
     expect(() =>
@@ -157,6 +308,43 @@ describe('undiciTransport construction and ownership', () => {
       }),
     ).toThrow(TypeError);
     void agent.close();
+  });
+});
+
+describe('undiciTransport disposal (TRANSPORT-15/16)', () => {
+  test('asyncDispose is the same teardown as close, where the runtime has it', async () => {
+    // The owned Agent is captured so "same teardown as close" is an assertion about the dispatcher
+    // this transport constructed, not merely about the member existing: an asyncDispose wired to
+    // anything other than close() -- or to a bare resolved promise -- leaves `destroyed` false below.
+    const {agents, restore} = captureOwnedAgents();
+    try {
+      const transport = undiciTransport();
+      expect(agents.length).toBe(1);
+      // Cast rather than a bare `Symbol.asyncDispose` index: on the pinned floor (Node 20.3, which
+      // predates the symbol's 20.4 arrival) it is `undefined` and the index would read the string key
+      // `"undefined"`. The install in undici-transport.ts is guarded to match.
+      const asyncDispose = (Symbol as {asyncDispose?: symbol}).asyncDispose;
+      if (typeof asyncDispose === 'symbol') {
+        const dispose = (
+          transport as unknown as Record<
+            symbol,
+            (() => Promise<void>) | undefined
+          >
+        )[asyncDispose];
+        expect(dispose).toBeDefined();
+        await dispose?.call(transport);
+        expect(agents[0]?.destroyed).toBe(true);
+      }
+      // Both legs: an unguarded `[Symbol.asyncDispose]()` class member would leave this junk key on
+      // the prototype on the >=20.3 floor, with no working disposal behind it.
+      expect(
+        Object.getOwnPropertyNames(Object.getPrototypeOf(transport)),
+      ).not.toContain('undefined');
+      await transport.close();
+    } finally {
+      // Restoration must never be skipped, so this block stays assertion-free.
+      restore();
+    }
   });
 });
 
@@ -293,6 +481,25 @@ describe('undiciTransport request-body failures', () => {
     await transport.close();
   });
 
+  test('a header-mapping throw never strands a started body producer (TRANSPORT-19, SEAM-30)', async () => {
+    // `pumpBody` starts the producer EAGERLY, and header mapping reads `request.body.mediaType` --
+    // a getter on a caller-supplied Body, which may throw. If the producer is started first, that
+    // throw escapes before anything can abandon it and the producer's own later rejection reaches
+    // Node's default unhandledRejection policy. Mapping headers first closes the window, which is
+    // the order the fetch twin already evaluates them in.
+    const {body, producerStarted} = bodyWithThrowingMediaType();
+    const transport = undiciTransport();
+    const request = Request.newBuilder()
+      .method('POST')
+      .url(`${origin}/upload`)
+      .body(body)
+      .build();
+
+    await rejection(transport.send(request));
+    expect(producerStarted()).toBe(false);
+    await transport.close();
+  });
+
   test('TRANSPORT-22: an adaptation throw destroys the native body before propagating', async () => {
     let destroyed = false;
     const hostile = {
@@ -418,12 +625,6 @@ describe('undiciTransport proxy dispatch (TRANSPORT-30)', () => {
     );
     expect(response.status.code).toBe(200);
     await response.close();
-    await transport.close();
-  });
-
-  test('asyncDispose is the same teardown as close', async () => {
-    const transport = undiciTransport();
-    await transport[Symbol.asyncDispose]();
     await transport.close();
   });
 });

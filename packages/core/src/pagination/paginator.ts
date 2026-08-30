@@ -122,8 +122,14 @@ export class Paginator<T> {
    * `.return()` on every exit path, including `break` and `throw`, so the held page is always released. Driving
    * the iterator by hand is the case to be careful with: if you call `[Symbol.asyncIterator]()` yourself and
    * then abandon it without calling `.return()`, the generator never resumes, its `finally` never runs, and the
-   * page it is holding stays open until the process exits. Either stay in a `for await`, or bind the pages you
-   * pull with `await using` (see {@link (Page:class)}), or call `.return()` on the iterator yourself.
+   * page it is holding stays open until the process exits. Two constructs give you the guarantee: stay inside a
+   * `for await`, or, when you drive the iterator yourself, call `.return()` on it from a `finally`.
+   *
+   * `await using` is deliberately **not** a third. {@link (Page:class)} installs `[Symbol.asyncDispose]` at run
+   * time only where the runtime has it, so it does not declare `AsyncDisposable` and `await using page` does not
+   * type-check against this package's `engines.node >=20.3` floor — the symbol arrived in Node 20.4. Every page
+   * this view yields is closed for you as the walk advances; `Page.close()` is the manual counterpart, and is
+   * idempotent.
    *
    * Single-use (PAGE-14) — **per view, not per paginator**. A second `[Symbol.asyncIterator]()` on *this*
    * returned view fails loudly rather than silently restarting the walk. Calling `pages()` again is the

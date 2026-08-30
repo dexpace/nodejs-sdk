@@ -4,7 +4,9 @@
 // Phase 6c's runtime-divergent surface, run against the BUILT artifact on real Node.
 //
 // Three things in this phase are runtime-divergent across Bun and Node:
-//   1. Explicit Resource Management: `Page` implements `[Symbol.asyncDispose]` delegating to `close()`.
+//   1. Explicit Resource Management: `Page` installs `[Symbol.asyncDispose]` delegating to `close()`,
+//      guarded on the symbol existing — it postdates `engines.node`'s >=20.3 floor (it arrived in 20.4),
+//      so this suite's 20.3.0 matrix leg must assert its ABSENCE, not skip the check.
 //   2. `AbortSignal` integration: threading signal into every request exchange and halting pagination walks at boundaries.
 //   3. `Response.close()` cancelling active `ReadableStream` bodies upon advance, early break, or completion.
 import assert from 'node:assert/strict';
@@ -16,7 +18,30 @@ import {
 } from '../../packages/core/dist/testing/fake-transport.js';
 
 describe('Page explicit resource management on Node (PAGE-3, PAGE-12)', () => {
-  it('disposes the page via Symbol.asyncDispose, releasing the response body', async () => {
+  // Never index with a bare `Symbol.asyncDispose`. On the >=20.3 floor it is `undefined`, so
+  // `page[Symbol.asyncDispose]` reads `page['undefined']` — which used to resolve to a junk prototype
+  // entry left by an unguarded `async [Symbol.asyncDispose]()` class member and made this very
+  // assertion pass on a Page that could not be disposed at all. Branch on the symbol instead, and
+  // check the junk key is gone on both legs.
+  it('leaves no "undefined" prototype key on any Node version (guarded install)', () => {
+    const {response} = countingResponse(200);
+    const page = new Page(response, ['item-1']);
+    assert.ok(
+      !Object.getOwnPropertyNames(Object.getPrototypeOf(page)).includes(
+        'undefined',
+      ),
+      'Page.prototype carries an "undefined" key: [Symbol.asyncDispose] was declared as a plain class member ahead of the floor bump',
+    );
+    assert.equal(typeof page.close, 'function');
+  });
+
+  it('disposes the page via Symbol.asyncDispose, releasing the response body', async t => {
+    if (typeof Symbol.asyncDispose !== 'symbol') {
+      t.skip(
+        `Symbol.asyncDispose is absent on ${process.version} (arrives in 20.4); the guarded install is correctly a no-op here`,
+      );
+      return;
+    }
     const {response, cancelCount} = countingResponse(200);
     const page = new Page(response, ['item-1', 'item-2']);
 
