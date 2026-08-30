@@ -7,7 +7,7 @@ description: Use when starting a numbered task from a docs/superpowers/plans/ fi
 
 ## Overview
 
-`docs/knowledge/` is 39 topic files and ~1470 harvested entries — 512 KB, past what belongs
+`docs/knowledge/` is 39 topic files and ~1470 harvested entries, past what belongs
 in context. `bun run knowledge` filters it. A requirement-ID query runs ~120–580 tokens
 (median ~230) against a topic file of ~1800–5200 (median ~2300): roughly 9× smaller, and
 much more than that when the ID you want lives in a file you'd never have guessed.
@@ -39,7 +39,7 @@ Different filters AND together; multiple values inside one filter OR. So
 
 ## Check the result is real before trusting it
 
-**A `--req` hit is not proof the corpus knows anything.** 256 of the 641 cited IDs resolve
+**A `--req` hit is not proof the corpus knows anything.** 255 of the 645 canonical IDs resolve
 *only* to an appendix-B conformance roll-up — one sentence naming three to five IDs and
 stating none of them. It exits 0, so nothing else will warn you.
 
@@ -70,7 +70,7 @@ bun run knowledge --list-topics                    # 39 topics, entry and ID cou
 bun run knowledge --topic pipeline --section rules --brief cursor fork
 ```
 
-**16 of the 39 topics carry no requirement ID at all** — every styleguide-derived one,
+**15 of the 39 topics carry no requirement ID at all** — every styleguide-derived one,
 including `data-modeling`, `error-handling`, `assertions`, `testing`, `api-design`. ID-first
 cannot reach them. `--list-topics` shows which; don't work from a memorised list.
 

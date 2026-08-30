@@ -25,17 +25,23 @@ export default tseslint.config(
   {
     // The root config, the `.mjs` verification scripts, the Node-runtime
     // conformance suite, and the `.claude/skills` runners belong to no
-    // TypeScript project; they get the
-    // gts/format baseline only, never the type-aware tiers below. gts scopes
-    // its own Node globals to a fixed list of filenames that includes none of
-    // these, so declare them here or `console`/`URL` trip `no-undef` — and, in
-    // the conformance suite, so do the Web Streams and `AbortSignal` globals
-    // that are the whole point of running it on Node.
+    // TypeScript project; they get the gts/format baseline only, never the
+    // type-aware tiers below. gts scopes its own Node globals to a fixed list
+    // of filenames that includes none of these, so declare them here or
+    // `console`/`URL` trip `no-undef` — and, in the conformance suite, so do
+    // the Web Streams and `AbortSignal` globals that are the whole point of
+    // running it on Node.
+    //
+    // The Node-conformance entry below is one of the five files holding the
+    // `tests/` partition (CLAUDE.md's hard rule), and
+    // `scripts/verify-test-partition.mjs` blocks CI if it stops matching a real
+    // file. A stale glob here does not error: it silently drops the Node
+    // globals and buries the suite in `no-undef`.
     files: [
       'eslint.config.js',
       'scripts/*.mjs',
       'packages/*/scripts/*.mjs',
-      'test/node-conformance/*.mjs',
+      'tests/node-conformance/*.mjs',
       '.claude/skills/*/*.mjs',
     ],
     languageOptions: {sourceType: 'module', globals: globals.node},

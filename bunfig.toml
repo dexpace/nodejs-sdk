@@ -1,11 +1,26 @@
 [test]
-# Scope discovery to the workspace packages. Without this, `bun test` also collects
-# test/node-conformance/*.test.mjs -- the Node-only layer that exists precisely because it must NOT
-# run on Bun (checkpoint 5.9). Running it under both runners would inflate the unit count and quietly
-# erase the distinction the suite was added to draw. It likewise keeps `scripts/*.test.mjs` -- repo
-# tooling, run via `bun run test:scripts` (`node --test`) -- out of both the run and the coverage
-# floor, which is a statement about `packages/*/src`.
+# The rule these two keys enforce, and why it exists, live in ONE place: CLAUDE.md, "HARD RULE --
+# the `tests/` partition". Read that before changing either. What belongs here is only what is local
+# to this file.
+#
+# `root` scopes discovery for a BARE `bun test`. It does NOT govern an explicit path argument, and
+# the root script passes `./packages ./tests`, so for the run CI actually performs its effect is to
+# keep `scripts/*.test.mjs` -- repo tooling, run via `bun run test:scripts` -- out of neither: those
+# are outside both paths already. It matters for a bare invocation, and for the coverage floor,
+# which is a statement about `packages/*/src`.
+#
+# `pathIgnorePatterns` is what excludes the Node suite on that explicit `./tests` path, and its
+# spelling is the whole game. Bun accepts an unrecognized `[test]` key in silence -- no warning, no
+# error, no effect -- so `testPathIgnorePatterns` reads as configured and does nothing. (Naming the
+# wrong key here is safe: `scripts/verify-test-partition.mjs` checks for a DECLARATION, not a
+# mention, so this file is free to warn about the trap it sits next to.)
+#
+# Measured on `bun run test`, pinned Bun 1.3.14: with the key, 164 files and exit 0; without it,
+# 178 files -- the 14 Node files collected by a runner that cannot prove anything about Node. That
+# run exits 1 rather than 0, but only by accident: 13 of the 14 pass silently under Bun and the
+# 14th fails on an unrelated timer assertion, pointing nowhere near the real cause.
 root = "packages"
+pathIgnorePatterns = ["tests/node-conformance/**"]
 coverage = true
 coverageThreshold = 0.8
 coverageSkipTestFiles = true

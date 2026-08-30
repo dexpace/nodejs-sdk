@@ -372,5 +372,65 @@ test('--list-topics covers every topic file and counts the ID-less ones', () => 
       `${name} missing from --list-topics`,
     );
   }
-  assert.match(report, /39 topic files\. 16 carry no requirement ID at all/);
+  // The prose count must agree with the table it summarises. This half tests the renderer, and it
+  // holds whatever the corpus says.
+  const stated = Number(
+    /(\d+) carry no requirement ID at all/.exec(report)?.[1],
+  );
+  const zeroIdRows = report
+    .split('\n')
+    .filter(line => /^\S+\t\d+\t0$/.test(line)).length;
+  assert.equal(
+    stated,
+    zeroIdRows,
+    "--list-topics' summary line disagrees with its own table",
+  );
+
+  // Corpus-shape canary, hardcoded on purpose. It fires when a topic that carried no requirement ID
+  // gains its first one, which is a real event rather than noise: ID-less topics are reachable only
+  // via `--topic`/`--chapter`, so the count is quoted to readers in two documents outside this file.
+  // When it fires, confirm the corpus edit was intended, then move this assertion together with
+  // CLAUDE.md's "Querying `docs/knowledge/`" section and `.claude/skills/knowledge-lookup/SKILL.md`.
+  // Last moved 16 -> 15 by 36c3f96 (PR #59), whose Phase 10 correction to
+  // `docs/knowledge/deliberate-deviations.md` cites CFG-1.
+  assert.equal(
+    stated,
+    15,
+    'ID-less topic count changed — update CLAUDE.md and knowledge-lookup/SKILL.md with it',
+  );
+});
+
+test('--coverage pins the substantive / roll-up / uncited split the docs quote', () => {
+  // Same canary, for the other three numbers in CLAUDE.md's "Querying `docs/knowledge/`" paragraph.
+  // Those had drifted by one apiece and nothing noticed, because the only assertion in this file
+  // covering that sentence was the topic count above. A count quoted to a reader and re-verified by
+  // nothing is how the corpus and its documentation part company.
+  const report = renderCoverage(
+    canonicalIds,
+    citationIndex(loadCorpus(prefixes)),
+  );
+  const numbers =
+    /(\d+)\/(\d+) canonical IDs have a substantive entry\. (\d+) more are named only by an appendix-B conformance roll-up[^.]*\. (\d+) are cited nowhere/.exec(
+      report,
+    );
+  assert.ok(
+    numbers,
+    `--coverage summary line not found in:\n${report.slice(-400)}`,
+  );
+  const [, substantive, total, rollup, uncited] = numbers.map(Number);
+  assert.equal(
+    total,
+    canonicalIds.size,
+    'appendix C and --coverage disagree on the ID total',
+  );
+  assert.equal(
+    substantive + rollup + uncited,
+    total,
+    'the three buckets do not account for every canonical ID',
+  );
+  assert.deepEqual(
+    {substantive, rollup, uncited},
+    {substantive: 386, rollup: 255, uncited: 4},
+    'corpus coverage changed — update CLAUDE.md and knowledge-lookup/SKILL.md with the new numbers',
+  );
 });

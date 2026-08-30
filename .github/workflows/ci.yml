@@ -34,6 +34,15 @@ jobs:
       - name: Test (with coverage)
         run: bun run test --coverage
 
+      # The gates' own tests (`scripts/*.test.mjs`), on `node --test`. Deliberately outside
+      # `bun run test`: bunfig scopes discovery and the 80% coverage floor to `packages`, and that
+      # floor is a statement about `packages/core`, not about repo tooling. What this protects is a
+      # gate's logic silently degrading — a bad glob, a swallowed assertion — which no other step
+      # would notice, since a degraded gate still exits 0. Closes open-items H13, whose trigger had
+      # already fired: `knowledge.test.mjs` was failing on `main` and nothing ran it.
+      - name: Gate self-tests (scripts/*.test.mjs)
+        run: bun run test:scripts
+
       - name: API surface check
         run: bun run api
 
@@ -61,6 +70,12 @@ jobs:
 
       - name: Runtime-floor consistency check
         run: bun run verify:runtime-floor
+
+      # Reads the five files that must agree on `tests/node-conformance/`. The rule and the reasons
+      # it exists live in CLAUDE.md, "HARD RULE — the `tests/` partition"; what matters here is only
+      # that every way it breaks is silent, so nothing else in this workflow would catch it.
+      - name: Test-partition check (tests/ vs tests/node-conformance/)
+        run: bun run verify:test-partition
 
       # NFR-12. Deliberately last in this job: it sweeps every dist/ and rebuilds
       # the workspace twice, so it would otherwise pull the rug from under any

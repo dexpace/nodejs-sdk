@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/sse.test.mjs
+// tests/node-conformance/sse.test.mjs
 //
 // Phase 6b's runtime-divergent SSE surface, run against the BUILT artifact on real Node.
 //

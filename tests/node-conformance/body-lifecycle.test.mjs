@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/body-lifecycle.test.mjs
+// tests/node-conformance/body-lifecycle.test.mjs
 //
 // Phase 3b's public body surface, driven through the `@dexpace/core` specifier — the path a real consumer
 // takes — on Node's Web Streams rather than Bun's.

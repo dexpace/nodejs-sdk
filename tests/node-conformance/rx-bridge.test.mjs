@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/rx-bridge.test.mjs
+// tests/node-conformance/rx-bridge.test.mjs
 //
 // Phase 8b's runtime-divergent surface, run against the BUILT artifact on real Node.
 //

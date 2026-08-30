@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/retry.test.mjs
+// tests/node-conformance/retry.test.mjs
 //
 // Phase 5a is a runtime-divergent surface at three specific points, and each one fails silently rather
 // than loudly if the runtimes disagree:

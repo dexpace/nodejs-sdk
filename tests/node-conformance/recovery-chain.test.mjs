@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/recovery-chain.test.mjs
+// tests/node-conformance/recovery-chain.test.mjs
 //
 // Phase 4b (`RECOV-12`) is a runtime-divergent surface for one specific reason: the `SuppressedError`
 // global. Bun ships it and so does current Node, but it is a V8 global from the full Explicit Resource

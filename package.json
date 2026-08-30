@@ -53,7 +53,7 @@
     "test": "bun test ./packages ./tests",
     "knowledge": "node scripts/knowledge.mjs",
     "test:scripts": "node --test 'scripts/*.test.mjs'",
-    "test:node": "node --test test/node-conformance/*.test.mjs",
+    "test:node": "node --test tests/node-conformance/*.test.mjs",
     "shrink-test": "bun test ./packages/shrink-test",
     "bench": "bun run packages/core/src/io/byte-queue.bench.ts",
     "api": "cd packages/core && bun run api:ci && cd ../codec-json && bun run api:ci && cd ../logging-pino && bun run api:ci && cd ../logging-debug && bun run api:ci && cd ../body-file && bun run api:ci && cd ../transport-shared && bun run api:ci && cd ../transport-fetch && bun run api:ci && cd ../transport-undici && bun run api:ci && cd ../rx && bun run api:ci",
@@ -65,6 +65,7 @@
     "verify:seam-1": "node scripts/verify-seam-1.mjs",
     "verify:sse-37": "node scripts/verify-sse-37.mjs",
     "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs",
+    "verify:test-partition": "node scripts/verify-test-partition.mjs",
     "verify:reproducible-build": "node scripts/verify-reproducible-build.mjs"
   }
 }
