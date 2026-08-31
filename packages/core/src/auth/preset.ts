@@ -35,7 +35,7 @@ export interface StandardResilienceOptions {
 }
 
 // Built lazily rather than as a top-level `const NO_AUTH_SETTINGS = ...`: a module-scope factory call
-// is import-time work a bundler must preserve (`docs/knowledge/performance.md`), and it would pin
+// is import-time work a bundler must preserve (`docs/knowledge/harvested/performance.md`), and it would pin
 // descriptor.ts/requirement.ts into every bundle that imports the preset. The allocation is per call,
 // but the preset is constructed once per client, not per request.
 function noAuthSettings(): AuthStepSettings {

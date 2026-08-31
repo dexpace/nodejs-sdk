@@ -19,7 +19,7 @@ describe('NonReplayableBodyError', () => {
   });
 
   test('carries the target as a readonly field, not only in the message', () => {
-    // docs/knowledge/error-handling.md: identifying inputs are fields so they survive serialization
+    // docs/knowledge/harvested/error-handling.md: identifying inputs are fields so they survive serialization
     // and reach a structured log without anyone parsing the message back apart.
     const error = new NonReplayableBodyError('https://example.com/next');
     expect(error.targetUrl).toBe('https://example.com/next');

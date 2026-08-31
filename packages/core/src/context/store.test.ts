@@ -16,7 +16,7 @@
 // Every test builds its own `new ContextStore()`. The exported `contextStore` singleton is module-level
 // mutable state shared by every test file in a `bun test` run -- 4c's runtime.test.ts installs into that
 // same object -- so an absolute `size` assertion against it reads a counter a sibling file can move, and a
-// blanket clear() wipes a sibling's entries. docs/knowledge/testing.md:50,52. The singleton gets exactly
+// blanket clear() wipes a sibling's entries. docs/knowledge/harvested/testing.md:50,52. The singleton gets exactly
 // one assertion here: that it is a ContextStore.
 import {describe, expect, test} from 'bun:test';
 import {Protocol} from '../http/protocol.js';

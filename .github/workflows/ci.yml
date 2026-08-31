@@ -19,6 +19,16 @@ jobs:
       - name: Install (frozen lockfile)
         run: bun install --frozen-lockfile
 
+      # First of the gates: pure Node over Markdown, no build, no dist/, so a
+      # corpus mistake reports in seconds instead of after the whole pipeline.
+      # Keeps docs/knowledge/'s two trees apart — no hand-written entry under
+      # harvested/, whose `<sub>` shas digest whole source files and so cannot
+      # record an edit; the next harvest would delete it silently. The companion
+      # drift report is deliberately NOT here: 16 of the 47 sources are a
+      # sibling styleguide repository that no CI checkout has.
+      - name: Knowledge-corpus structure check
+        run: bun run verify:knowledge-structure
+
       - name: Typecheck
         run: bun run typecheck
 

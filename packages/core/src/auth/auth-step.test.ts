@@ -73,7 +73,7 @@ interface DriveOverrides {
 
 // `Transport`, not `FakeTransport`: the only thing this helper does with it is hand it to `Cursor`,
 // and narrowing to what is actually used is what lets the gated double below be driven through it too
-// (`docs/knowledge/api-design.md` -- accept the narrowest interface describing the members used).
+// (`docs/knowledge/harvested/api-design.md` -- accept the narrowest interface describing the members used).
 function runThrough(
   descriptor: StepDescriptor,
   transport: Transport,

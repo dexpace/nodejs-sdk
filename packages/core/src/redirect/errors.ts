@@ -15,7 +15,7 @@ export class NonReplayableBodyError extends DexpaceError {
    * The redirect target that would have received the re-send.
    *
    * Carried as a field, not only interpolated into the message, per
-   * `docs/knowledge/error-handling.md` -- so it survives serialization and reaches a structured log
+   * `docs/knowledge/harvested/error-handling.md` -- so it survives serialization and reaches a structured log
    * without anyone parsing the message back apart. Phase 7b's rejection event reads it directly.
    */
   readonly targetUrl: string;

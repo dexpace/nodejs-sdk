@@ -30,7 +30,7 @@ export async function statusMappingStep(response: Response): Promise<Response> {
 }
 
 // A named declaration, not `const statusMappingStep: ResponseStep = async response => ...`: arrows
-// are reserved for inline callbacks (docs/knowledge/function-design.md:18-21), and a named
+// are reserved for inline callbacks (docs/knowledge/harvested/function-design.md:18-21), and a named
 // declaration survives in stack traces — which a function whose whole job is to throw actually
 // depends on. `func-style`'s `allowArrowFunctions: true` would not have flagged the arrow form, so
 // this is on the author, not the gate.

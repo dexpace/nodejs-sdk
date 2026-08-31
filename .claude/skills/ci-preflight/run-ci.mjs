@@ -38,6 +38,14 @@ const STEPS = [
     tier: 'install',
     fix: 'bun install (then commit the updated bun.lock)',
   },
+  {
+    // First of the gates, mirroring ci.yml: pure Node over Markdown, no build,
+    // so a corpus mistake reports in seconds rather than after the pipeline.
+    id: 'verify:knowledge-structure',
+    ci: 'Knowledge-corpus structure check',
+    cmd: 'bun run verify:knowledge-structure',
+    tier: 'gate',
+  },
   {id: 'typecheck', ci: 'Typecheck', cmd: 'bun run typecheck', tier: 'build'},
   {
     id: 'lint',

@@ -362,7 +362,7 @@ describe('substitutable seams (CFG-11)', () => {
   test('delegates the production default to the ambient environment', () => {
     // A fresh key per run, drawn from the package's own generator rather than the clock: two
     // same-millisecond runs of this file would otherwise pick the same name and race on real
-    // `process.env` (`docs/knowledge/testing.md:36`, `:50`).
+    // `process.env` (`docs/knowledge/harvested/testing.md:36`, `:50`).
     const key = `DEXPACE_TEST_${randomUuid().replaceAll('-', '')}`;
     const host = globalThis as {
       process?: {env?: Record<string, string | undefined>};

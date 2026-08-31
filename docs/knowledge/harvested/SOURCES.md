@@ -1,5 +1,12 @@
 # Harvested Sources
 
+Every source `harvested/` is derived from, with the sha256 of the whole file at harvest time — per **file**,
+never per entry, which is why an entry here cannot be hand-corrected. See `../README.md`.
+`bun run knowledge:drift` compares each digest below against the file on disk; the 16 styleguide rows are
+`NOT VERIFIABLE` off the harvest machine, which is expected and never a failure.
+`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` was harvested once and
+dropped on 2026-08-31: it is a register, not a description.
+
 | source | role | sha256 | last harvest |
 | --- | --- | --- | --- |
 | `/home/mohammad/Projects/dexpace/styleguide/typescript/01-formatting-and-tooling.md` | styleguide | `640652667e83` | 2026-07-25 |
@@ -49,4 +56,3 @@
 | `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md` | design | `d546f9973c4e` | 2026-07-25 |
 | `docs/sdk-design-nodejs/08-instrumentation-and-configuration.md` | design | `35281a426195` | 2026-07-25 |
 | `docs/sdk-design-nodejs/09-toolchain-and-quality-gates.md` | design | `2d2fd9dcfee4` | 2026-07-25 |
-| `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` | design | `f9ecb6e7d87b` — **stale, source is now `301f1d519cd8`** | 2026-07-25 — **needs re-harvest**, see `INDEX.md`'s "Stale topics" |

@@ -90,7 +90,7 @@ test('values are frozen — a Tristate cannot be mutated after construction', ()
 });
 
 test('isTristate accepts only branded values — truth table', () => {
-  // A custom type guard needs the full table, not just the happy case (docs/knowledge/testing.md:34).
+  // A custom type guard needs the full table, not just the happy case (docs/knowledge/harvested/testing.md:34).
   expect([
     isTristate(absent()),
     isTristate(nullValue()),

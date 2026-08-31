@@ -326,7 +326,7 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  * `close()` is a sanctioned no-op and `send()` keeps working after it (SEAM-15). There is no proxy
  * support at all; see {@link FetchTransportOptions}.
  *
- * `close()` is the single teardown path `docs/knowledge/resource-management.md` asks for. A
+ * `close()` is the single teardown path `docs/knowledge/harvested/resource-management.md` asks for. A
  * `[Symbol.asyncDispose]` delegating to it is installed at run time **when the runtime has the
  * symbol**, which this package's declared floor (`engines.node >=20.3`) does not — it arrived in Node
  * 20.4. The return type therefore does not promise `AsyncDisposable`: claiming it would type-check

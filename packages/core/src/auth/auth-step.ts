@@ -177,7 +177,7 @@ export type ChallengeHook = (
      * The calling request's cancellation, threaded straight through from `StepContext.signal`.
      *
      * A hook is the sanctioned place to run a custom OAuth2 refresh-token grant, which is external
-     * I/O on the request path -- and `docs/knowledge/concurrency-and-async.md` is explicit that a
+     * I/O on the request path -- and `docs/knowledge/harvested/concurrency-and-async.md` is explicit that a
      * signal accepted at the top of a call chain must reach the actual I/O primitive, or it is
      * decoration. Without this a hung hook pinned the auth step, every retry attempt nested under
      * it, and the whole request, with no way for the caller to abort.
@@ -293,7 +293,7 @@ function withHeader(request: Request, name: string, value: string): Request {
  * compile, which is the compiler being confidently wrong about mutable external state. Routing every
  * read through a call re-reads the getter each time.
  *
- * `docs/knowledge/concurrency-and-async.md`: "state checked before an `await` must be re-validated
+ * `docs/knowledge/harvested/concurrency-and-async.md`: "state checked before an `await` must be re-validated
  * after every `await` that could have let the world move."
  */
 function isAborted(signal: AbortSignal | undefined): boolean {
@@ -312,7 +312,7 @@ function answerHeaderName(isProxy: boolean): string {
  * parsed challenge, and `NO_AUTH` has nothing to stamp.
  *
  * An exhaustive `switch` closing on `assertNever`, not an if-chain: `AuthScheme` is a closed
- * discriminant, and `docs/knowledge/data-modeling.md` bars an if-chain over one because it gives no
+ * discriminant, and `docs/knowledge/harvested/data-modeling.md` bars an if-chain over one because it gives no
  * exhaustiveness guarantee and falls through silently when a variant is added — and the value that
  * would fall through here is a credential-stamping decision.
  */

@@ -22,7 +22,7 @@ export class PillarCollisionError extends DexpaceError {
   ) {
     // PIPE-5: the error names BOTH step types and points at the replace path. Symbols are rendered with
     // String() (`Symbol(retry)`) -- a bare symbol field is invisible in a stack trace or log line
-    // (docs/knowledge/error-handling.md:40), the same reason 4a's DuplicateContextKeyError renders its key.
+    // (docs/knowledge/harvested/error-handling.md:40), the same reason 4a's DuplicateContextKeyError renders its key.
     super(
       `pillar stage '${stage}' already holds ${String(existingType)}; cannot install ${String(incomingType)} (use replace() to swap it)`,
       options,

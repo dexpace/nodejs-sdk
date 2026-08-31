@@ -20,9 +20,11 @@ linked the two, and the numbering they share had no stated owner):
   `file:line` evidence, and records which of §10's claims did not survive contact with the code.
 - **A new deviation is recorded in neither.** It goes in the owning phase spec's own `## Deviation Ledger (for
   Phase 10)` section; §10 is the consolidated **output** of those, not their intake.
-- **Do not confuse either with `docs/knowledge/deliberate-deviations.md`.** Despite the near-identical name it
-  is a harvested corpus topic file queried by `bun run knowledge`, derived from an older revision of §10 and
-  currently stale. It is `knowledge-harvest`'s output and is never hand-edited as a ledger.
+- **The corpus no longer carries a copy.** `docs/knowledge/deliberate-deviations.md` was a harvested topic
+  file derived from an older revision of §10 — a third of the register, mis-anchored, two entries false. It
+  was dropped on 2026-08-31: a register accumulates rows and a harvest of it is one stale revision, so §10 is
+  read directly. What remains under the corpus is a pointer, `docs/knowledge/notes/deliberate-deviations.md`,
+  which says exactly that.
 
 Audited 2026-08-29 against `25-phase-10-deviation-reconciliation` @ `d8217af`; the audit's own changes landed
 on that branch as `27fb81f`, which is the tree this file describes.

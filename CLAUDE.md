@@ -125,6 +125,7 @@ bun run verify:seam-1             # zero runtime dependencies in EVERY package, 
 bun run verify:sse-37             # no serde dependency and no reconnect path in core SSE
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run verify:test-partition     # the five files that keep tests/ and tests/node-conformance/ apart
+bun run verify:knowledge-structure # docs/knowledge/'s two trees stay separate (see below)
 bun run verify:reproducible-build # two clean builds of one source tree agree, dist/ and tarball (NFR-12)
 bun run test:scripts              # the gates' OWN tests (node --test scripts/*.test.mjs)
 bun run audit                     # bun audit --audit-level=high --prod
@@ -134,10 +135,10 @@ bun run audit                     # bun audit --audit-level=high --prod
 work is done — `bun run test` passing is not sufficient evidence.
 
 `test:scripts` tests the *gates themselves* — the knowledge CLI, `verify-seam-1.mjs`, `verify-sse-37.mjs`,
-`verify-test-partition.mjs`. Phase 10 made it a blocking CI step, closing `docs/open-items.md` H13. It was
-not one before, and the proof that it should have been is that `knowledge.test.mjs` had been failing on
-`main` since `36c3f96` with nobody noticing. A gate whose own logic degrades still exits 0, so nothing else
-in the run would.
+`verify-knowledge-structure.mjs`, `verify-test-partition.mjs`. Phase 10 made it a blocking CI step, closing
+`docs/open-items.md` H13. It was not one before, and the proof that it should have been is that
+`knowledge.test.mjs` had been failing on `main` since `36c3f96` with nobody noticing. A gate whose own logic
+degrades still exits 0, so nothing else in the run would.
 
 ### HARD RULE — the `tests/` partition
 
@@ -179,13 +180,14 @@ passes. The gate checks this too.
 
 ## Documentation hierarchy
 
-Four distinct trees, easy to confuse:
+Five distinct trees, easy to confuse — `docs/knowledge/` being two of them:
 
 | Path | Role |
 |---|---|
 | `docs/product-spec/` | **Normative.** Numbered requirements (`HTTP-7`, `SEAM-1`, `RETRY-13`, `NFR-5`, …). The source of truth. |
 | `docs/sdk-design-nodejs/` | How each spec area maps to idiomatic TypeScript. Non-normative but binding by convention. |
-| `docs/knowledge/` | Harvested styleguide + spec knowledge, topic-indexed (`INDEX.md`). Cited as "styleguide 6.7", "ch08". |
+| `docs/knowledge/harvested/` | Harvested styleguide + spec knowledge, topic-indexed (`INDEX.md`). Cited as "styleguide 6.7", "ch08". Generated; never hand-edited. |
+| `docs/knowledge/notes/` | What the implementation found, hand-written, role `review`. Overrides a harvested entry. |
 | `docs/superpowers/specs/` + `plans/` | Per-phase design doc, task-by-task implementation plan, and a requirement-coverage checklist. |
 
 `docs/product-spec/appendix-c-consolidated-normative-requirement-index.md` is the fastest way to locate a
@@ -193,26 +195,57 @@ requirement ID.
 
 ### Querying `docs/knowledge/`
 
-`docs/knowledge/` is 39 topic files — never read a topic file whole when a filtered query
-answers the question. `bun run knowledge` parses the corpus into entries and filters them; a requirement-ID
+`docs/knowledge/` is two trees and 39 topics — never read a topic file whole when a filtered query
+answers the question. `bun run knowledge` parses both trees into entries and filters them; a requirement-ID
 query returns ~170 tokens against a ~5700-token file read.
 
 ```bash
 bun run knowledge --req HTTP-13,HTTP-14,HTTP-15    # a whole task's IDs in one call (exact-token)
+bun run knowledge --origin note --brief            # start of a phase: everything the implementation found
+bun run knowledge --prefix HTTP --section rules    # an audit group: a whole ID family, uncapped
 bun run knowledge --chapter 6 interface class      # a "styleguide 6.7" citation
-bun run knowledge --section conflicts --brief      # open design-vs-styleguide calls; 6 entries corpus-wide
 ```
 
 Different filters AND together, values within one filter OR; `--help` lists the rest. Each result carries its
 `<sub>` provenance line — the citation for test-file headers and deferral notes, though styleguide paths are
-absolute to a sibling repo and need their machine prefix stripped first. **A `--req` hit is not proof of
-knowledge:** 255 of 645 IDs are named only by an appendix-B conformance roll-up, tagged `[appendix-B roll-up]`
-in output; 386 have a substantive entry and 4 are cited nowhere at all (`--coverage` breaks this down). 15 of
-the 39 topics carry no requirement ID at all and are reachable only via `--topic`/`--chapter`
+absolute to a sibling repo and need their machine prefix stripped first — and a stable key, `<topic>/<8 hex>`,
+digested from the entry text, which is how a note names the rule it overrides. **A `--req` hit is not proof of
+knowledge:** 256 of 645 IDs are named only by an appendix-B conformance roll-up, tagged `[appendix-B roll-up]`
+in output; 385 have a substantive entry and 4 are cited nowhere at all (`--coverage` breaks this down). 15 of
+the 38 harvested topics carry no requirement ID at all and are reachable only via `--topic`/`--chapter`
 (`--list-topics`). Every count in this paragraph moves when the corpus is edited, so
 `scripts/knowledge.test.mjs` pins all four against the live corpus and its failure message names the two docs
 to update alongside. No CI step gates corpus *content*; CI does run the CLI's own suite (`test:scripts`),
 which parses the real corpus. The `.claude/skills/knowledge-lookup` skill carries the full workflow.
+
+**Two trees, and the split is a CI gate.** `docs/knowledge/README.md` is the contract; the short version is
+that `harvested/` is `knowledge-harvest`'s output and is never hand-edited, because a `<sub>` sha digests the
+whole source file rather than the entry — an edit inside an entry changes no sha, and the next harvest
+regenerates or duplicates it. Record what the implementation found in `docs/knowledge/notes/<topic>.md`
+instead: role `review`, a manual `sha:` marker, and a backticked `<topic>/<8 hex>` key naming the harvested
+rule, which makes that rule print `[overridden by notes/…]` in every query result.
+
+`bun run verify:knowledge-structure` (blocking, in CI) keeps the trees apart: no `review` or invented role
+under `harvested/`, no `Superseded` entry there, every harvested entry carrying a `<sub>` that cites one of
+the three source roots `SOURCES.md` names, every note carrying `review`, and no `.md` stranded at the root of
+`docs/knowledge/` — the CLI reads the two trees only, so a file there is invisible rather than wrong, and that
+is exactly where a `--corpus`-less harvest run lands.
+
+`bun run knowledge:drift` is the hand-run companion, deliberately not in CI. It reports source drift
+(`OK` / `DRIFT` / `NOT VERIFIABLE` / `UNREADABLE` per `SOURCES.md` row) and stale note citations (a key no
+entry carries any more). Not a gate: the styleguide root is a sibling repository at an absolute path, so 16 of
+the 47 sources are absent from any CI checkout, and drift is normal — a design chapter a phase edits to record
+an outcome *should* drift, and the fix is a re-harvest.
+
+**A register is not harvested.** `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`
+and `docs/open-items.md` are ledgers that every phase appends to, so any harvest of one is a stale fraction of
+it. Read them directly; `notes/deliberate-deviations.md` is the pointer. When you re-harvest, point the skill
+at the harvested tree — `--corpus docs/knowledge/harvested` — and hand-move any `supersede` entry it emits
+into `notes/`.
+
+**Citations into the corpus** are written `docs/knowledge/harvested/<topic>.md:<line>`. `docs/superpowers/`
+is the exception: its plans and specs are dated records of what was true when they were written, are never
+retro-edited, and so still carry pre-split paths.
 
 ## Requirement-ID conventions (enforced by review, not tooling)
 

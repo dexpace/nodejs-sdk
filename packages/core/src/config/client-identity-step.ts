@@ -51,7 +51,7 @@ function composeFirstValue(existingFirst: string, tokenLine: string): string {
 /**
  * The header name and mode {@link composeHeaders} needs, after {@link clientIdentityStep} has applied
  * its defaults. One object rather than two more parameters, so `composeHeaders` stays inside the
- * three-parameter cap (`docs/knowledge/function-design.md:22`).
+ * three-parameter cap (`docs/knowledge/harvested/function-design.md:22`).
  */
 interface ResolvedComposition {
   readonly headerName: string;

@@ -329,7 +329,7 @@ export function defaultConfiguration(): Configuration {
 }
 
 /**
- * Module-level mutable state, which `docs/knowledge/variables-and-declarations.md:22` bans outright.
+ * Module-level mutable state, which `docs/knowledge/harvested/variables-and-declarations.md:22` bans outright.
  * Deliberate: CFG-13 *specifies* a process-wide, last-write-wins slot, so the shared-by-every-importer
  * property the rule warns about is the requirement rather than a side effect. The rule's real cost --
  * state carried between test cases in one process -- is live and unmitigated: there is no reset hook,
@@ -363,7 +363,7 @@ export function setGlobalConfiguration(config: Configuration): void {
   // A `typeof` check, not just a null check: every other CFG-37 guard in this module tests the shape
   // it needs (`string` for an override, `function` for a seam or a mutator). Accepting `42` here put
   // a number in the process-wide slot, where it surfaced as a failure in an unrelated consumer far
-  // from the fault (`docs/knowledge/error-handling.md:36`).
+  // from the fault (`docs/knowledge/harvested/error-handling.md:36`).
   invariant(
     typeof supplied === 'object' && supplied !== null,
     'setGlobalConfiguration: config is required',

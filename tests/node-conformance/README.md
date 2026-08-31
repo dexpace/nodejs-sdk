@@ -20,7 +20,7 @@ grep proves the code is runtime-*agnostic in its imports*, which is a much weake
 on Node*.
 
 This layer is **thin and additive**, not a second unit suite. `bun test` stays the unit-test runner, unchanged
-— `docs/knowledge/testing.md` mandates `bun:test` symbol imports, `setSystemTime`, and `--concurrent`, so
+— `docs/knowledge/harvested/testing.md` mandates `bun:test` symbol imports, `setSystemTime`, and `--concurrent`, so
 migrating the suite to `node:test` would be a styleguide deviation plus a whole-suite rewrite, and it buys
 nothing for the pure-logic majority (`Headers`/`MediaType`/`QueryParams` parsing cannot behave differently on
 Node).

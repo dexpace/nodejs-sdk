@@ -20,7 +20,7 @@ const SHIFTS = [
   21,
 ] as const;
 
-// `/*#__PURE__*/`, because this is a top-level CALL, and `docs/knowledge/performance.md` is explicit
+// `/*#__PURE__*/`, because this is a top-level CALL, and `docs/knowledge/harvested/performance.md` is explicit
 // that modules must do no work at import time — a top-level call is a side effect the bundler must
 // preserve, and that pins the module in the bundle. `@dexpace/core` declares `"sideEffects": false`;
 // without the annotation a bundler cannot prove these 64 `Math.sin` calls are pure, so `md5.ts` and

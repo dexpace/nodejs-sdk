@@ -31,7 +31,7 @@ export class ContextStore {
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
     // A bad cap is a violated precondition — a programmer error — so it crashes at the fault via the
     // project's one assertion primitive rather than an ad-hoc `if (!x) throw`
-    // (docs/knowledge/assertions.md:4, docs/knowledge/error-handling.md:36).
+    // (docs/knowledge/harvested/assertions.md:4, docs/knowledge/harvested/error-handling.md:36).
     invariant(
       Number.isInteger(maxEntries) && maxEntries >= 1,
       `maxEntries must be a positive integer, got ${String(maxEntries)}`,
@@ -123,7 +123,7 @@ export class ContextStore {
 
 /**
  * The one registry 4c's `Runtime.send()` installs into. Module-level mutable state, which
- * `docs/knowledge/variables-and-declarations.md:22` bans — accepted here because threading a store handle
+ * `docs/knowledge/harvested/variables-and-declarations.md:22` bans — accepted here because threading a store handle
  * through builder → runtime → every step would be a wide API change for no observable gain, and logged in
  * the design's Deviation Ledger for Phase 10. Tests must build their own `new ContextStore()` rather than
  * asserting through this one: it is shared by every test file in a `bun test` run.

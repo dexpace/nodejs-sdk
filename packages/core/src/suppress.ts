@@ -39,7 +39,7 @@ type SuppressedErrorConstructor = new (
  *
  * Never built via `using`/`await using`: native disposal constructs
  * `new SuppressedError(disposalError, originalError)`, making the *teardown* failure primary
- * (`docs/knowledge/resource-management.md:72`) — the inverse of what RECOV-12 requires.
+ * (`docs/knowledge/harvested/resource-management.md:72`) — the inverse of what RECOV-12 requires.
  *
  * @param error - the primary throwable; stays primary.
  * @param suppressed - the secondary throwable raised while unwinding.
@@ -65,14 +65,14 @@ export function suppress(
  * The stand-in {@link suppress} builds on runtimes without the native class. Mirrors its observable
  * shape — `name`, `error`, `suppressed` — so a caller never has to branch on which one it received.
  *
- * `name` is pinned to `'SuppressedError'` rather than following `docs/knowledge/error-handling.md`'s
+ * `name` is pinned to `'SuppressedError'` rather than following `docs/knowledge/harvested/error-handling.md`'s
  * `this.name = new.target.name`: the point of this class is to be indistinguishable from the native
  * one, and reporting `FallbackSuppressedError` in a stack trace would make the runtime the reader is
  * on part of the error's identity.
  *
  * Exported so its shape is unit-testable directly. The alternative — deleting
  * `globalThis.SuppressedError` inside a test to force the fallback branch — would not survive
- * parallel execution, which `docs/knowledge/testing.md:50` requires of every test.
+ * parallel execution, which `docs/knowledge/harvested/testing.md:50` requires of every test.
  *
  * @internal
  */
