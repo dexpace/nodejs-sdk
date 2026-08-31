@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/pagination.test.mjs
+// tests/node-conformance/pagination.test.mjs
 //
 // Phase 6c's runtime-divergent surface, run against the BUILT artifact on real Node.
 //

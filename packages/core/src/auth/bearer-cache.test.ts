@@ -276,7 +276,7 @@ describe('BearerTokenCache: a signal outliving many fetches (AUTH-34)', () => {
     // removal a caller signal that outlives many token fetches -- one request driving a long
     // paginated sweep, say -- accumulates one dead listener per fetch until Node's
     // MaxListenersExceededWarning fires. The listener COUNT is asserted directly in
-    // `test/node-conformance/auth.test.mjs`, where `node:events`' `getEventListeners` is available;
+    // `tests/node-conformance/auth.test.mjs`, where `node:events`' `getEventListeners` is available;
     // this is the behavioural half, on Bun: after many settled fetches the signal must still drive
     // exactly the one waiter outstanding when it fires, not a backlog of stale ones.
     const cache = new BearerTokenCache();

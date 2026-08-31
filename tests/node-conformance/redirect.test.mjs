@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/redirect.test.mjs
+// tests/node-conformance/redirect.test.mjs
 //
 // Phase 5b is a runtime-divergent surface at two specific points, and both fail silently rather than
 // loudly if the runtimes disagree:

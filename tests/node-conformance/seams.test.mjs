@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/seams.test.mjs
+// tests/node-conformance/seams.test.mjs
 //
 // Folded in from the retired `scripts/verify-node-floor.mjs`, whose two assertions were the entirety of
 // this repo's Node coverage before this suite existed (checkpoint §5.9). Keeping a second parallel Node

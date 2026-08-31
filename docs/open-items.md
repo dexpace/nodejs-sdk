@@ -160,8 +160,9 @@ observable and owes a real test.
 ### B1 — NFR-10 / NFR-17: CI never runs on the declared minimum runtime — **RESOLVED** (2026-08-26)
 
 Closed by the `node-conformance` job in `.github/workflows/ci.yml`, which runs `test:node` against the built
-artifact as a matrix over `['20.3.0', 'lts/*']` — the declared floor and current LTS. `test/node-conformance/`
-holds 36 cases. Re-verified 2026-08-26. Original finding kept below for provenance.
+artifact as a matrix over `['20.3.0', 'lts/*']` — the declared floor and current LTS. `tests/node-conformance/`
+(at `test/node-conformance/` until Phase 10 moved it) holds 36 cases. Re-verified 2026-08-26. Original finding
+kept below for provenance.
 
 #### Original finding — **ACT** (trigger has now fired)
 
@@ -877,11 +878,30 @@ holds.
 **Trigger:** any phase touching `packages/core/src/seams/`. The fix is to delete the file outright, not to
 maintain it; out of scope for a review pass because it is Phase 2 surface.
 
-### H13 — `test:scripts` runs in no CI job — **OPEN**
+### H13 — `test:scripts` runs in no CI job — **RESOLVED** (2026-08-31)
+
+Closed by the `Gate self-tests (scripts/*.test.mjs)` step in the `ci` job, placed directly after the `Test`
+step and mirrored in `.claude/skills/ci-preflight/run-ci.mjs` as step id `test:scripts`. The glob now covers
+`knowledge.test.mjs`, `verify-seam-1.test.mjs`, `verify-sse-37.test.mjs` and `verify-test-partition.test.mjs`
+— 64 cases.
+
+**The trigger had already fired when this was closed.** `knowledge.test.mjs` was failing on `main`:
+`--list-topics` reports how many of the 39 topic files carry no requirement ID, the test pinned that at 16,
+and the corpus said 15. Cause was `36c3f96` (PR #59), whose Phase 10 correction to
+`docs/knowledge/deliberate-deviations.md` cites `CFG-1` and so gave a previously ID-less topic its first ID.
+A legitimate corpus edit, not a regression in extraction — but it sat unnoticed exactly as long as nothing ran
+the suite. That count is quoted to readers in `CLAUDE.md` and `.claude/skills/knowledge-lookup/SKILL.md`; both
+were stale too, and all three now move together, with the assertion's message naming the other two. The test
+also gained an assertion that the summary line agrees with the table it summarises, which holds whatever the
+corpus says.
+
+Original finding kept below for provenance.
+
+#### Original finding — **ACT**
 
 `scripts/*.test.mjs` runs only under `bun run test:scripts`, and `.github/workflows/ci.yml` has no step that
-invokes it. As of 6b that glob covers `scripts/knowledge.test.mjs`, `scripts/verify-seam-1.test.mjs`, and
-`scripts/verify-sse-37.test.mjs`.
+invokes it. As of 6b that glob covered `scripts/knowledge.test.mjs`, `scripts/verify-seam-1.test.mjs`, and
+`scripts/verify-sse-37.test.mjs`; Phase 10's `tests/` merge added `scripts/verify-test-partition.test.mjs`.
 
 The script was named `test:knowledge` until the Phase 6a reader pass renamed it: the glob had outgrown the
 name the moment `verify-seam-1.test.mjs` landed, and both places that cite it had to explain the mismatch in
@@ -896,7 +916,30 @@ assertions.
 Not fixed here: `.github/workflows/ci.yml` was out of scope for this pass. Raised in the Phase 6a shape review
 as F9.
 
-**Trigger:** immediate — add a `bun run test:scripts` step to the `ci` job. One line.
+**Trigger:** immediate — add a `bun run test:scripts` step to the `ci` job. One line. **Fired and closed
+2026-08-31; see above.**
+
+### H20 — the coverage floor measures only the Bun run — **RECORDED, no gate** (2026-08-31)
+
+`bunfig.toml`'s `coverageThreshold = 0.8` is enforced by `bun test` alone. `bun run test:node` contributes
+nothing to it: `node --test` collects no coverage here, and the two runs do not share a report. So a line
+reached only by `tests/node-conformance/` counts as uncovered, and a line covered only there cannot lift the
+number.
+
+Surfaced by the issue-55 audit, which named three gaps in the pre-Phase-10 arrangement. The naming gap was
+closed by the tree move. The static-checks gap (`.mjs` gets the gts/format baseline only, and `tsc` never
+opens the subtree) is recorded in `tests/tsconfig.json`'s own comment with its compensating control — CI runs
+that suite on two Node versions. This is the third, and it was the one left unrecorded.
+
+Not obviously a defect. The floor is a statement about `packages/*/src`, and the Node suite is deliberately
+thin and additive rather than a second unit suite (`tests/node-conformance/README.md`), so its lines are
+mostly re-assertions of behaviour `bun test` already covers. Merging the two reports would also mean
+producing coverage from `node --test` over the BUILT `dist/`, which maps back to `src/` only through source
+maps. Recorded so that "the floor covers everything" is never assumed.
+
+**Trigger:** a requirement whose ONLY test is a `tests/node-conformance/` case — at that point the floor is
+actively misreporting, and the case needs either a `bun test` counterpart or an explicit note in its phase
+checklist.
 
 ### H14 — `decodeSuccessResponse`'s 4xx/5xx branch is unprotected against a teardown failure — **OPEN**
 
@@ -982,7 +1025,7 @@ that SERDE-20 names two positions and only one has code.
 A ~20k-deep object encodes successfully under Bun (whose `JSON.stringify` is iterative) and raises a
 stack-overflow `RangeError` under Node, which `encodeToText` correctly wraps as `SerializationError`. **Both
 outcomes are correct** — one succeeds, the other reports an unencodable value through the stable serde type —
-so no `test/node-conformance/` case was added: a test asserting "either encodes or throws `SerializationError`"
+so no `tests/node-conformance/` case was added: a test asserting "either encodes or throws `SerializationError`"
 asserts nothing a reader can act on. Recorded only so a future reader who trips over the difference does not
 file it as a bug.
 

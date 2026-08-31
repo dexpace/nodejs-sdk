@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/config-primitives.test.mjs
+// tests/node-conformance/config-primitives.test.mjs
 //
 // Phase 7a's runtime-divergent surfaces, driven through the `@dexpace/core` specifier on Node rather than
 // Bun. Three things here are independent implementations, not shared code:

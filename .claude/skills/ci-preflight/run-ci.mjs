@@ -4,7 +4,7 @@
 // Runs every blocking step of `.github/workflows/ci.yml` against the working tree, in CI's own
 // order, and reports all failures at once rather than stopping at the first.
 //
-// Two things make this more than a shell alias for fourteen `bun run` calls:
+// Two things make this more than a shell alias for sixteen `bun run` calls:
 //
 //   * Ordering is load-bearing. `bun test`, `api`, `lint:publish` and every `verify:*` gate resolve
 //     `@dexpace/core` by package name, which lands in `packages/core/dist/`. Run them before
@@ -63,6 +63,17 @@ const STEPS = [
         : null,
   },
   {
+    // Tier `static`, not `gate`. `tier` has exactly one consumer -- the build-failed SKIP rule at
+    // the bottom of this file, which tests for `gate` -- so `static` means "runs even when `build`
+    // is red". Correct here and for verify:test-partition below: both read files and resolve no
+    // workspace package by name, so a failed build does not make either meaningless the way it does
+    // the gates around them.
+    id: 'test:scripts',
+    ci: 'Gate self-tests (scripts/*.test.mjs)',
+    cmd: 'bun run test:scripts',
+    tier: 'static',
+  },
+  {
     id: 'api',
     ci: 'API surface check',
     cmd: 'bun run api',
@@ -104,6 +115,14 @@ const STEPS = [
     ci: 'Runtime-floor consistency check',
     cmd: 'bun run verify:runtime-floor',
     tier: 'gate',
+  },
+  {
+    // Tier `static` — see `test:scripts` above.
+    id: 'verify:test-partition',
+    ci: 'Test-partition check (tests/ vs tests/node-conformance/)',
+    cmd: 'bun run verify:test-partition',
+    tier: 'static',
+    fix: 'the assertion names the string that drifted — change all five together, never one alone',
   },
   {
     // Last among the gates, matching ci.yml: it sweeps every dist/ and rebuilds twice, so running it
@@ -320,19 +339,24 @@ function report(results, skipped, opts) {
   return 1;
 }
 
+// The three globs below duplicate `package.json`'s `test:node`, deliberately: this leg runs the
+// suite under a pinned Node, so it cannot go through `bun run`. They are three of the five strings
+// that hold the `tests/` partition (CLAUDE.md's hard rule) and are checked by
+// `scripts/verify-test-partition.mjs` -- a stale glob here makes `node --test` match nothing and
+// exit 0, which reads as a clean floor run over zero cases.
 function runNodeFloor(opts, childEnv) {
   const managers = [
     [
       'mise',
-      `mise x node@${NODE_FLOOR} -- node --test test/node-conformance/*.test.mjs`,
+      `mise x node@${NODE_FLOOR} -- node --test tests/node-conformance/*.test.mjs`,
     ],
     [
       'fnm',
-      `fnm exec --using=${NODE_FLOOR} node --test test/node-conformance/*.test.mjs`,
+      `fnm exec --using=${NODE_FLOOR} node --test tests/node-conformance/*.test.mjs`,
     ],
     [
       'nvm',
-      `bash -lc 'nvm exec ${NODE_FLOOR} node --test test/node-conformance/*.test.mjs'`,
+      `bash -lc 'nvm exec ${NODE_FLOOR} node --test tests/node-conformance/*.test.mjs'`,
     ],
   ];
   const found = managers.find(

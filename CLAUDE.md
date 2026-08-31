@@ -21,7 +21,7 @@ All run from the repo root unless noted.
 bun install --frozen-lockfile
 
 bun run build:core       # tsc -b of core's declarations; incremental
-bun run build:deps       # build:core + transport-shared — every package another package's src
+bun run build:deps       # build:core + the other packages another package's src or tests/
                          #   imports BY NAME; a prerequisite of the four below
 bun run typecheck        # build:deps, then tsc --noEmit per package
 bun run lint             # build:deps, then gts lint . — formatting AND type-aware rules; fatal
@@ -61,10 +61,18 @@ transport rows passed on 1.4.0 and failed three ways on the pinned 1.3.14. `--cl
 difference between "the gates pass here" and "CI will be green".
 
 **There are two test trees, and `bun run test` is the only command that runs both.** Colocated unit tests
-live under `packages/*/src/`; cross-package conformance suites that drive a composed pipeline over a real
-socket live under `tests/` (styleguide 11-testing: integration tests crossing a process or network boundary
-belong in a top-level `tests/`, not beside one module). The root script is `bun test ./packages ./tests` —
-two trees, one process, one coverage report, one exit code.
+live under `packages/*/src/`; everything that crosses a process, a network, or a *runtime* boundary lives
+under `tests/`. Styleguide 11-testing scopes that rule to process and network boundaries; this repo reads a
+**runtime** boundary the same way, and the Node suite is why — see the hard rule below. The root script is
+`bun test ./packages ./tests` — two trees, one process, one coverage report, one exit code.
+
+`tests/` in turn holds one subdirectory per **runner**, and they are not interchangeable:
+
+```
+tests/
+  conformance/xcut/     # Bun runner, part of `bun run test`
+  node-conformance/     # node --test, run by `bun run test:node`, against the built dist/
+```
 
 **A bare `bun test` silently runs only the first tree.** `bunfig.toml`'s `[test] root = "packages"` governs
 discovery, so a bare invocation never visits `tests/` and reports green over a suite it never opened, with
@@ -73,16 +81,20 @@ argument is treated as a name filter and matches nothing, which is its own quiet
 does still fire on the combined run (confirmed by raising `coverageThreshold` and watching it exit 1), so
 CI's Test step is `bun run test --coverage` rather than the bare form.
 
+**Neither form reaches `tests/node-conformance/`**, and that is enforced by a config key rather than by the
+file system — read the hard rule below before touching it.
+
 **Either form needs `bun run build` to have run first**, from Phase 6a on: `@dexpace/codec-json`'s tests reach
 core through its published entry point, which Bun resolves to `packages/core/dist/`. On a fresh clone they
 cannot resolve core at all; against a stale `dist/` they report green over yesterday's core. CI is safe — its
 Build step precedes its Test step. The root `test` script deliberately does not build first, so the inner loop
 stays fast; rebuild when you have changed `packages/core/src/`.
 
-`test:node` is a separate, thin layer under `test/node-conformance/` that runs the same built package under
+`test:node` is a separate, thin layer under `tests/node-conformance/` that runs the same built package under
 `node --test`, because Bun's Web Streams / `AbortSignal` / `Uint8Array` behavior is an independent
 implementation of Node's and `src/io/` is where they diverge. **A phase that touches a runtime-divergent
-surface adds a case there, not only to `bun run test`** — see `test/node-conformance/README.md`.
+surface adds a case there, not only to `bun run test`** — see `tests/node-conformance/README.md`. Cases sit
+flat in that directory and are named `*.test.mjs`; the runner glob does not descend.
 
 Single test file or single test:
 
@@ -110,16 +122,60 @@ bun run verify:consumer-types     # the built .d.ts compiles on the declared `li
 bun run test:node                 # CI runs this as a matrix over engines.node's floor and current LTS
 bun run verify:seam-1             # zero runtime dependencies in EVERY package, plus the @dexpace/core
                                   # peer-dependency rule that guards the dual-package hazard
+bun run verify:sse-37             # no serde dependency and no reconnect path in core SSE
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
+bun run verify:test-partition     # the five files that keep tests/ and tests/node-conformance/ apart
+bun run verify:reproducible-build # two clean builds of one source tree agree, dist/ and tarball (NFR-12)
+bun run test:scripts              # the gates' OWN tests (node --test scripts/*.test.mjs)
 bun run audit                     # bun audit --audit-level=high --prod
 ```
 
 **Every one of these is a blocking CI step** (`.github/workflows/ci.yml`). Run the full set before claiming
 work is done — `bun run test` passing is not sufficient evidence.
 
-`bun run test:scripts` (`node --test scripts/*.test.mjs`) tests the *gates themselves* — the knowledge CLI and
-`verify-seam-1.mjs`. It is **not** wired into CI yet (`docs/open-items.md` H13), so run it by hand after
-touching anything in `scripts/`.
+`test:scripts` tests the *gates themselves* — the knowledge CLI, `verify-seam-1.mjs`, `verify-sse-37.mjs`,
+`verify-test-partition.mjs`. Phase 10 made it a blocking CI step, closing `docs/open-items.md` H13. It was
+not one before, and the proof that it should have been is that `knowledge.test.mjs` had been failing on
+`main` since `36c3f96` with nobody noticing. A gate whose own logic degrades still exits 0, so nothing else
+in the run would.
+
+### HARD RULE — the `tests/` partition
+
+`tests/` holds two suites. They must never run together. `tests/conformance/` runs on Bun, as part of
+`bun run test`. `tests/node-conformance/` runs on `node --test`, through `bun run test:node`, against the
+built `dist/`. It **must not** run on Bun. That is the only reason the tree exists.
+
+Before Phase 10, the file system held this separation. The Node tree was at `test/`, and no Bun command
+could reach it. One path — `tests/node-conformance/` — now holds it instead, written into five files that
+must agree:
+
+| File | What it holds |
+|---|---|
+| `bunfig.toml` | `[test] pathIgnorePatterns` — keeps the Node tree out of `bun test` |
+| `package.json` | the `test:node` glob — the only command that runs the Node tree |
+| `eslint.config.js` | the `.mjs` override — without it, `console`, `URL`, and the Web Streams globals fail `no-undef` |
+| `.claude/skills/ci-preflight/run-ci.mjs` | three globs in the `--node-floor` path |
+| `tests/node-conformance/README.md` | the membership rule, and the paths that name the tree |
+
+**The key is `pathIgnorePatterns`. The key is not `testPathIgnorePatterns`.** Bun accepts an unknown
+`[test]` key without complaint. A wrong key gives no warning, does not fail, and does not stop the run. Bun
+then collects the Node suite. Bun runs `node:test` files without an error and reports them as passing. The
+run reports success over a suite that proves nothing about Node. Measured on `bun run test`, pinned Bun
+1.3.14: with the key, 164 files; without it, 178. Thirteen of the fourteen extra files pass silently; the
+run goes red only because the fourteenth trips an unrelated timer assertion, which points nowhere near the
+cause. Treat the exit code as an accident, not a control.
+
+Never change one of these five files alone. Change one, then change all of them. Then run
+`node scripts/verify-test-partition.mjs`. That gate catches the wrong key name, and CI blocks on it.
+
+Do not remove the bunfig key and narrow the root script to `bun test ./packages ./tests/conformance`
+instead. That protects the root script only. A command typed by hand, such as `bun test ./tests`, would
+still collect the Node suite. The gate checks for this.
+
+Keep `[test] root = "packages"`. It controls discovery for a bare `bun test`, and it keeps
+`scripts/*.test.mjs` out of *that* run's coverage floor. It is a second mechanism, and it is independent.
+It does not replace the ignore glob, which is what governs the explicit `./tests` path the root script
+passes. The gate checks this too.
 
 ## Documentation hierarchy
 
@@ -137,7 +193,7 @@ requirement ID.
 
 ### Querying `docs/knowledge/`
 
-`docs/knowledge/` is 518 KB across 39 topic files — never read a topic file whole when a filtered query
+`docs/knowledge/` is 39 topic files — never read a topic file whole when a filtered query
 answers the question. `bun run knowledge` parses the corpus into entries and filters them; a requirement-ID
 query returns ~170 tokens against a ~5700-token file read.
 
@@ -150,10 +206,13 @@ bun run knowledge --section conflicts --brief      # open design-vs-styleguide c
 Different filters AND together, values within one filter OR; `--help` lists the rest. Each result carries its
 `<sub>` provenance line — the citation for test-file headers and deferral notes, though styleguide paths are
 absolute to a sibling repo and need their machine prefix stripped first. **A `--req` hit is not proof of
-knowledge:** 256 of 645 IDs are named only by an appendix-B conformance roll-up, tagged `[appendix-B roll-up]`
-in output; only 385 have a substantive entry (`--coverage` breaks this down). 16 of the 39 topics carry no
-requirement ID at all and are reachable only via `--topic`/`--chapter` (`--list-topics`). Nothing in CI runs
-this. The `.claude/skills/knowledge-lookup` skill carries the full workflow.
+knowledge:** 255 of 645 IDs are named only by an appendix-B conformance roll-up, tagged `[appendix-B roll-up]`
+in output; 386 have a substantive entry and 4 are cited nowhere at all (`--coverage` breaks this down). 15 of
+the 39 topics carry no requirement ID at all and are reachable only via `--topic`/`--chapter`
+(`--list-topics`). Every count in this paragraph moves when the corpus is edited, so
+`scripts/knowledge.test.mjs` pins all four against the live corpus and its failure message names the two docs
+to update alongside. No CI step gates corpus *content*; CI does run the CLI's own suite (`test:scripts`),
+which parses the real corpus. The `.claude/skills/knowledge-lookup` skill carries the full workflow.
 
 ## Requirement-ID conventions (enforced by review, not tooling)
 

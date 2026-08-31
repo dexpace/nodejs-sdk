@@ -7,7 +7,7 @@ description: Use before pushing a branch, opening or updating a PR, or whenever 
 
 ## Overview
 
-`.github/workflows/ci.yml` is 15 blocking steps across two jobs. Every one of them can run
+`.github/workflows/ci.yml` is 17 blocking steps across two jobs. Every one of them can run
 locally, so a red CI run is always avoidable — `bun test` passing is not evidence, and it is
 the single most common reason work gets handed over broken.
 
@@ -19,10 +19,10 @@ node .claude/skills/ci-preflight/run-ci.mjs
 
 ~2.5 minutes warm on a green tree. Full output per step goes to
 `node_modules/.cache/ci-preflight/<step>.log`; only a summary and a tail of each failure
-reach stdout, so a red run costs a few hundred tokens rather than the ~40k that fourteen
+reach stdout, so a red run costs a few hundred tokens rather than the ~40k that sixteen
 raw `bun run` calls would.
 
-Do not hand-run the fourteen commands instead. Two things go wrong when you do:
+Do not hand-run the sixteen commands instead. Two things go wrong when you do:
 
 - **Order is load-bearing.** `test`, `api`, `lint:publish` and every `verify:*` gate resolve
   `@dexpace/core` by package name, which lands in `packages/core/dist/`. Run any of them
@@ -35,7 +35,7 @@ Do not hand-run the fourteen commands instead. Two things go wrong when you do:
 1. **Run it.** Add `--skip-install` only if you have not touched `package.json` since the
    last install. **Before you push, add `--clean`** — a warm tree is blind to a whole class of
    defect CI hits on its first step. (The pinned Bun needs no flag; it is the default.)
-2. **All green** → say so plainly: CI is all good, naming the count (`all 15 steps passed`).
+2. **All green** → say so plainly: CI is all good, naming the count (`all 17 steps passed`).
    Nothing else to do.
 3. **Anything red** → report the findings to the user *first*: which gates failed, what each
    one means, and the fix you intend. One line per finding, not a transcript dump.
@@ -107,6 +107,7 @@ Both of these will make you report a passing gate that CI rejects.
 | `lint` | Formatting **and** type-aware rules; formatting is an error, not a warning. | `bun run fix` first — it clears every prettier finding. Hand-fix what survives: 70-line function cap, `max-depth` 3, `max-params` 3, explicit return types on exported members. Every `eslint-disable` needs a `-- reason`. |
 | `build` | Emit failed. **Blocks the eleven gates below it**, which the runner reports `SKIP`. | Fix this before reading anything else; the skipped gates are unknown, not passing. |
 | `test` | A failing test, *or* the silent coverage floor (see above). | If the tail says `0 fail`, it is coverage — find the file that dropped below 0.8 in the printed table and test it. Otherwise fix the test or the code. |
+| `test:scripts` | A gate's own logic broke, or the knowledge corpus shifted under an assertion that pins its shape. | `node --test scripts/<name>.test.mjs` for detail. If it is `knowledge.test.mjs`'s ID-less-topic count, a corpus edit gave a previously ID-less topic its first requirement ID — confirm that was intended, then move the number in the test, `CLAUDE.md` and `knowledge-lookup/SKILL.md` together. Otherwise fix the gate; never relax the assertion to match a degraded gate. |
 | `api` | The committed `etc/<pkg>.api.md` no longer matches the built surface, or an export lacks TSDoc. | Intended export change: `cd packages/<pkg> && bun run api:local`, then commit the regenerated report. `(undocumented)` in the diff means the export needs a `@public` block, plus `@throws` naming each catchable error class. **Unintended** change: revert the export, don't bless the report. |
 | `lint:publish` | `publint` + `attw` on every built package's `exports` map, `types`/`main` fields, and declaration resolution. | Fix the manifest. `cjs-resolves-to-esm` is already ignored by design (ESM-only); every other rule is real. |
 | `verify:dual-consumption` | A built package is no longer importable and runnable by plain `node` through its package name. | Usually a broken `exports` map or a subpath that ships no JS. |
@@ -114,9 +115,10 @@ Both of these will make you report a passing gate that CI rejects.
 | `verify:seam-1` | A package gained a runtime dependency outside the allow-list, or dropped its committed empty `dependencies` object (an omitted field is a violation too). | Remove the dependency — SEAM-1 is the constraint, not the gate. `@dexpace/core` is a **peer** of the satellites, never a dependency. |
 | `verify:sse-37` | Core's SSE code reached for serde or a codec package. | Remove the import; SSE-37/38 forbid the coupling. |
 | `verify:runtime-floor` | `engines.node` and the `target`/`lib` a package compiles to have drifted apart. | Move both together, deliberately — never raise one to silence this. |
+| `verify:test-partition` | One of the five strings that keep `tests/conformance/` (Bun) and `tests/node-conformance/` (`node --test`) apart has drifted — see CLAUDE.md's hard rule. Every way this breaks is silent: Bun runs `node:test` files and reports them **passing**, Bun ignores an unrecognized `[test]` key with no warning, and `node --test` over a glob matching nothing exits 0. | The assertion names the file and the string. Fix all five together — `bunfig.toml`, `package.json`, `eslint.config.js`, `run-ci.mjs`, `tests/node-conformance/README.md` — never one alone. Unlike the gates around it this one reads files only, so it still reports through a red `build` rather than going `SKIP`. |
 | `verify:reproducible-build` | Two clean builds of an identical source tree disagreed (NFR-12) — either in an emitted `dist/` file or in an `npm pack` tarball. | The assertion names what differed. A wall-clock or random value reaching a build-time codegen step is the usual cause; `packages/core/scripts/gen-version.mjs` is the only such step today, and injecting a `Date.now()` there is this gate's own negative test (it fails naming `packages/core/dist/generated/version.js` and `npm-pack:dexpace-core-0.0.0.tgz`). If the log instead ends in `tsc` errors, the **build inside the gate** failed and there is no difference to read — fix that first. The gate sweeps every `dist/` and rebuilds twice itself, so it is last in the job and leaves the tree freshly built. |
 | `audit` | A high-severity advisory in production dependencies. | `bun audit --prod` for detail. Note the tree is tiny (zero runtime deps by design), so a hit here is usually a transitive dev-dep misclassification worth reading carefully. |
-| `test:node` | Bun-vs-Node runtime divergence, almost always in `packages/core/src/io/` — Web Streams, `AbortSignal`, `Uint8Array` chunking. | Fix against Node's semantics. A phase touching a runtime-divergent surface should be *adding* cases here; see `test/node-conformance/README.md`. |
+| `test:node` | Bun-vs-Node runtime divergence, almost always in `packages/core/src/io/` — Web Streams, `AbortSignal`, `Uint8Array` chunking. | Fix against Node's semantics. A phase touching a runtime-divergent surface should be *adding* cases here; see `tests/node-conformance/README.md`. |
 
 **A `timeout` verdict is not the same finding as a red one.** Every step is capped at
 `STEP_TIMEOUT_MS` (10 minutes) in `run-ci.mjs`, and a step that hits the cap is reported `timeout`
@@ -136,7 +138,7 @@ your report when they matter:
   not prove the floor. `--node-floor` runs the floor leg via `mise`/`fnm`/`nvm` (downloading
   the toolchain once); the runner prints a note when the active major is not 20.
 
-  **Run it whenever the change adds or edits a file under `test/node-conformance/`**, touches
+  **Run it whenever the change adds or edits a file under `tests/node-conformance/`**, touches
   `io/`, reaches for a new built-in, or moves the floor. This gap is not theoretical: Phase
   8a's `transport.test.mjs` passed on Node 26 and failed 20 of 22 cases on 20.3.0, because an
   async *root-level* `before` hook does not complete before subtests inside a `describe` when
@@ -148,9 +150,9 @@ your report when they matter:
 CI also runs `node-conformance` only after the `ci` job succeeds — so locally, a `test:node`
 failure alongside other failures is the same signal, just surfaced earlier.
 
-Not in CI at all, so the runner does not include them: `bun run test:scripts` (tests the
-gates themselves — run it by hand after touching `scripts/`), and changesets (a
-consumer-facing change still needs `bun run changeset`).
+Not in CI at all, so the runner does not include it: changesets (a consumer-facing change
+still needs `bun run changeset`). `test:scripts` used to be on this list; Phase 10 wired it
+into the `ci` job (open-items H13), so the runner covers it now.
 
 ## Runner flags
 

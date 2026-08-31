@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/observability.test.mjs
+// tests/node-conformance/observability.test.mjs
 //
 // Phase 7b's runtime-divergent surfaces, driven through the `@dexpace/core` specifier on Node.js:
 //   * AsyncLocalStorage store propagation across native Node promises, microtasks, and macrotask timers (OBS-10, OBS-24).

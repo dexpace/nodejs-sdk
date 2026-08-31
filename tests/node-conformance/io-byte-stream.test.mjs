@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/io-byte-stream.test.mjs
+// tests/node-conformance/io-byte-stream.test.mjs
 //
 // Phase 3a's byte-stream surface, on Node. §5.9:358 names this layer specifically: "chunk boundaries,
 // backpressure timing, queueMicrotask ordering" are where Bun's and Node's independent Web Streams

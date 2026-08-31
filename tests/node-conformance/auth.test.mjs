@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/auth.test.mjs
+// tests/node-conformance/auth.test.mjs
 //
 // Phase 5c reaches three runtime-provided globals that Bun implements independently of Node, and every
 // one of them fails SILENTLY rather than loudly if the two disagree:

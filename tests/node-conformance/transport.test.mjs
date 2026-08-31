@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// test/node-conformance/transport.test.mjs
+// tests/node-conformance/transport.test.mjs
 //
 // Phase 8a's Node layer. This is the file the suite's membership rule was written for: `bun test` runs both
 // transports against *Bun's* `fetch`, `AbortSignal`, and Web Streams, and the shipping runtime is Node's —

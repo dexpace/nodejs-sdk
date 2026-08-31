@@ -1,4 +1,17 @@
 {
+  // Covers `tests/conformance/` ONLY. `tests/node-conformance/` is `.mjs`, and this project sets
+  // neither `allowJs` nor `checkJs`, so `tsc` never opens that subtree — deliberately. Those files
+  // run on `node --test` against the built `dist/`, and typing them would mean either checking JS
+  // against declarations they reach by raw `dist/` file path, or converting a suite whose whole
+  // point is to run on Node with no build step in front of it.
+  //
+  // The consequence worth stating: `types: ["bun"]` below does not apply to `node-conformance/`,
+  // and neither does the `strictTypeChecked` tier in `eslint.config.js`. That subtree gets the
+  // gts/format baseline and `globals.node` (`eslint.config.js`'s `.mjs` override) and nothing more.
+  // It is the tree that tests the shipped artifact and the tree with the fewest static checks over
+  // it; the compensating control is that CI runs it on two Node versions.
+  //
+  // See CLAUDE.md, "HARD RULE — the `tests/` partition".
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": ".",

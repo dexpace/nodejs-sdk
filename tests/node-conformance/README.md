@@ -1,6 +1,16 @@
 # Node-runtime conformance suite
 
+`tests/node-conformance/` — run by `bun run test:node` (`node --test tests/node-conformance/*.test.mjs`),
+never by `bun test`.
+
 Closes checkpoint §5.9 (`docs/superpowers/plans/2026-07-25-checkpoint-scaffold-through-phase3a.md:341`).
+
+> **This tree must not run on Bun.** That is the only reason it exists. Until Phase 10 it lived at
+> `test/node-conformance/`, outside anything `bun test` could reach; it now sits inside `tests/`, so
+> `bunfig.toml`'s `[test] pathIgnorePatterns` holds the line instead — along with four other files that
+> carry the same path, which `scripts/verify-test-partition.mjs` blocks CI on. **Read CLAUDE.md's "HARD RULE
+> — the `tests/` partition" before moving, renaming, or nesting anything here.** It is the one place that
+> rule and its reasoning are written down; this file only states what is local to the tree.
 
 `bun test` runs the whole unit suite on **Bun's** runtime and proves nothing about the runtime this SDK
 actually ships to. Bun's Web Streams, `AbortSignal`, and `Uint8Array`/async-iteration behavior are independent
@@ -17,6 +27,9 @@ Node).
 
 ## Rules
 
+- **Name every case `*.test.mjs`, flat in this directory.** `test:node`'s glob does not descend, and
+  `node --test` over a glob that matches nothing exits **0** — a case parked in a subdirectory is not a
+  failure, it is a silence. `verify:test-partition` turns that silence into a red CI step.
 - **Import the built artifact, never `src/`.** Public surface comes in through the `@dexpace/core` specifier;
   `io/` is `@internal` with no public subpath in `exports`, so it is reached by direct `dist/` file path. Run
   `bun run build` first — `test:node` does not build for you, because the CI job builds once and then runs the
@@ -36,18 +49,20 @@ Node).
 
 ## Membership rule
 
-**A phase that touches a runtime-divergent surface adds a case here, not only to `bun test`** (§5.9:378). That
-means Phase 4 (pipelines, where `NFR-11`'s async-framework-leak check lands) and Phase 8 — both halves: 8a's
-concrete `fetch`/`undici` transports, where this stops being precautionary and becomes the point, and 8b's
-RxJS bridge, whose entire reason for being hand-written is a cancellation path the runtime decides.
+**A phase that touches a runtime-divergent surface adds a case here, not only to `bun test`** (§5.9:378).
+Since Phase 4 that has meant most phases — pipelines, retry, redirect, auth, serde, SSE, pagination,
+configuration, observability, the two concrete transports, and the RxJS bridge all have cases here. Two are
+worth naming as the shape to aim for: 8a's `fetch`/`undici` transports, where this stops being precautionary
+and becomes the point, and 8b's RxJS bridge, whose reason for being hand-written is a cancellation path the
+runtime decides.
 
-## Files
+## Which cases exist
 
-| File | Surface |
-|---|---|
-| `seams.test.mjs` | `AbortSignal.any()` composition — folded in from the retired `scripts/verify-node-floor.mjs`, whose two assertions were the only Node coverage that existed before this suite — plus the `globalThis.crypto` floor assertion, made from ESM on purpose (Node 18 exposed `crypto` to CommonJS while leaving it undefined in ES modules) |
-| `io-byte-stream.test.mjs` | Phase 3a's `ByteQueue`, `BufferedSource` + views, `BufferedSink`, `TeeSink`, `writeAll` |
-| `body-lifecycle.test.mjs` | Phase 3b's public body surface over real Node Web Streams — reader-lock discipline, `pipeTo` ownership, multipart framing, error-body buffering |
-| `transport.test.mjs` | Phase 8a's two concrete transports against a real `node:http` server on Node's own `fetch`/`undici`, `AbortSignal`, and Web Streams — redirect passthrough, timeout and no-response classification, a single-use streaming request body, lazy response bodies, `SEAM-16`'s abort-after-delivery rule, and concurrency |
-| `redirect.test.mjs` | Phase 5b's Location resolution on Node's own WHATWG `URL` parser (relative resolution, percent-encoding preservation, userinfo clearing, bracketed IPv6, which malformed forms throw versus resolve as a relative reference) plus `PIPE-40`'s per-hop close discipline over real Node Web Streams |
-| `rx-bridge.test.mjs` | Phase 8b's `@dexpace/rx` cancellation path — unsubscribing an idle `sseEvents$`/`typedSse$` must reach the source, which depends on Node's `ReadableStream.cancel()` settling a suspended read and on Node's async-generator `return()` queueing behind an in-flight `next()`; plus `pages$`'s mid-walk page release |
+`ls` this directory. An earlier revision kept a table of file-to-surface descriptions here; it listed 6 of
+14 by the time anyone checked, because nothing regenerated it. What each case covers, and which requirement
+IDs it discharges, is recorded once — in that phase's checklist under `docs/superpowers/plans/`.
+
+One piece of provenance the tree cannot show: `seams.test.mjs` absorbed the retired
+`scripts/verify-node-floor.mjs`, whose two `AbortSignal.any()` assertions were the only Node coverage that
+existed before this suite. Its `globalThis.crypto` assertion is made from ESM on purpose — Node 18 exposed
+`crypto` to CommonJS while leaving it undefined in ES modules, which is what sets the 20.3 floor.
