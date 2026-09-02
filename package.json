@@ -1,6 +1,7 @@
 {
   "name": "nodejs-sdk",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "workspaces": {
     "packages": [
