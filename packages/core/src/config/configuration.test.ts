@@ -8,7 +8,7 @@
 // platform environment), CFG-13 (global slot, last-write-wins), CFG-37 (fail-fast when a required
 // argument is not the shape its parameter names), CFG-38 (typed accessors resolve through the full
 // layered lookup).
-// CFG-12 is deliberately untested: `docs/open-items.md` G3 records that a single-threaded-use
+// CFG-12 is deliberately untested: `docs/open-items.md` K3 records that a single-threaded-use
 // statement has no observable behavior in this runtime to assert.
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';

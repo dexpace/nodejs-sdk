@@ -11,16 +11,27 @@ bun add @dexpace/transport-undici @dexpace/core
 import {Request} from '@dexpace/core';
 import {undiciTransport} from '@dexpace/transport-undici';
 
-await using transport = undiciTransport({
+const transport = undiciTransport({
   agentOptions: {connections: 32},
   defaultTimeoutMs: 30_000,
 });
 
-const response = await transport.send(
-  Request.newBuilder().url('https://example.com/v1/users').build(),
-);
-await response.close();
+try {
+  const response = await transport.send(
+    Request.newBuilder().url('https://example.com/v1/users').build(),
+  );
+  await response.close();
+} finally {
+  await transport.close(); // this transport owns a real dispatcher — always close it
+}
 ```
+
+`close()` is the teardown, not `await using`. The factory returns a plain `Transport`: the disposal
+member is installed only when `Symbol.asyncDispose` exists, which it does not on this package's
+declared `engines.node` floor of `>=20.3` (the symbol arrived in 20.4). Declaring `AsyncDisposable`
+in the `.d.ts` regardless would be a type that lies on the supported runtime — `NFR-10` forbids it,
+and the [`await using` support row](https://github.com/dexpace/nodejs-sdk/blob/main/docs/open-items.md#d-nfr-10-await-using) in `docs/open-items.md`
+records the decision and the four reasons the floor does not move instead. Unlike `@dexpace/transport-fetch`, closing here is not optional: see below.
 
 ## Dispatcher ownership
 

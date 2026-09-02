@@ -32,7 +32,7 @@ const STRICT_INTEGER = /^[+-]?\d+$/u;
  * an absent key. The production seam additionally guards the prototype case at its own source; this
  * guard is the one that holds for a seam this package did not write.
  *
- * The residue: a seam failure is now silently invisible. `docs/open-items.md` G14 owns surfacing it,
+ * The residue: a seam failure is now silently invisible. `docs/open-items.md` K14 owns surfacing it,
  * alongside CFG-24's warning, once a `Logger` seam exists to surface it *to*.
  */
 function readLayer(source: SourceFn, key: string): string | undefined {

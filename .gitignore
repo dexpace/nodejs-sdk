@@ -115,3 +115,8 @@ dist
 
 # api-extractor scratch output (the committed report lives in packages/*/etc/)
 packages/*/temp/
+
+# Scratch directory the housekeeping skill's fence check writes and removes
+# (.claude/skills/housekeeping/check-fences.mjs). Present only mid-run; ignored so an
+# interrupted run cannot leave an untracked tree.
+.housekeeping-fences/

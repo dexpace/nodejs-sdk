@@ -7,7 +7,8 @@ description: Use before pushing a branch, opening or updating a PR, or whenever 
 
 ## Overview
 
-`.github/workflows/ci.yml` is 17 blocking steps across two jobs. Every one of them can run
+`.github/workflows/ci.yml` is 20 named steps across two jobs — 17 in `ci`, 3 in the
+`node-conformance` matrix — and every one of them is blocking. Every one of them can run
 locally, so a red CI run is always avoidable — `bun test` passing is not evidence, and it is
 the single most common reason work gets handed over broken.
 
@@ -19,10 +20,10 @@ node .claude/skills/ci-preflight/run-ci.mjs
 
 ~2.5 minutes warm on a green tree. Full output per step goes to
 `node_modules/.cache/ci-preflight/<step>.log`; only a summary and a tail of each failure
-reach stdout, so a red run costs a few hundred tokens rather than the ~40k that sixteen
+reach stdout, so a red run costs a few hundred tokens rather than the ~40k that all the
 raw `bun run` calls would.
 
-Do not hand-run the sixteen commands instead. Two things go wrong when you do:
+Do not hand-run the individual commands instead. Two things go wrong when you do:
 
 - **Order is load-bearing.** `test`, `api`, `lint:publish` and every `verify:*` gate resolve
   `@dexpace/core` by package name, which lands in `packages/core/dist/`. Run any of them
@@ -35,7 +36,8 @@ Do not hand-run the sixteen commands instead. Two things go wrong when you do:
 1. **Run it.** Add `--skip-install` only if you have not touched `package.json` since the
    last install. **Before you push, add `--clean`** — a warm tree is blind to a whole class of
    defect CI hits on its first step. (The pinned Bun needs no flag; it is the default.)
-2. **All green** → say so plainly: CI is all good, naming the count (`all 17 steps passed`).
+2. **All green** → say so plainly: CI is all good, naming the count the runner itself prints
+   (`CI preflight: all N steps passed.`), not a number from this file.
    Nothing else to do.
 3. **Anything red** → report the findings to the user *first*: which gates failed, what each
    one means, and the fix you intend. One line per finding, not a transcript dump.
