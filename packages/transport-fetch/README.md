@@ -11,7 +11,7 @@ bun add @dexpace/transport-fetch @dexpace/core
 import {Request} from '@dexpace/core';
 import {fetchTransport} from '@dexpace/transport-fetch';
 
-await using transport = fetchTransport({headerDropLogging: 'first-per-name'});
+const transport = fetchTransport({headerDropLogging: 'first-per-name'});
 
 const response = await transport.send(
   Request.newBuilder().url('https://example.com/v1/users').build(),
@@ -22,6 +22,13 @@ try {
   await response.close(); // the caller owns the body, always (BODY-15)
 }
 ```
+
+`close()` is the teardown, not `await using`. The factory returns a plain `Transport`: the disposal
+member is installed only when `Symbol.asyncDispose` exists, which it does not on this package's
+declared `engines.node` floor of `>=20.3` (the symbol arrived in 20.4). Declaring `AsyncDisposable`
+in the `.d.ts` regardless would be a type that lies on the supported runtime — `NFR-10` forbids it,
+and the [`await using` support row](https://github.com/dexpace/nodejs-sdk/blob/main/docs/open-items.md#d-nfr-10-await-using) in `docs/open-items.md`
+records the decision and the four reasons the floor does not move instead.
 
 ## What this transport deliberately does not do
 

@@ -127,11 +127,16 @@ function emitFollowEvents(
  * `withRedirect()`, must also install `stripCrossOriginMarkerStep()` -- otherwise REDIR-11's internal
  * marker reaches the transport whenever no auth step is present to strip it.
  *
+ * **Exceeding `maxHops` does NOT throw** (REDIR-17). The hop cap returns the current 3xx response to
+ * the caller unfollowed, which is also what `maxHops: 0` reduces to -- there is no separate "disable
+ * redirects" branch. `decide.ts:205` is the gate. Stated here rather than after the tags below
+ * because TSDoc folds trailing prose into the preceding block tag, where it would render as part of
+ * a `@throws` description in the emitted `.d.ts`.
+ *
  * @param overrides - redirect policy overrides; a zero-argument call yields the spec defaults.
  * @returns the descriptor to install in a pipeline's REDIRECT slot.
  * @throws SchemeDowngradeError - when an HTTPS to HTTP redirect is rejected by downgrade policy (REDIR-14, REDIR-15).
  * @throws NonReplayableBodyError - when a redirect requiring body resend encounters a single-use body (REDIR-6, REDIR-22).
- * @throws MaxHopsExceededError - when redirects exceed maxHops (REDIR-17, REDIR-22).
  *
  * @public
  */

@@ -31,10 +31,10 @@ The schema you pass is both the runtime witness and the source of the static typ
 separate type argument to keep in sync.
 
 - **PATCH three-state fields** — `tristate()` and `tristateObject()`, documented on their own TSDoc in
-  [`src/tristate-schema.ts`](./src/tristate-schema.ts). Absent omits the key, Null emits a wire
+  [`src/tristate-schema.ts`](https://github.com/dexpace/nodejs-sdk/blob/main/packages/codec-json/src/tristate-schema.ts). Absent omits the key, Null emits a wire
   `null`, Present emits the value; the wiring is on by default and `jsonSerde({tristate: false})` is
   the only way out.
 - **Unknown wire fields** — your schema's decision, not this codec's. The rationale and the
-  recommendation are on `jsonSerde`'s own TSDoc in [`src/json-serde.ts`](./src/json-serde.ts).
+  recommendation are on `jsonSerde`'s own TSDoc in [`src/json-serde.ts`](https://github.com/dexpace/nodejs-sdk/blob/main/packages/codec-json/src/json-serde.ts).
 - **A top-level wire `null` never decodes**, and a top-level `undefined`, function, or symbol raises
   `SerializationError` rather than encoding as `null`. Both are on `jsonSerde`'s TSDoc too.

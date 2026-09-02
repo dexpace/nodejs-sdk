@@ -1,25 +1,49 @@
-# Deviations That Cannot Be Corrected
+# Deviations — the as-built audit, and the landing point for the rest
 
 Audit of `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (the Phase 10
 reconciled ledger, 17 items) performed against the **as-built code**, not against the phase specs that
 produced it. Every item was re-derived from source; each entry below records the file and line that proves
 the claim.
 
-**Scope of this file:** the deviations that are *permanently uncorrectable* — where restoring the reference
-contract's own mechanism is impossible on this platform, forbidden by a project constraint, or would be a
-regression. Items found to be **correctable** are deliberately **not** listed here — they were fixed instead.
+**Scope of this file, as of 2026-08-31:** two things, in this order.
 
-**This file is the audit, not the ledger** (cross-reference added 2026-08-30; until then nothing in the repo
-linked the two, and the numbering they share had no stated owner):
+1. **The audit.** The deviations that are *permanently uncorrectable* — where restoring the reference
+   contract's own mechanism is impossible on this platform, forbidden by a project constraint, or would be a
+   regression. Items found to be **correctable** are deliberately **not** listed here; they were fixed
+   instead. That is everything below, and it is unchanged.
+2. **The collection point.** A deviation found outside a phase, by a review or a maintenance pass, with no
+   phase ledger to write to and no permission to write to §10. It is appended under
+   "Deviations recorded outside a phase" at the end of this file, dated, and folded into §10 the next time §10
+   is deliberately amended. That section is empty today: the 2026-08-31 restructure swept the non-frozen tree
+   and found no unrecorded deviation, only three unrecorded *deferrals* (`open-items.md` U2) and six
+   mis-numbered register citations (`open-items.md` U6).
+
+**This file is the audit and the mutable collection point; §10 is the ledger and it is frozen.** (The
+cross-reference was added 2026-08-30, when nothing in the repo linked the two and the numbering they share had
+no stated owner. The role below widened on 2026-08-31, when `docs/` gained a stated structure and §10 landed
+inside a read-only tree.)
 
 - **`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` (§10) is the normative
   ledger** — the canonical list of deliberate deviations, and the **owner of the item numbers**. Every `## N`
   heading and every table row below is keyed to §10's numbering and has no independent identity. **If §10
-  renumbers, this file must be renumbered in the same commit.** §10 now carries the matching pointer back here.
+  renumbers, this file must be renumbered in the same commit.** §10 carries the matching pointer back here.
+- **§10 sits in a frozen tree.** `docs/sdk-design-nodejs/` is read-only to routine maintenance and to the
+  `housekeeping` skill, which refuses to write there — see [`README.md`](./README.md). Editing §10 is a
+  deliberate, hand-made act. **This file is not frozen**, and that asymmetry is the point: a deviation
+  discovered by a maintenance pass, a review, or an audit is recorded here on the day it is found, and §10 is
+  amended when someone deliberately amends it. What must never happen is the finding waiting for the ledger.
+  The coupling now spans a freeze boundary, and only one side of it can be repaired by the tool that notices
+  the drift — registered as `open-items.md` U4.
 - **This file is the as-built audit of that ledger** — it re-derives each item from source, carries the
   `file:line` evidence, and records which of §10's claims did not survive contact with the code.
-- **A new deviation is recorded in neither.** It goes in the owning phase spec's own `## Deviation Ledger (for
-  Phase 10)` section; §10 is the consolidated **output** of those, not their intake.
+- **A deviation *produced by a phase* is recorded in neither, at first.** It goes in the owning phase's own
+  `## Deviation Ledger (for Phase 10)` section — 24 such sections exist under `docs/work/mvp/` — and §10 is
+  the consolidated **output** of those, not their intake. Those sections are dated provenance and stay where
+  they are.
+- **A deviation found *outside* a phase is recorded here.** A maintenance pass, a review of shipped code, or
+  an audit has no phase ledger to write to and cannot write to §10. It writes here, and the next deliberate
+  §10 amendment folds it in. This is the half of the intake rule that did not exist before 2026-08-31, and its
+  absence is why a finding with no owning phase had nowhere to go.
 - **The corpus no longer carries a copy.** `docs/knowledge/deliberate-deviations.md` was a harvested topic
   file derived from an older revision of §10 — a third of the register, mis-anchored, two entries false. It
   was dropped on 2026-08-31: a register accumulates rows and a harvest of it is one stale revision, so §10 is
@@ -311,7 +335,8 @@ unsigned publication; a local build without keys still publishes unsigned." Sati
 produce that evidence; it unblocks at first release and not before.
 
 > **Corrected in the ledger 2026-08-29.** Item 14 claimed `prepublishOnly` *and* `npm publish --provenance`
-> "are scripted (Phase 0 Task 3)". Only the first is. `docs/open-items.md:264` already recorded this
+> "are scripted (Phase 0 Task 3)". Only the first is. `docs/open-items.md`'s Section D row
+> "Publish + provenance CI job" ([`#d-nfr-16-provenance`](./open-items.md#d-nfr-16-provenance)) already recorded this
 > accurately ("`prepublishOnly` wired; nothing published yet"); §10 did not, and now does.
 >
 > **Still actionable, and not done here:** authoring the release workflow with `--provenance` and
@@ -377,3 +402,16 @@ failure retryable with zero edits to the retry layer. A flat sibling would have 
 the retry classifier, and again for every transport added later — trading one level of depth for an
 open-ended maintenance obligation that the styleguide's own rule exists to prevent. Held at exactly three;
 a fourth level is not sanctioned by this entry.
+
+## Deviations recorded outside a phase
+
+Empty as of 2026-08-31.
+
+A row here has no owning phase — it was found by a review, an audit, or a maintenance pass over shipped code.
+It is recorded on the day it is found rather than waiting for `docs/sdk-design-nodejs/10-…`, which is in a
+frozen tree and is amended only deliberately, by hand. When §10 is next amended, a row here becomes a numbered
+§10 item and moves into the audit above under that number.
+
+| Deviation | Found by | Date | Evidence | §10 status |
+|---|---|---|---|---|
+| — | — | — | — | — |

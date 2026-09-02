@@ -1,27 +1,58 @@
 # Open Items
 
-Running register of everything known to be unmet, unverified, misreported, or deliberately deferred across the
-implemented portion of this project. Reviewed state: **scaffold milestone** (committed, `0ebdc79`),
-**Phase 1 — Core HTTP Domain Model** (branch `2-phase-1-core-http-domain-model`, uncommitted at time of
-review), **Phase 3a/3b**, **Phase 4a — Execution Context** (branch `7-phase-4a-execution-context`, three
-review passes), **Phase 4b — Recovery-Chain Primitives** (branch
-`8-phase-4b-recovery-chain-primitives`), and **Phase 5b — Redirect** (branch
-`12-phase-5b-resilience-redirect`, three review passes). 4a and 4b are both merged into
-`9-phase-4c-stage-based-pipeline`. Last reviewed **2026-08-27**.
+Running register of everything known to be unmet, unverified, misreported, or surprising across the
+implemented portion of this project. **This is the only such register**; a second one at the repository root
+was merged in as Section P on 2026-08-31 and deleted.
 
-**Two phases are shipped but were never registered here: 4c (stage-based pipeline) and 5a (retry).** Both are
-merged and both have executed checklists, but neither ran the scan this file's maintenance rule asks for, so
-their absence below means "not reviewed", not "nothing found". Section G was written without reviewing either,
-and says nothing about them beyond what 5b's own work touched — the one 5a file 5b modified
-(`retry/engine.ts`) is recorded at G9.
+It is one of three files at the `docs/` root, and the boundary between them is *when* an item was created:
 
-Sections A–E below were written against Phase 1 and are re-verified at each review; section F is Phase 4b's,
-section G is Phase 5b's, section H is Phase 6a's, section I is Phase 6b's,
-section J is Phase 6c's, and section K is Phase 7a's.
+| Register | Holds | Item is |
+|---|---|---|
+| `open-items.md` (this file) | Everything unmet, unverified, misreported, or surprising | A gap found **after** the work, between what is claimed and what is built |
+| [`deferred-items.md`](./deferred-items.md) | Work a phase decided not to do yet, with the phase that owns it | A decision made **before** the work: "not this phase, that one" |
+| [`deviations.md`](./deviations.md) | The as-built audit of the deviation ledger | A place this port deliberately differs from the reference contract |
+
+The same requirement ID can legitimately sit in two of them. `AUTH-37` is deferred to Phase 7b in
+`deferred-items.md` and recorded here at G12 as a live silent swallow.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is either scheduled against a named phase or
 awaiting a decision.
+
+## Section index
+
+Each section is a review. Its letter is permanent: source comments cite items as `docs/open-items.md K11`,
+and 24 such citations exist across the repository. **A letter is never reused and an item is never
+renumbered.** A new review appends the next letter.
+
+| Section | Subject | Item IDs |
+|---|---|---|
+| A–C, E | Phase 1, re-verified at every review since | `A1`–`A6`, `B1`–`B4`, `C1`–`C3`, `E1` |
+| D | Scheduled deferrals, Phase 1 onward | **none.** A bare table; its rows are cited by the anchors on them, not by an item ID |
+| F | Phase 4b — recovery-chain primitives | `F1`–`F9` |
+| G | Phase 5b — redirect | `G1`–`G13` |
+| H | Phase 6a — serde | `H1`– |
+| I | Phase 6b — Server-Sent Events | `I1`– |
+| J | Phase 6c — pagination | `J1`– |
+| K | Phase 7a — configuration and platform primitives | `K1`–`K20` |
+| L | Phase 7b — instrumentation and observability | `L1`– |
+| M | Phase 8b — async-runtime bridge | `M1`– |
+| N | Phase 9 — cross-cutting invariants and conformance | `N1`– |
+| O | Knowledge-corpus split | `O1`–`O3` |
+| P | Phase 5a — retry (merged from the repository-root register, 2026-08-31) | `P1`–`P9` |
+| Q–T | Four validation/execution reviews relocated from the roadmap, 2026-08-31 | **table rows, not `###` items:** Q `D1`–`D2`, R `E1`–`E8`, S `F1`–`F10`, T `F1`–`F9`. The reviews' own numbering — see the note on Section S |
+| U | Documentation restructure | `U1`–`U11` |
+
+**Reviewed state.** Scaffold milestone (`0ebdc79`); Phase 1 (branch `2-phase-1-core-http-domain-model`,
+uncommitted at time of review); Phases 3a/3b; Phase 4a (`7-phase-4a-execution-context`, three passes);
+Phase 4b (`8-phase-4b-recovery-chain-primitives`); Phase 5b (`12-phase-5b-resilience-redirect`, three
+passes); Phase 5a (three passes, now Section P, re-verified against source 2026-08-31); Phases 6a/6b/6c,
+7a/7b, 8b, 9. Last reviewed **2026-08-31**.
+
+**Phase 4c is still not registered here.** It is merged and has an executed checklist, but never ran the scan
+this file's maintenance rule asks for, so its absence means "not reviewed", not "nothing found". Section S is
+a *document* validation review of 4b and Section T of 4c; neither is a review of the shipped code. Phase 5a's
+gap closed on 2026-08-31 with Section P.
 
 **Status vocabulary**
 
@@ -34,7 +65,7 @@ awaiting a decision.
 
 ---
 
-## A. Requirements unmet or misreported
+## Section A — Requirements unmet or misreported
 
 ### A1 — HTTP-24: `charset` does not return null for an unknown encoding — **DECIDE**
 
@@ -155,7 +186,7 @@ observable and owes a real test.
 
 ---
 
-## B. Gates and tooling
+## Section B — Gates and tooling
 
 ### B1 — NFR-10 / NFR-17: CI never runs on the declared minimum runtime — **RESOLVED** (2026-08-26)
 
@@ -225,11 +256,11 @@ NFR-14 decision at Phase 8.
 
 ---
 
-## C. Documentation defects
+## Section C — Documentation defects
 
 ### C1 — Phase 1's scope statement contradicts its own plan — **ACT**
 
-`docs/superpowers/specs/2026-07-23-phase1-core-http-domain-model-design.md` says the scope is "Full
+`docs/work/mvp/phase1/2026-07-23-phase1-core-http-domain-model-design.md` says the scope is "Full
 `product-spec/04-core-http-domain-model.md` (HTTP-3 through HTTP-53, both MUST and SHOULD level) in one phase."
 
 The plan's own Self-Review then amends that: *"The Phase 1 spec's scope statement should be read — and amended
@@ -246,13 +277,13 @@ here so the promise survives until then.
 
 ### C3 — The Phase 4 checklist under-reports Phase 4a — **ACT**
 
-`docs/superpowers/plans/2026-07-26-phase4-execution-context-and-pipelines-checklist.md` still carries its
+`docs/work/mvp/phase4/2026-07-26-phase4-execution-context-and-pipelines-checklist.md` still carries its
 banner: "the plans are reviewed and corrected as of 2026-07-26 but **not yet executed**. Every ✅ means 'the
 plan builds and tests it,' not 'it is on `main`.'" Phase 4a's rows are now built, tested, and committed on
 `7-phase-4a-execution-context`, so the banner understates them while 4b and 4c remain unbuilt.
 
 The same checklist maps only `CTX-*`. It has no `XCUT-14` row, even though
-`docs/superpowers/specs/2026-07-28-phase9-cross-cutting-conformance-design.md:66` names "4a's context registry"
+`docs/work/mvp/phase9/2026-07-28-phase9-cross-cutting-conformance-design.md:66` names "4a's context registry"
 as an XCUT-14 site and appendix B's only conformance row that `ContextStore` satisfies is B.8's
 "Caller/server-keyed maps bounded with drain-to-cap loop (XCUT-14)" — appendix B has no CTX section at all. The
 ID is now cited in `store.ts` and `store.test.ts`; the checklist is the remaining gap.
@@ -261,7 +292,7 @@ Split the banner per sub-phase, and add an `XCUT-14` row pointing at 4a Task 4 (
 
 ---
 
-## D. Scheduled deferrals
+## Section D — Scheduled deferrals
 
 No action now. Each is already owned by a named phase; this table exists so none can quietly lapse.
 
@@ -282,8 +313,8 @@ No action now. Each is already owned by a named phase; this table exists so none
 | `contextsEqual()`, value equality over `ExecutionContext` | CTX-5 (equality framing) | none | Built only if 4b or 4c needs one. `CTX-5`'s operative half — pinning an explicit shared key — ships via `ContextInit.key` |
 | `FakeTransport` test double | — | 4c | 4a never touches `Transport`; `PIPE-9`'s empty-pipeline dispatch is the likely first real consumer |
 | Self-identifying version metadata (real `User-Agent`) | NFR-15 | 7/8 | |
-| Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet. **Sharpened 2026-08-29:** there is no release workflow at all and `--provenance` appears in no manifest, workflow, or `.npmrc`. §10's ledger claimed the flag "is scripted"; it never was. Authoring the workflow is actionable **now** — only running it against a real registry is blocked |
-| `await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | NFR-10 | **none — decided against 2026-08-30** | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). **This row previously read "raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard." That is now a rejected option, not a pending one — the floor stays `>=20.3` and all four guarded installs stay.** Four reasons, in the order that decides it. (1) `NFR-10` is **MUST**-level and requires that "the emitted-artifact target and the visible-API level must agree" (`docs/product-spec/20-non-functional-requirements-and-quality-bar.md:29`); the unguarded class member violated it directly, and the guarded install *is* the repair — not a workaround waiting to be undone. (2) The same requirement's next clause: "A capability that genuinely requires a newer runtime MUST be isolated into its own unit that declares the higher floor explicitly; that unit MUST NOT be a hard dependency of the general-purpose core." Raising core's floor to recover `await using` is the exact inverse — it drags every consumer onto a higher runtime for one syntactic affordance. (3) **The floor is derived, not chosen.** `scripts/verify-runtime-floor.mjs:33` pairs language level `es2023` with `>=20.3`, and its own banner comment (`:22-29`) says the floor is "set by the runtime built-ins the SDK calls rather than by the syntax it emits" and that "adding or moving a row here is a reviewed choice about what runtimes the SDK supports, never a mechanical bump." `>=20.3` is the *minimum* Node that runs what this project emits — `globalThis.crypto` is absent from ESM on every Node 18, and `AbortSignal.any()` landed in 20.3.0. Moving it to satisfy a type-level convenience inverts what the gate is for. (4) **There is a decided precedent.** `docs/superpowers/plans/2026-07-26-phase4-execution-context-and-pipelines-checklist.md:208` rejected raising the floor for `SuppressedError` on the same reasoning and shipped a guarded shim instead — `packages/core/src/suppress.ts`. `close()` remains the supported teardown on every runtime; a consumer who has raised *their own* floor to 20.4+ can still reach the installed member through a cast. See §10 ledger item 11 and I3/J3 below |
+| <a id="d-nfr-16-provenance"></a>Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet. **Sharpened 2026-08-29:** there is no release workflow at all and `--provenance` appears in no manifest, workflow, or `.npmrc`. §10's ledger claimed the flag "is scripted"; it never was. Authoring the workflow is actionable **now** — only running it against a real registry is blocked |
+| <a id="d-nfr-10-await-using"></a>`await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | NFR-10 | **none — decided against 2026-08-30** | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). **This row previously read "raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard." That is now a rejected option, not a pending one — the floor stays `>=20.3` and all four guarded installs stay.** Four reasons, in the order that decides it. (1) `NFR-10` is **MUST**-level and requires that "the emitted-artifact target and the visible-API level must agree" (`docs/product-spec/20-non-functional-requirements-and-quality-bar.md:29`); the unguarded class member violated it directly, and the guarded install *is* the repair — not a workaround waiting to be undone. (2) The same requirement's next clause: "A capability that genuinely requires a newer runtime MUST be isolated into its own unit that declares the higher floor explicitly; that unit MUST NOT be a hard dependency of the general-purpose core." Raising core's floor to recover `await using` is the exact inverse — it drags every consumer onto a higher runtime for one syntactic affordance. (3) **The floor is derived, not chosen.** `scripts/verify-runtime-floor.mjs:33` pairs language level `es2023` with `>=20.3`, and its own banner comment (`:22-29`) says the floor is "set by the runtime built-ins the SDK calls rather than by the syntax it emits" and that "adding or moving a row here is a reviewed choice about what runtimes the SDK supports, never a mechanical bump." `>=20.3` is the *minimum* Node that runs what this project emits — `globalThis.crypto` is absent from ESM on every Node 18, and `AbortSignal.any()` landed in 20.3.0. Moving it to satisfy a type-level convenience inverts what the gate is for. (4) **There is a decided precedent.** `docs/work/mvp/phase4/2026-07-26-phase4-execution-context-and-pipelines-checklist.md:208` rejected raising the floor for `SuppressedError` on the same reasoning and shipped a guarded shim instead — `packages/core/src/suppress.ts`. `close()` remains the supported teardown on every runtime; a consumer who has raised *their own* floor to 20.4+ can still reach the installed member through a cast. See §10 ledger item 11 and I3/J3 below |
 | NFR-8 re-confirmed as a documented non-applicability | NFR-8 | 10 | No reflection-driven discovery surface exists by design |
 | Redirect structured logging — hop, rejection, and permitted-downgrade events | REDIR-28, REDIR-15 (surfacing clause), XCUT-17(d) | 7b | Task 9. 5b executes before 7b and 7b needs 5b's step, so the import cannot run either way until then. See G2 |
 | Redirect's loop-detected and malformed-Location events | REDIR-28 | none | Blocked behind a reason discriminant on `decide()`'s `'return-current'` variant, which no phase owns. See G3 |
@@ -295,7 +326,7 @@ No action now. Each is already owned by a named phase; this table exists so none
 
 ---
 
-## E. Process
+## Section E — Process
 
 ### E1 — Phase 1 has no commits — **DECIDE**
 
@@ -310,7 +341,7 @@ departure.
 
 ---
 
-## F. Phase 4b — Recovery-Chain Primitives
+## Section F — Phase 4b (Recovery-Chain Primitives)
 
 Three review passes ran over this phase; everything they found is either fixed in the branch or listed here.
 Nothing below blocks the phase — the `RECOV-1`–`RECOV-16` mapping is satisfied and every CI step is green.
@@ -399,7 +430,7 @@ phases execute, per this file's own maintenance rule.
 
 ---
 
-## G. Phase 5b — Redirect
+## Section G — Phase 5b (Redirect)
 
 Three review passes ran over this phase. Everything they found is either fixed in the branch or listed here.
 Nothing below blocks the phase — `REDIR-1`–`REDIR-27` are satisfied, `PIPE-40` is closed, and every CI step is
@@ -506,7 +537,7 @@ are the same deferral. Appendix B reaches redirect only through the `XCUT-17` li
 
 ### G8 — The 5b design doc's process note claims it is uncommitted — **ACT**
 
-`docs/superpowers/specs/2026-07-26-phase5b-redirect-design.md:23` ends: "Not committed — left for the user to
+`docs/work/mvp/phase5/phase5b/2026-07-26-phase5b-redirect-design.md:23` ends: "Not committed — left for the user to
 review and commit if it holds up." It was committed in `c6603aa` ("Planning (#26)") and has since been amended
 twice. The sentence is stale and should be dropped or rewritten; the rest of the process note (that the design
 was authored autonomously and every judgment call is re-listed in the Deviation Ledger for challenge) is still
@@ -1222,7 +1253,7 @@ publishes `StepDescriptor` lands, add `clientIdentityStep`/`ClientIdentitySettin
 
 ### K2 — Proxy resolution implements the property tier the design doc ledgered as collapsed — **RESOLVED** (2026-08-27)
 
-`docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md` ledgers "system-property layer collapses
+`docs/work/mvp/phase7/phase7a/2026-07-28-phase7a-configuration-design.md` ledgers "system-property layer collapses
 into environment-only (proxy and general config alike)" and its plan's Task 7 sketch dropped `CFG-24`'s
 property tier and all of `CFG-26` accordingly. The shipped `resolveProxyOptions` implements both, against the
 substitutable property seam `Configuration` already carries for `CFG-3`/`CFG-4`. Rationale: the collapse is a
@@ -1231,7 +1262,7 @@ property seam is empty and real behavior is environment-only, exactly as ledgere
 without the tier, `CFG-24`'s same-layer-port and https-only-credentials clauses and every clause of `CFG-26`
 would have been silent gaps, with `getRawProperty` left without a single consumer in the repository. The
 deviation ledger's wording is now narrowed to say the *production sources* collapse, not the resolution logic:
-`docs/superpowers/specs/2026-07-28-phase7a-configuration-design.md`'s ledger row and its §"Proxy model" prose
+`docs/work/mvp/phase7/phase7a/2026-07-28-phase7a-configuration-design.md`'s ledger row and its §"Proxy model" prose
 were both corrected on 2026-08-27. The correction was made here rather than deferred to Phase 10 because that
 ledger is Phase 10's *input* — handing the reconciliation sweep a row that misstates the as-built code inverts
 the dependency — and because the file is this phase's own design doc, which this phase may edit.
@@ -1261,7 +1292,7 @@ not whole.
 
 ### K6 — Six defects in the phase plan's own implementation sketches — **WATCH**
 
-The plan doc at `docs/superpowers/plans/2026-07-28-phase7a-configuration.md` still contains the sketches
+The plan doc at `docs/work/mvp/phase7/phase7a/2026-07-28-phase7a-configuration.md` still contains the sketches
 below. They were corrected in the shipped code; the plan was not rewritten, so a future reader following it
 verbatim would reintroduce them. The plan now opens with a banner saying so and pointing here and at the
 checklist as the as-built record, which is the mitigation — the six sketches are deliberately left in place
@@ -1334,7 +1365,7 @@ surface-widening the phase declined to do for K1:
    return edge, and nothing in CI would catch the loop (see K12).
 2. **Its `RECOV-32` sibling would land elsewhere.** The idempotency-key step — the adjacent requirement, the
    same kind of object — is planned for `packages/core/src/recovery/idempotency-key.ts`
-   (`docs/superpowers/plans/2026-07-26-phase5a-retry.md:157,2529`). Two adjacent `RECOV-3x` steps in two
+   (`docs/work/mvp/phase5/phase5a/2026-07-26-phase5a-retry.md:157,2529`). Two adjacent `RECOV-3x` steps in two
    unrelated folders.
 
 Also noted here, since it is the same class of question: the barrel comment at `packages/core/src/index.ts`
@@ -1701,17 +1732,852 @@ added unilaterally. Two candidate mechanisms were reviewed:
 **Trigger:** the next re-harvest, whichever lands first. Until then `bun run knowledge:drift` is the check, and
 it is named in the phase-start section of the `knowledge-lookup` skill.
 
-### O3 — `docs/superpowers/` still carries pre-split corpus paths — **WON'T FIX**
+### O3 — the phase records still carry pre-split corpus paths — **WON'T FIX**
 
 The move to `harvested/` invalidated every `docs/knowledge/<topic>.md:<line>` citation in the repository. The
 107 in `packages/`, `test/`, `tests/` and `.changeset/` were repointed in the same commit, per the rule that a
 comment that no longer matches is corrected with the change that staled it.
 
-The ~200 in `docs/superpowers/plans/` and `docs/superpowers/specs/` were deliberately left. Those files are
-dated records of what a phase planned and found at the time; they are not retro-edited, and a phase plan
-citing the path that existed when it was written is accurate about its own moment. `CLAUDE.md` states the
-split so a reader does not read it as an oversight.
+The 207 under what was then `docs/superpowers/plans/` and `docs/superpowers/specs/`, and is now
+`docs/work/mvp/`, were deliberately left — 28 distinct topic paths across 33 files. Those files are dated
+records of what a phase planned and found at the time; they are not retro-edited, and a phase plan citing the
+path that existed when it was written is accurate about its own moment. `CLAUDE.md` states the split so a
+reader does not read it as an oversight.
 
+**The tree moved; the verdict did not.** The 2026-08-31 restructure (`docs/work/mvp/phaseN/`, this file's
+Section P onward) repointed every `docs/superpowers/...` *path* citation, because those name files this
+project owns and moved. The corpus citations above are a different case: the file they name was deleted by a
+harvest, not relocated by us, and nothing this repository does can make the old line number mean anything
+again. See U1 for the citations the restructure could not repoint at all.
+
+
+## Section P — Phase 5a (Retry)
+
+> **Merged 2026-08-31 from the repository-root `open-items.md`.** Phase 5a's code review (passes 1–3,
+> 2026-08-26) wrote its findings to a second register at the repository root, created in `cba4721` and never
+> folded in — which is exactly the gap this file's own preamble named ("Two phases are shipped but were never
+> registered here: 4c and 5a"). The root file is deleted; its nine findings are below, numbered `P1`–`P9`,
+> text unchanged apart from the heading form and the status word. Its own status legend was
+> 🔴 defect, owner named — 🟡 accepted limitation — 🟢 correct, documented to stop a future "fix" —
+> 📄 documentation drift; each is restated in this register's vocabulary in the heading, with the original
+> `**Owner:**` line kept intact.
+>
+> **Every item was re-verified against as-built source on 2026-08-31** before being merged, per this file's
+> maintenance rule. Eight still hold. One (`P9`) had been closed by Phase 7b and is marked so.
+>
+> Findings that *were* fixed in 5a are not listed — they are in the code and its tests.
+
+### P1 — `toHttpError`'s `finally` can let a teardown failure mask the drain failure — **WATCH**
+
+**Where:** `packages/core/src/body/http-status-error.ts:106-109` (Phase 3b)
+
+```ts
+} finally {
+  reader?.releaseLock();
+  await response.close();
+}
+```
+
+`Response.close()` documents `@throws Whatever cancelling the body stream raises, other than the
+TypeError a locked stream reports`. Awaiting it in a bare `finally` means a teardown failure replaces
+whatever the `try` was propagating — the inversion `RECOV-12` forbids and `suppress()` exists to
+prevent (`packages/core/src/suppress.ts` says so in its own doc comment, about native `using`).
+
+**Why it is not urgent:** cancelling an *errored* `ReadableStream` rejects with the stream's stored
+error rather than invoking the source's `cancel` hook, so on the common path `close()` rethrows the
+very error already propagating and the masking is unobservable. It becomes observable only for a
+stream whose `cancel` hook fails independently of the read that failed.
+
+**Why it is not fixed here:** shipped Phase 3b code with its own tests, outside 5a's scope. Phase 5a
+fixed the same shape at its own call site (`retry/engine.ts`'s `releaseQuietly` /
+`withReleaseFailure`), which is what made the upstream instance visible.
+
+**Owner:** Phase 10 (Deviation Reconciliation), or a Phase 3b follow-up.
+
+**Re-verified 2026-08-31:** unchanged. `packages/core/src/body/http-status-error.ts:106-109` still ends the
+drain in a bare `finally` that awaits `response.close()` after `reader?.releaseLock()`. The
+release-before-close ordering now carries its own comment (a different defect, fixed); the masking window is
+the same one described above.
+
+
+### P2 — `RequestOptionsBuilder.maxRetries` — fixed here, but the pattern deserves a sweep — **WATCH**
+
+**Where:** `packages/core/src/http/request-options.ts` (Phase 1)
+
+Fixed in this phase (see `.changeset/2026-08-26-max-retries-range-check.md`): the setter rejected only
+`value < 0`, so `Infinity`, `NaN`, and fractions reached a consumer as a retry budget that never
+terminates.
+
+**What is still open:** the *class* of bug, not this instance. `timeoutMs` next door has the same
+shape — it rejects `<= 0` and accepts `Infinity`/`NaN`. A non-finite timeout is less dangerous than a
+non-finite retry ceiling (it degrades to "no deadline" rather than "never stop"), but it is the same
+gap in the same requirement (`HTTP-35`), and no other numeric public setter has been audited.
+
+**Owner:** Phase 10, as a sweep over every public numeric setter — is the range check the full range,
+or only its lower bound?
+
+**Re-verified 2026-08-31:** half unchanged. `maxRetries` is fixed —
+`packages/core/src/http/request-options.ts:178` now rejects anything that is not `Number.isInteger(value) &&
+value >= 0`. `timeoutMs` at `:151` still tests `value <= 0` only, so `Infinity` and `NaN` both pass. No other
+public numeric setter has been audited since.
+
+
+### P3 — `RetrySettings.retryableStatuses` is immutable by type, not at runtime — **WATCH**
+
+**Where:** `packages/core/src/retry/settings.ts`
+
+`retrySettings()` returns `Object.freeze({...})`, but freeze is shallow and does not seal a `Set`'s
+internal slots: anyone holding the settings object can still call `.add()` on the status set and
+change policy for every later call.
+
+`RECOV-34`'s actual requirement — a *defensive copy* so a caller mutating **their own** source
+collection cannot alter policy — is satisfied and tested. What is not achievable is `RETRY-42`'s
+"immutable after construction" as a runtime guarantee.
+
+This is a deliberate house position, not an oversight: `config/retryable.ts` records it — *"`Object.freeze`
+does not seal a `Set`'s internal slots, so a frozen `Set` would be a misleading no-op — typed
+`ReadonlySet` instead, same treatment as Phase 1's `IDEMPOTENT_METHODS`."* A genuine runtime guarantee
+would need a wrapper object with no mutators, which changes the shape every consumer reads.
+
+**Owner:** none. Recorded so the gap between the type-level and runtime guarantee is not rediscovered
+as a bug.
+
+**Re-verified 2026-08-31:** unchanged. `packages/core/src/retry/settings.ts:104-106` still returns
+`Object.freeze({… retryableStatuses: new Set(merged.retryableStatuses)})`, and freeze does not seal a `Set`'s
+internal slots.
+
+
+### P4 — `RETRY-18`'s 365-day pacing ceiling is spec-mandated and operationally hazardous — **ACT**
+
+**Where:** `packages/core/src/retry/pacing.ts`
+
+A server that sends `X-RateLimit-Reset` in **milliseconds** instead of epoch seconds — a common
+server-side mistake — produces a delta of roughly 56,000 years. `RETRY-18`/`RECOV-26` require
+clamping to a 365-day ceiling, so the parser returns exactly that: a retry parked for a year, which
+is indistinguishable from a hang.
+
+Nothing shortens it by default. `totalTimeoutMs` would, but `RETRY-28` makes it explicitly opt-in and
+it is `undefined` by default. The caller's own `AbortSignal` is the only other exit.
+
+Implementing a tighter ceiling would be a deviation from a MUST, so the port complies. Recorded
+because "spec-compliant" and "safe by default" diverge here, and the mitigation (set
+`totalTimeoutMs`) is a caller decision that needs documenting when the retry surface is finally
+published in Phase 5c.
+
+**Owner:** Phase 5c, as a documentation obligation on the public retry surface.
+
+**Re-verified 2026-08-31: the Phase 5c documentation obligation was not discharged.** `MAX_PACING_MS` is
+`packages/core/src/retry/pacing.ts:13-14`, commented as the `RETRY-18`/`RECOV-26` ceiling.
+`RetrySettings.totalTimeoutMs`'s TSDoc (`settings.ts:22-27`) documents the opt-in and `RETRY-28`'s reasoning
+but says nothing about the year-long park it mitigates, and neither does `retryStep`. Owner is now unassigned
+— Phase 5c is closed. **The work is a TSDoc paragraph on `totalTimeoutMs` naming the failure mode.**
+
+
+### P5 — `parsePacingHint` reads only the first value of a repeated header — **WATCH**
+
+**Where:** `packages/core/src/retry/pacing.ts`
+
+`Headers.get()` returns the first value. Given `Retry-After: garbage` followed by `Retry-After: 5`,
+the parser tries `garbage`, fails, falls through the remaining header names, and returns `null` — no
+hint, fall back to backoff — rather than trying the second value.
+
+Safe (`RETRY-16`'s fallback is the conservative answer) and arguably correct, since a repeated
+`Retry-After` is malformed to begin with. `RETRY-21`'s precedence is defined across header *names*,
+not across duplicate values of one name, so nothing requires the second value to be tried.
+
+**Owner:** none. Recorded because "first usable value wins" reads, on a fast skim of `RETRY-21`, like
+it should scan duplicates too.
+
+**Re-verified 2026-08-31:** unchanged.
+
+
+### P6 — A fixed delay is deliberately not clamped to `maxDelayMs` — **WATCH**
+
+**Where:** `packages/core/src/retry/backoff.ts`
+
+`computeDelay` returns `fixedDelayMs` before the cap is applied, so `fixedDelayMs: 3_600_000` with
+`maxDelayMs: 8000` waits an hour. This looks like a missed clamp and is not: `RETRY-43` describes the
+mode as *"zeroing the base and cap so only the fixed delay applies"* — the cap is part of the schedule
+this mode replaces, not a bound that outlives it.
+
+Documented in the field's own TSDoc. Listed here so a future reviewer reaches the reasoning before
+"fixing" it.
+
+**Re-verified 2026-08-31:** unchanged. `packages/core/src/retry/backoff.ts:73` still returns
+`settings.fixedDelayMs` before the cap is applied.
+
+
+### P7 — A response that ends the retry loop is handed over live, not closed — **WATCH**
+
+**Where:** `packages/core/src/retry/engine.ts`
+
+`RETRY-32` says *"any response that arrives from an already-in-flight attempt MUST be closed rather
+than leaked."* The engine closes every response it **discards**. A response that survives the gates —
+attempt cap reached, budget spent, status not retryable — is returned **live and unread**, even when
+the caller has already aborted.
+
+That is not a leak: ownership transfers to the caller, which is the only reader that could close it,
+and a `Promise` always resolves to its awaiter, so this port has no "value that can never be
+delivered" case for the reference's orphan rule to bite on. Both halves are asserted.
+
+The narrowing is inseparable from `RETRY-36`'s disposition (`toHttpError` drains the body and drops
+the headers irreversibly, and 4c's pillar signature must return a `Response`), which the phase design
+already ledgers.
+
+**Re-verified 2026-08-31:** unchanged.
+
+
+### P8 — The Phase 5a design doc overstates the `RETRY-32` guarantee — **ACT**
+
+**Where:** `docs/work/mvp/phase5/phase5a/2026-07-26-phase5a-retry-design.md`, "The wait"
+
+> `RETRY-32`: once the caller's signal is aborted the driver launches no further attempts, and any
+> response arriving from an in-flight attempt is closed rather than leaked.
+
+The second clause describes only responses the engine discards — see the item above. The
+implementation checklist carries the corrected wording; the design doc still carries the blanket
+claim, and was left alone because it is a phase design of record, not a working document.
+
+**Owner:** Phase 9 (cross-cutting conformance), which reads these documents as its source.
+
+**Re-verified 2026-08-31:** unchanged. The blanket claim is still at
+`docs/work/mvp/phase5/phase5a/2026-07-26-phase5a-retry-design.md:357`. The design is a dated record and is not
+retro-edited, which is why this item exists instead of an edit; what is owed is a correction *note*, not a
+rewrite. Phase 9 is closed, so the owner is now unassigned.
+
+
+### P9 — Phase 7b still owes `engine.ts` two log events — **CLOSED**
+
+**Where:** `packages/core/src/retry/engine.ts` (head comment)
+
+`RETRY-40`'s "log the failure" clause and the two `SHOULD`-level structured events
+(`retry.attemptFailed`, `retry.exhausted`) are specified in 5a's plan but written by Phase 7b Task 9 —
+5a executes before 7b, and 7b depends on 5a's `FakeTransport`, so the cycle can only be broken in this
+direction. The non-fatal half of `RETRY-40` **is** implemented here.
+
+Already recorded in the roadmap's Deferred Items Log; repeated here so this file is a complete picture
+of what Phase 5a knowingly left undone.
+
+**Owner:** Phase 7b, Task 9.
+
+**Closed 2026-08-31, by Phase 7b.** Both events ship: `http.retry.exhausted` at
+`packages/core/src/retry/engine.ts:323` and `http.retry.attemptFailed` at `:396`, with a third —
+`http.retry.delayOverrideFailed` — that the original finding did not anticipate (`engine.ts:18`). Note the
+names gained an `http.` prefix relative to the `retry.attemptFailed`/`retry.exhausted` spelled in 5a's plan.
+
+
+## Section Q — Phase 3b validation review (2026-07-28)
+
+> **Relocated.** A validation pass over Phase 3b's design and plan **before** either was executed. Relocated verbatim on
+2026-08-31 from the roadmap's `## Open Findings — Phase 3b Validation Review (2026-07-28)` section. Its rows
+are labelled `D1`, `D2` — the review's own numbering, not this register's item IDs.
+
+A validation pass over `specs/2026-07-25-phase3b-body-lifecycle-design.md` and
+`plans/2026-07-25-phase3b-body-lifecycle.md` (`docs/validation-prompts/phase3b-body-lifecycle-validation-prompt.md`)
+returned **BLOCKED** on two runtime defects and a cluster of overclaimed disposition rows. **All findings except
+D1 and D2 below are applied** to both documents. Recorded here rather than in `docs/deferred-items.md` because
+these are review findings against an unexecuted phase, not deferrals of work.
+
+The two blockers, both now fixed, are worth naming since they generalize: (1) `ReadableStream.cancel()` rejects
+with `TypeError` on a locked stream and reading to `{done: true}` does **not** release the reader's lock, so
+`Response.bytes()`, `toHttpError()` and the response-logging wrapper each had a `finally`-scoped close that
+replaced a successful read with a `TypeError` — a `reader.releaseLock()`-before-cancel constraint now sits in the
+plan's Global Constraints, and **every later phase that takes a reader and later closes the stream inherits it**;
+(2) `HTTP-39`/`BODY-10`'s exact-length copy was dispositioned as "reuses Phase 3a's `writeAll`" while the plan's
+own global constraint forbids importing `BufferedSink`, leaving a declared `contentLength` unverified and a short
+stream sending a truncated body silently.
+
+**Cross-phase note for 4b.** 4b's preamble relies on `Response.close()` latching `#closed` before awaiting
+`body.cancel()` so a close rejection propagates exactly once. That still holds: the latch is unchanged and the
+only rejection now swallowed is the `TypeError` a still-locked external reader produces, which `BODY-15` requires
+close to tolerate. Every other close failure propagates as before.
+
+| # | Sev | Finding | Where | Resolution |
+|---|---|---|---|---|
+| D1 | major — **CLOSED (3b execution)** | Task 13 Step 6 specifies a **minor** changeset on the reasoning that `Request.body`'s move from `unknown` to `Body \| undefined` is "not breaking for any real caller, since `unknown` accepted nothing usable before." That premise is false — `unknown` accepted *everything*, which is exactly why Task 7 Step 1 has to rewrite every `.body('x')` call site in the existing suite. `api-design.md:72` classes a narrowed parameter type as breaking, requiring MAJOR. `ResponseBuilder.body` narrows the same way | PLAN Task 13 Step 6; `api-design.md:72` | **Resolved: branch (b), minor.** `@dexpace/core` is `0.0.0`, and semver's own initial-development carve-out (<https://semver.org/#spec-item-4>) puts a 0.x breaking change out as minor; the pointer is recorded in the changeset itself, not only here. Revisit at 1.0, when the carve-out stops applying and Phases 4a/4b/5's identical narrowings become real majors. The alternatives were (a) ship it as **major**, which is what the corpus rule says and what the plan now instructs by default, or (b) if `@dexpace/core` is still pre-1.0 and the repo's release policy treats 0.x breaks as minor, keep minor and record the policy pointer. The plan carries both branches with the false justification deleted; pick one before Task 13 runs. Settle once — Phases 4a/4b/5 narrow Phase-1 placeholder types the same way |
+| D2 | major — **CLOSED (3b execution)** | Three Phase-1/3a symbols the 3b plan now calls could not be verified: `MAX_ARRAY_BYTES` (assumed exported from `io/byte-queue.ts`, backing `AllocationLimitError`'s `limit` argument — used by both logging tees' `BODY-32` cap clamp), `Status.isError` (used by `toHttpError`'s `BODY-31` gate, replacing a `code < 400` that wrongly swept non-standard 6xx into the error path), and `Protocol.token` (used by `TypedResponse`). `packages/` does not exist on the planning branch, so none could be checked | PLAN Task 10, 11 (`MAX_ARRAY_BYTES`), Task 12 (`Status.isError`), Task 9 (`Protocol.token`) | **Verified against the real code.** All three exist and are used: the constant is `MAX_BYTE_ARRAY_LENGTH` in `io/limits.ts` (not `MAX_ARRAY_BYTES` in `io/byte-queue.ts` — the real name was used, no duplicate added), and `Status.isError` and `Protocol.token` are both present as assumed, so `HTTP-11`'s classification is not a Phase-1 gap. Original guidance, kept for the record: Task 11's Interfaces block carries a "Verify before writing" note. If a name differs, use the real one; do **not** add a second constant or a local `isError` helper. If `Status` genuinely has no `isError`, `HTTP-11`'s classification is itself a Phase-1 gap and the gate becomes `code >= 400 && code <= 599` pending that fix |
+
+**Applied without needing a decision** (recorded so the reasoning survives): `BODY-34`'s "one shared cap"
+contradiction resolved in the plan's favour — the shared preview cap covers the two logging tees, and
+`toHttpError`'s 1 MiB cap is separate because `HTTP-52` *fixes* its value and a spec-fixed value cannot be the
+configurable one; `BODY-26`/`BODY-29` built (`LoggedResponseBody` gained a non-draining `error()` and a
+regime-dependent `contentLength`); `BODY-25` ledgered as structurally inapplicable — `ReadableStreamDefaultReader`
+takes no requested count, so "zero bytes for a positive count" has no analog; `BODY-32`'s negative-cap rejection
+added to both tees, which previously accepted a negative cap and silently mirrored nothing; `HTTP-3`'s
+`MultipartBodyBuilder` added (`HTTP-3` names "the multipart body" explicitly and Phase 1 could not satisfy it);
+`HTTP-2` honored by exporting the concrete body classes from the public barrel as **types only**; the `@internal`
+tags removed from the three errors Task 13 promotes, which would have made `api-extractor` either fail or
+silently omit them; `withResponseLogging` decomposed under the 70-line cap and made pull-driven, since its
+`start()`-loop tail stream eagerly materialized the whole remainder of exactly the oversized bodies the cap
+exists to keep off the heap.
+
+**Correction to 4b's F2 below.** That row states "Phases 1/2/3b/4a ship zero" assertions. **3b no longer does** —
+`invariant` pre/postconditions now sit on both tees' caps, `materialize`'s byte accounting, `MultipartBody`'s
+framing length, `StreamBody`'s `contentLength`, `drainOnce`'s cap, and `toHttpError`'s buffer loop. Phases 1, 2
+and 4a still ship zero, so 4b's F2 remains open as a project-level question for Phase 10 — 3b is now a second
+data point alongside 4c that the rule is applicable, not just aspirational.
+
+
+## Section R — Phase 3b execution (2026-08-25, expanded 2026-08-26)
+
+> **Relocated.** What Phase 3b's execution found once the code existed. Relocated verbatim on 2026-08-31 from the roadmap's
+`## Open Findings — Phase 3b Execution` section. Its rows are labelled `E1`–`E7` — the review's own
+numbering, not this register's item IDs.
+
+Findings that surfaced only once Phase 3b's plan was actually executed, across three review passes. Nearly all
+are **checkpoint-owned**, not 3b-owned: the 3b design took the checkpoint
+(`plans/2026-07-25-checkpoint-scaffold-through-phase3a.md`) as a signed-off prerequisite, and it has not run.
+Every box in that document is unchecked and no commit implements it.
+
+### Why nobody noticed: the checkpoint was cherry-picked, not skipped
+
+The more useful framing than "the checkpoint did not run" is that **parts of it did**, which is exactly what made
+the 3b plan's prerequisite claim plausible to whoever wrote it. Measured status of every `§5` item as of
+2026-08-26:
+
+| § | Item | Status |
+|---|---|---|
+| 5.1 | Coverage floor as a *blocking* gate | **Done** — `bunfig.toml` carries `coverage = true`, `coverageThreshold = 0.8` |
+| 5.2 | Flatten the `DomainModelError` tier | **Open** — E2 below |
+| 5.3 | Error leaves carry identifying `readonly` fields | **Partial** — 2 of 10; E3 below |
+| 5.4 | `Symbol.asyncDispose` + floor bump + `lib` entry | **Open** — E1 below |
+| 5.5 | Bounded collections vs `RetentionWindow`/tap | **No action needed** — confirmatory in the checkpoint itself |
+| 5.6 | `AbortSignal.any` composition | **No action needed** — confirmatory |
+| 5.7 | Flat hoisting lets a package resolve an undeclared dependency | **Open** — E4 below |
+| 5.8 | `NFR-14`'s stale "no direct Bun equivalent" reason | **Resolved in Phase 6a (2026-08-27)** — E7 below |
+| 5.9 | `bun test` proves nothing about the Node runtime | **Done 2026-08-26** — E5 below |
+| 5.10 | Per-class `#private` justification comments | **Open** — E6 below |
+| 5.11 | Phase 4 pre-commitment: `Stage` must not be an `enum` | Not yet due (Phase 4) |
+| 5.12 | Tooling conflicts already resolved by the plans | Recorded only |
+
+Partial application is worse here than none at all. `§5.1` is visible in `bunfig.toml` and half of `§5.3` is
+visible in `errors.ts`, so a reader checking whether the checkpoint had landed would have found evidence that it
+had. **Verify a prerequisite against the artifact it was supposed to produce, not against a spot check.**
+
+| # | Sev | Finding | Where | Resolution |
+|---|---|---|---|---|
+| E1 | **blocker — CLOSED in 3b, reopened against checkpoint §5.4** | 3b shipped `[Symbol.asyncDispose]` on `Response` and `LoggedResponseBody` on the strength of the design's claim that "the floor is bumped and `lib` extended before 3b starts". Neither happened: `engines.node` is still `">=18.17"` and `lib` is `["ES2022", "DOM", "DOM.AsyncIterable"]`. Two consequences, both real: below Node 18.18 the computed key evaluates to `undefined` and binds the method to the string `"undefined"`; and the symbol's *type* reaches the package only through a dev-only global, so a consumer compiling against the published `.d.ts` on this repo's own declared `lib` fails with `TS2550: Property 'asyncDispose' does not exist on type 'SymbolConstructor'`. No gate covered it — `verify:dual-consumption` runs `node`, not `tsc` | `packages/core/package.json`; `tsconfig.base.json`; 3b design §"Response Body" | **3b reverted to `close()`-only**, matching the decision Phase 3a shipped and every other resource owner still carries, with both classes now asserting the symbol's *absence* so it cannot be reintroduced ahead of the floor. Re-adding it is checkpoint §5.4's job and must land on all seven owners at once — `Transport`, `ByteQueue`, `BufferedSource`, `BufferedSink`, `RetentionWindow`, `Response`, `LoggedResponseBody`. **Version numbers now verified**, discharging §5.4's own "verify against the actual Node release notes before writing the number" instruction: `Symbol.dispose`/`Symbol.asyncDispose` first shipped in **Node 18.18.0**, backported to **20.4.0** — symbols only, not the `using` syntax. So §5.4's "believed 18.18.0" was right and the bump really is patch-level. **Renumbered 2026-08-26 by E8:** the floor is now `>=20.3`, and on the 20.x line the symbols arrive in 20.4.0, so §5.4's bump reads `>=20.3` → `>=20.4`. **Note for 4b's F1:** that finding assumed the floor had already been "raised at most to `18.18.0` at the 2026-07-25 checkpoint" and that `esnext.disposable` was in `lib`. Neither premise holds — see F1's own amended row |
+| E2 | major — **OPEN, checkpoint §5.2** | 3b's Task 1 flattened `io/`'s four error leaves off `IoError` on the stated basis that checkpoint §5.2 had already flattened Phase 1's `DomainModelError` tier. It had not, so the taxonomy is now *mixed*: `DexpaceError → EndOfStreamError` is two levels while `DexpaceError → DomainModelError → RequiredFieldError` is still three | `packages/core/src/http/errors.ts`; 3b design §"Error Tree" | **Deliberately not fixed in 3b.** Removing `DomainModelError` deletes a class exported from the public barrel that consumers can `instanceof` — a breaking API change belonging to the checkpoint. The residual is strictly smaller than what preceded it (`io/` no longer adds a second independent violation) and is recorded in 3b's ledger and checklist. **Blast radius, measured:** ten leaves extend it — `RequiredFieldError`, `HeaderValidationError`, `MediaTypeParseError`, `ProtocolParseError`, `UrlConstructionError`, `RequestOptionsValidationError`, `EtagParseError`, `HttpRangeValidationError`, `RequestConditionsValidationError`, `RequestBodyNotAllowedError` — all in one file, and `DomainModelError` itself is a runtime value export, so `instanceof` narrowing on it is live public API. §5.2 pre-specifies the replacement (an exported `isDomainModelError` type-guard union, never a re-subclass), and 3b already proved that pattern twice in-tree with `isIoError` and `isBodyError`. **Sequencing:** §5.2's own note — "Phase 4's error families then land as leaves on `DexpaceError` too, which is what keeps the flattening from being undone one phase later". **Ten queued phases introduce new SDK error types** — 4a (`DuplicateContextKeyError`), 4c (five, including `PillarCollisionError`, `CrossStageEditError`, `ReservedStageError`), 5b (`NonReplayableBodyError`, `SchemeDowngradeError`), 5c (`AuthResolutionError`, `PlaintextCredentialError`, `DigestChallengeUnsupportedError`), 6a (`SerdeError`, `SerializationError`, `DeserializationError`), 6b (`SseStreamError`, `SseLineTooLongError`), 6c (`PaginationError`), 8a (`TransportFailureError`), and 5a/8b, which reuse rather than define. Counted from the phase design docs 2026-08-26; 4b and 7a/7b define none. Every one of those that ships before the flatten is another tier decision taken against the wrong parent. Owned by checkpoint §5.2 |
+| E3 | major — **OPEN, checkpoint §5.3** | §5.3 requires every error subclass to carry its identifying inputs as sanitized `readonly` fields, because `JSON.stringify(error)` and structured-log field enumeration bypass `.message` entirely. It was applied to **two** leaves and stopped: `RequiredFieldError` carries `fieldName`, `HeaderValidationError` carries `kind` + `escapedName`. The other **eight** carry nothing — their identifying data exists only interpolated into the message string, which is precisely the shape the rule forbids. Not raised by any of Phase 3b's three review passes either; found only when the checkpoint was audited item by item | `packages/core/src/http/errors.ts` | **Open.** Same file and same ten classes as E2, so doing §5.2 and §5.3 in one pass is strictly cheaper than two. §5.3 also specifies the sanitization shape per leaf: the offending *name* control-character-escaped, the offending *value* never stored raw (a `valueLength`, a masked minimum fragment, or no field at all), and for `MediaTypeParseError` the failing token/offset rather than the full input. It further asks for a file comment on `errors.ts` recording *why* fields are sanitized at construction — that comment is what stops a later contributor "restoring" the raw value |
+| E4 | major — **OPEN, checkpoint §5.7** | No isolated linker is configured. `bunfig.toml` carries only a `[test]` block and there is no `.npmrc` at all, so the install is flat-hoisted by default. Under flat hoisting `@dexpace/core` can import a package it never declared and still pass every gate — including `verify:seam-1`, which reads the `dependencies` map rather than what the code actually resolves. That is the one phantom-dependency failure mode `SEAM-1`'s gate structurally cannot see | `bunfig.toml` (no linker key); no `.npmrc`; `scripts/verify-seam-1.mjs` | **Open.** §5.7 requires confirming the exact linker option against the pinned Bun version before writing it. Low effort, and it strengthens a `SEAM-1` guarantee the project treats as foundational |
+| E5 | **blocker — CLOSED 2026-08-26, checkpoint §5.9** | Was: no `test:node` script existed, yet the 3b plan's Task 13 Step 3 gate sequence called `bun run test:node`, so that plan could not be executed as written; `node-floor-conformance` pinned `18.17.0` alone, leaving current LTS unexercised against the "in addition to current LTS" half of the rule; and all 516 unit tests ran only on Bun. Audited 2026-08-26: **319 of those 516 tests, across 21 of 43 files, exercise a runtime-divergent surface** — Web Streams, `AbortSignal`, async iteration, or `ByteQueue`'s `Uint8Array` handling — against **two** assertions of Node coverage, neither of which touched `io/`. The `ci` job additionally pinned no Node at all, so `verify:dual-consumption`/`verify:consumer-types`/`verify:runtime-floor` ran on an undeclared runner default | `.github/workflows/ci.yml`; root `package.json` scripts; 3b plan Task 13 Step 3 | **Closed by implementing §5.9's own prescription, not a substitute.** `bun test` is unchanged as the unit runner and is now scoped to `packages/` so the two layers cannot blur. Added `test/node-conformance/` — 30 `node --test` cases over the **built** artifact, seeded with `composeSignal` plus Phase 3a's byte-stream surface and Phase 3b's public body surface — wired as `test:node`. `scripts/verify-node-floor.mjs` is **retired**, its two `AbortSignal.any` assertions folded in as the suite's first cases, per §5.9:375's "rather than keeping two parallel Node entry points". The CI job is renamed `node-conformance` and is now a `fail-fast: false` matrix over `['18.17.0', 'lts/*']` (floor pin moved to `20.3.0` by E8); `lts/*` resolves at run time so the LTS half cannot go stale. The membership rule §5.9:378 states — a phase touching a runtime-divergent surface adds a case here — is recorded in `test/node-conformance/README.md` and `CLAUDE.md`. **Note:** the CI job name changed, so any branch protection requiring `node-floor-conformance` needs updating to `node-conformance` |
+| E6 | minor — **OPEN, checkpoint §5.10** | §5.10 ratifies the `#private` *choice* for wire-model classes but calls the missing per-declaration justification "a real, uncorrected gap" — the corpus wants the reason where a reader meets the field, not in a plan document they will never open. **None** of the eleven `packages/core/src/http/` model files carries one. Measured 2026-08-26 by grepping for a comment naming runtime privacy or citing `HTTP-1`/`SEAM-29` near a `#private` declaration: four files matched and all four were false positives — unrelated `HTTP-10`/`HTTP-11`/`HTTP-13`/`HTTP-18` requirement citations in ordinary TSDoc | `packages/core/src/http/*.ts` | **Open.** One short comment per declaring class (not per field), naming the runtime-privacy requirement and citing `HTTP-1`/`SEAM-29`. §5.10 also asks that the `http-domain-model.md` conflict entry then be resolved as a carve-out **scoped to wire-model classes only**, so it cannot read as blanket permission for `#private` elsewhere |
+| E7 | minor — **RESOLVED, Phase 6a (2026-08-27)** | The scaffold checklist deferred `NFR-14` on the reasoning that pnpm's `catalog:` protocol "has no direct Bun equivalent". Bun has since added workspace catalogs, and Phase 6a adopted them: the root `workspaces.catalog` block now single-sources the four tool versions, referenced as `"catalog:"` from the root's own `devDependencies` and from both member packages. The stale reason is therefore moot rather than corrected in place — the decision it would have misled a later reader into re-litigating has been made. Confirmed against the pinned Bun version (`.bun-version` 1.3.14; catalogs landed in 1.2.0), as §5.8 required. | `plans/2026-07-23-scaffold-milestone-checklist.md:45`; two `docs/knowledge` lines | **Closed.** |
+| E8 | **blocker — CLOSED 2026-08-26** | `MultipartBody` generates its boundary from `crypto.getRandomValues`, a bare global reference, while `engines.node` declared `">=18.17"`. Node exposes `globalThis.crypto` unflagged only from **19.0.0**, and never to an ES module on any 18.x release — verified on 18.17.0 and 18.20.8, where `typeof globalThis.crypto` is `undefined` in `.mjs` and an object in CJS, so a CommonJS probe would have reported the floor as satisfied. Every `multipartBody(...)` call therefore threw `ReferenceError: crypto is not defined` on the declared floor. Uncaught until E5's conformance suite ran the built artifact on the pinned floor for the first time; `bun test` cannot see it, because Bun supplies the global. The same run exposed a second, unrelated defect: `seams.test.mjs` awaited an `AbortSignal.timeout()` abort with nothing else scheduled, and that timer is unref'd on every Node version, so on 18.17.0's test runner the loop drained first and the runner cancelled the rest of the file (`Promise resolution is still pending but the event loop has already resolved`). Newer runners hold the loop open through handles of their own, which is why it passed on `lts/*` | `packages/core/src/body/multipart-body.ts:36`; `packages/core/package.json`; `tsconfig.base.json`; `.github/workflows/ci.yml`; `sdk-design-nodejs/02:10` | **Floor raised to `>=20.3`**, the option taken in preference to a `node:crypto` fallback (which would put a Node-only specifier in a package documented as running on browsers, Deno, Bun and Workers, and cannot be reached synchronously from a constructor) or a non-crypto RNG (which silently downgrades the unguessable-boundary mitigation that `HTTP-51` leans on against multipart injection). **20.3 and not 20.0:** `AbortSignal.any()` — `composeSignal`'s own floor-defining call, backported to 18.17.0 — reached the 20.x line only in 20.3.0, confirmed by running the suite on a pinned 20.0.0. `lib`/`target` move to `ES2023` with it, keeping `verify:runtime-floor`'s pairing table honest; its `es2023` row is amended to `>=20.3` with the built-ins, not the syntax, named as the reason. The CI matrix floor pin moves `18.17.0` → `20.3.0`, and `seams.test.mjs` gains a case asserting `globalThis.crypto.getRandomValues` is a function *in ESM*, so the floor cannot regress silently. Node 18 went EOL in April 2025, so no supported runtime is dropped. **Note for E1:** this discharges E1's floor half in the sense that only `Symbol.dispose`/`Symbol.asyncDispose` now stand between the declared floor and §5.4 — but not the number: the symbols reached the 20.x line in **20.4.0**, so §5.4's bump is now `>=20.3` → `>=20.4`, still patch-level, and still required before any owner declares the method |
+
+### Suggested order
+
+**Before Phase 4 starts:**
+
+1. **E2 + E3 together**, in one pass over `packages/core/src/http/errors.ts`. Same ten classes, same file, and
+   E2's sequencing argument means every phase that ships first adds leaves to a tier that is about to be removed.
+2. **E1** (§5.4's three parts, which do not work separately). Cheaper now than when the checkpoint was written:
+   the new `verify:consumer-types` gate mechanically proves a `lib` entry that is declared but whose floor was
+   not raised, and proves the reverse too.
+3. **F1 is closed** — resolved to branch (b) and implemented 2026-08-26 as `packages/core/src/suppress.ts`.
+   Read it before designing against `SuppressedError` anywhere. See "F1 resolution — the verified version facts" under
+   "Open Findings — Phase 4b Validation Review" further down this document. That amendment changes 4b's design
+   input, not just its wording, and F1 already notes the resolution has to land in 5a, 6b and 6c at the same
+   time.
+
+**Not blocking Phase 4, ordered by how fast they decay:** E4, E6, E7. E5 is closed — it was the one that grew
+with every phase, which is why it went first.
+
+### Phase-3-owned residuals
+
+Distinct from the checkpoint items above: these belong to Phase 3 itself and are recorded in its ledger and
+checklist rather than being anyone else's to close.
+
+| Item | Level | Disposition |
+|---|---|---|
+| Multipart boundary **non-appearance** in part content | `HTTP-51`, ⚠️ partial | RFC 2046 puts two duties on the sender; only the `bchars` grammar half is checkable here, because a `StreamBody` part's bytes do not exist until the write and a partial scan would read as a complete guarantee. Mitigated by generating a 32-character Web Crypto boundary by default and documenting the obligation on both caller-supplied entry points. Revisit only if demand for caller-chosen boundaries appears |
+| `StreamBody` always single-use, no mark/reset | `BODY-9` (SHOULD), bounded | Node's `ReadableStream` has no generic mark/reset. Closes only if the platform gains one |
+| `BODY-34`'s shared preview-cap **value** | ⏳ Phase 7 | Both tees take the parameter today; Phase 7 owns the `Logger`/config surface that threads one value through them |
+| `BODY-4`/`BODY-5` replayability **consultation** | ⏳ Phase 5 | Phase 3 guarantees the property is correct; retry/redirect/auth consult it |
+| `FileBody` (`HTTP-40`/`BODY-11`/`12`/`13`/`36`) | ⏳ Phase 8a | Already resolved in 8a's design as `@dexpace/body-file` plus a structural `Body.kind === 'file'` contract |
+| Both logging tees unwired to any `Logger` | ⏳ Phase 7 | Mechanism ships now because the IDs are `§6`; nothing constructs one yet. Matches Phase 2 shipping `Serde<T>` with no implementation |
+
+Also worth carrying forward, since three separate defects in 3b traced to the same root: **a `Body`/sink decorator
+must forward BOTH teardown paths.** A `WritableStream` adapter that declares `write` and `close` but no `abort`
+silently swallows the delegate's abort — the default abort algorithm is a no-op — leaving the real sink open and
+locked and letting a truncated body be committed downstream as a complete one. Likewise `pipeTo`'s default
+`preventCancel: false` cancels the *source* when the destination fails, which takes cancellation ownership away
+from the caller (`BODY-8`). Phase 4c's stage pipeline and Phase 8a's transports both wrap sinks; both inherit this.
+
+
+## Section S — Phase 4b validation review (2026-07-28)
+
+> **Relocated.** A validation pass over Phase 4b's design and plan before execution. Relocated verbatim on 2026-08-31 from
+the roadmap's `## Open Findings — Phase 4b Validation Review (2026-07-28)` section.
+
+**Its rows are `F1`–`F10`, the review's own numbering.** Section F above numbers *its* items `F1`–`F9`, and
+Section T below numbers a different review's rows `F1`–`F9` again. Three `F` namespaces, no overlap in
+meaning. A citation must name the section — "Section S's F2", never a bare "F2". Renumbering was rejected:
+the roadmap's own status notes cite "4b's F2/F7" by these numbers, and a dated record that changes its row
+IDs stops matching the documents that quote it.
+
+A validation pass over `specs/2026-07-25-phase4b-recovery-chain-design.md` and
+`plans/2026-07-25-phase4b-recovery-chain.md` (`docs/validation-prompts/phase4b-recovery-chain-validation-prompt.md`)
+returned **BLOCKED**. The `RECOV-1`–`RECOV-16` mapping itself is sound and every cross-phase reference 4b consumes
+checks out against the earlier phase plans — `toHttpError(): Promise<HttpStatusError | null>` (3b), `RequestOptions.EMPTY`
+(Phase 1), `Transport.send(request, options?, signal?)` + `CancellationError` (Phase 2), and `Response.close()` latching
+`#closed` *before* awaiting `body.cancel()` so it propagates a close rejection exactly once (3b). Nothing below is a
+defect in that mapping. Recorded here rather than in `docs/deferred-items.md` because these are review findings against
+an unexecuted phase, not deferrals of work.
+
+**Status (2026-08-26): F1 and F2 are closed and Phase 4b is implemented.** F1 landed as branch (b) — the
+runtime-guarded `suppress()` helper in `packages/core/src/suppress.ts`, shipped with both branches of the guard
+forced in `bun test` and re-forced from real Node in `test/node-conformance/recovery-chain.test.mjs`. F2 landed
+as a Deviation Ledger row in 4b's design, deferring the density rule to Phase 10's project-wide pass rather than
+making 4b the one module that differs. Phases 5a, 6a, 6b and 6c now have a helper to call and no longer carry an
+open decision — only the mechanical substitution of `suppress(...)` for `new SuppressedError(...)` when each
+executes.
+
+**Status (2026-07-28): F3–F10 are applied** to `specs/2026-07-25-phase4b-recovery-chain-design.md` and
+`plans/2026-07-25-phase4b-recovery-chain.md`. **F1 and F2 remain open — they need decisions**, and both documents now
+carry a blocking notice pointing here. The rows below keep the full finding text so the reasoning survives; the
+Resolution column records what was done.
+
+**F1 was cross-phase and blocked four phases, not one.** Phases 5a, 6b and 6c all reach for native
+`SuppressedError` on the same false premise. The resolution landed as a shared helper rather than as four
+parallel edits, so the cross-phase obligation is discharged by 4b: each of the other three substitutes
+`suppress(...)` for `new SuppressedError(...)` when it executes, with no decision left to make.
+
+| # | Sev | Finding | Where | Resolution |
+|---|---|---|---|---|
+| F1 | **blocker** — ✅ closed | `SuppressedError` does not exist on the declared runtime floor. `engines.node` is `">=18.17"`, raised at most to `18.18.0` at the 2026-07-25 checkpoint (which exposes `Symbol.dispose`/`Symbol.asyncDispose` only — Node backported those two symbols; `SuppressedError` is a V8 global from the full Explicit Resource Management proposal). `esnext.disposable` in `lib` supplies its *type*, so `new SuppressedError(...)` type-checks and then throws `ReferenceError` at call time — the exact `NFR-10` trap `tooling-and-quality-gates.md:60-61` describes. `bun test` passes locally; the `node-floor-conformance` job pinned to `18.17.0`, `verify:node-floor` and `test:node` all fail | PLAN:19-20 (Tech Stack, claims it is "already available since Phase 3b's checkpoint lib bump" — false), PLAN:804, SPEC:124; also 5a plan:36, 6b design:163, 6c design:192 | **Resolved 2026-08-26: take branch (b)** — the runtime-guarded `suppress()` helper. The "confirm the first supporting Node release" condition this row left open is now discharged, and it settles the choice rather than merely informing it; two of this row's own premises also turn out to be false. See "F1 resolution — the verified version facts" below the table. **Partially applied 2026-07-28:** the false Tech Stack claim is deleted and replaced with a blocking notice at the top of the plan stating the real constraint; **Applied 2026-08-26:** `packages/core/src/suppress.ts` ships the guarded helper, `response-chain.ts` calls it, and assertions are written against its shape rather than `instanceof SuppressedError` — the `instanceof` form would silently assert nothing on the floor runtime |
+| F2 | major — ✅ closed | Zero assertions across the whole `recovery/` module — a dozen functions, no `invariant()` call, against `assertions.md:6-7`'s 2-per-function module average (and `styleguide-overview.md:22-23` Rule 8). Neither document acknowledges the rule or argues an exemption. Concretely: no `apply()` checks that a step returned a value at all, so a step returning `undefined` poisons the fold silently. Project-wide inconsistency, not 4b's alone — Phases 1/2/3b/4a ship zero, 4c ships fifteen | PLAN:463-479, 818-859, 964-966, 1352-1370 | **Resolved 2026-08-26: Deviation Ledger row.** Recorded in 4b's design with the concrete cost named (a step returning `undefined` poisons the fold silently). Assertions added to 4b alone would deepen the 0-vs-15 split with 4c rather than close it, so the density rule is settled once at Phase 10 and applied project-wide. **Re-deferred 2026-08-30 (Phase 10): NOT SCHEDULED.** Phase 10's scope is deviation reconciliation; a project-wide assertion sweep is neither a deviation nor a reconciliation, and Phase 10 is the last row of the phase table, so there is no later phase to hand it to and none is invented here. The picture has changed since 4b: `invariant()` is now called from thirteen modules across `packages/core/src/` and `packages/body-file/src/` (`body`, `auth`, `observability`, `io`, `retry`, `pagination`, `config`, `sse`, `redirect`, `pipeline`, `serde`, `context`, `testing`), so the 0-vs-15 split is no longer the shape of the problem — `recovery/` is now the outlier, still with zero (`packages/core/src/recovery/` imports only `assertNever`, `outcome.ts:3`). **Trigger:** the next defect traced to an unasserted precondition, or a naming/assertion convention sweep commissioned as its own phase — whichever comes first. Logged in `docs/deferred-items.md` so it is tracked rather than silent |
+| F3 | major — ✅ applied | SPEC:270 still says "the only new failure surface is `wrapCancellation()`'s `invariant()` crash" — stale text from a superseded draft. SPEC:194-204, SPEC:279 and PLAN:63-74 all state the opposite. An agent executing from the File Layout section would restore the `invariant()`, and because the helper runs inside `dispatchWithRecovery`'s own `catch`, that throw bypasses the response and recovery chains — the one failure mode `RECOV-2` exists to prevent | SPEC:270-271 | Replace with `assertNever`'s `InvariantViolation` crash, matching the already-correct PLAN:89-90 |
+| F4 | minor — ✅ applied | Spec never designs the `assertNever` addition Task 1 builds. PLAN modifies `packages/core/src/invariant.ts` (new exported symbol, two tests, its own commit); SPEC's File Layout lists only `recovery/` | SPEC:258-268 vs PLAN:102-103, 124-197 | Add the `invariant.ts` line to the spec's File Layout with a one-line note that `fold()` is the codebase's first discriminated-union `switch` |
+| F5 | minor — ✅ applied | `RECOV-14`'s second normative sentence (steps safe for concurrent invocation; per-request state never on the step instance) is claimed but neither designed nor tested — both documents cite `RECOV-14` for the defensive copy only. The design does satisfy it (all per-call state is local), but nothing records or guards that | SPEC:141-144, PLAN:49-51 | One sentence in the design + one plan test interleaving two `apply()` calls on one chain |
+| F6 | minor — ✅ applied | `RECOV-32`/`RECOV-33` read as silent drops. 4b's deferral sentence covers "backoff, budget, pacing headers → Phase 5"; neither an idempotency-key header injector nor `User-Agent` composition is any of those. Both *are* built — `RECOV-32` in Phase 5a Task 11, `RECOV-33` in Phase 7a Task 9 — but 4b names neither, and 7a is not "Phase 5" | SPEC:18-20 | Extend the Scope sentence to name `RECOV-17`–`RECOV-31`/`RECOV-34` → 5a, `RECOV-32` → 5a, `RECOV-33` → 7a |
+| F7 | minor — ✅ applied | `#private` fields with no justifying comment, against `data-modeling.md:20-23` (`private` is the default; `#private` needs a stated runtime-privacy requirement). Neither chain class needs it — unlike 3b's `Response`, whose `#closed` genuinely must survive `Object.freeze(this)`. Inherited pattern: 4a's `ContextStore` does the same | SPEC:64, 78-79; PLAN:464, 819-820, 833, 847 | Ledger row recording `#private` as the package-wide field style with no runtime-privacy claim; project-wide reconciliation is Phase 10's. **Re-deferred 2026-08-30 (Phase 10): NOT SCHEDULED, and mostly moot.** The finding's actual ask was a *stated* runtime-privacy requirement, and the project has since stated one: `CLAUDE.md:172-173` makes "`#private` fields only. Not TS `private`." a mandated construction rule and cites styleguide 6.7's carve-out for libraries whose internals must stay unreachable reflectively. That is the justification F7 asked for, adopted project-wide rather than argued per class — `packages/core/src/http/status.ts:22-23` and `packages/core/src/recovery/request-chain.ts:26` are the same shape. What is left is cosmetic (no per-class comment) and has no owner: Phase 10 is the last phase, and a convention already written into `CLAUDE.md` does not need a sweep to enforce it. **Trigger:** a lint rule that mechanizes the convention, or a styleguide revision that withdraws the 6.7 carve-out. Logged in `docs/deferred-items.md` |
+| F8 | minor — ✅ applied | Plan's `ResponseRecoveryChain` property test drops half of what the spec specifies. SPEC promises the property also proves the response-step phase never runs on a `Failure` input (`RECOV-4`); the plan's generator emits recovery steps only and never seeds a `Failure`, asserting only that `apply()` settles | SPEC:293-295 vs PLAN:754-773 | **Applied 2026-07-28 — generator extended**, not spec narrowed: the property now generates response *and* recovery steps over a seed that is arbitrarily `Success` or `Failure`, and asserts `responseStepRuns === 0` on every `Failure` seed. Task 3's expected test count moves 12 → 13 |
+| F9 | minor — ✅ applied | `fold(outcome, onSuccess, onFailure)` takes three positional parameters, tripping `function-design.md:22-23` ("options object at 3 or more"), which is one stricter than the lint gate (`max-params: ['error', 3]` errors at four). Passes CI while violating the corpus. Phase 2's shipped `Transport.send(request, options?, signal?)` is the same shape | SPEC:36, PLAN:320 | Ledger row recording it as deliberate (matching `Transport.send`), or `fold(outcome, {onSuccess, onFailure})`. See the corpus conflict below |
+| F10 | minor — ✅ applied | `statusMappingStep` is a module-level `const` arrow, against `function-design.md:18-21` ("top-level named `function` declarations… arrows are reserved for inline callbacks"). `func-style`'s `allowArrowFunctions: true` will not catch it, and named declarations survive in stack traces — which matters for a function whose whole job is to `throw` | SPEC:227, PLAN:1081 | `export async function statusMappingStep(...)` plus `statusMappingStep satisfies ResponseStep` to keep the conformance check |
+
+#### Section S, row F1 — resolution: the verified version facts
+
+Two of F1's premises are false, and the second changes which branch is affordable.
+
+**1. The floor was never raised.** F1 assumed `engines.node` had been "raised at most to `18.18.0` at the
+2026-07-25 checkpoint" and that `esnext.disposable` was in `lib`. The checkpoint has not run at all — see
+"Open Findings — Phase 3b Execution", finding E1. `engines.node` is still `">=18.17"` and `lib` is
+`["ES2022", "DOM", "DOM.AsyncIterable"]`.
+
+**2. `SuppressedError` needs a far higher floor than `Symbol.asyncDispose`.** These are not the same bump, and
+F1 treats them as comparable. Node backported the `Symbol.dispose`/`Symbol.asyncDispose` *symbols alone* in
+**18.18.0** and **20.4.0**. `SuppressedError` belongs to the full Explicit Resource Management proposal, which
+shipped in **V8 13.8 / Chromium 134** and reached Node only in **24.0.0**. So F1's branch (a) — "raise
+`engines.node` past the first release shipping Explicit Resource Management" — is not a patch bump from 18.18.
+It means `>=24.0.0`, **dropping Node 18, 20 and 22 outright**, which is disproportionate to the need and is
+exactly the kind of unsanctioned floor move the checkpoint at plan:57 forbids.
+
+Branch **(b)** therefore wins on cost rather than as a compromise: a runtime-guarded
+`suppress(primary, secondary)` helper in `packages/core/src/`, using native `SuppressedError` when
+`globalThis.SuppressedError` exists and attaching a `suppressed` property otherwise.
+
+**A third point that must not be lost when E1 lands.** `esnext.disposable` in `lib` supplies
+`Symbol.asyncDispose`'s *type*; it does **not** supply `SuppressedError`'s *runtime*. The
+type-checks-then-throws-`ReferenceError` trap F1 describes therefore survives E1's floor bump intact. Adding the
+`lib` entry is not a fix for F1 and must not be read as one — including by Phases 5a, 6b and 6c, which reach for
+native `SuppressedError` on the same false premise and which F1 already notes must be resolved together.
+
+**Corpus conflict surfaced, not a finding.** `function-design.md:22-23` requires an options object at 3+ parameters
+while `function-design.md:40-41` sets `max-params: ['error', 3]`, which errors only at four — the prose is one
+parameter stricter than its own stated enforcement. F9 is filed against the prose; if the lint threshold is the
+authority, F9 dissolves. Worth settling in the corpus rather than per-phase.
+
+A second conflict the 4b documents met and resolved correctly, recorded so a later reader does not re-litigate it:
+`resource-management.md:4-5,72` mandates `using`/`await using` and documents that native disposal builds a
+`SuppressedError` with the *disposal* failure primary, while `RECOV-12` requires the opposite priority. 4b picks
+`RECOV-12` and argues it at SPEC:107-113 / PLAN:55-59. Correct call, already justified in-document.
+
+
+## Section T — Phase 4c validation review (2026-07-29)
+
+> **Relocated.** A validation pass over Phase 4c's design and plan before execution. Relocated verbatim on 2026-08-31 from
+the roadmap's `## Open Findings — Phase 4c Validation Review (2026-07-29)` section. **Its rows are `F1`–`F9`,
+the review's own numbering** — see the namespace note on Section S.
+
+A validation pass over `specs/2026-07-25-phase4c-stage-pipeline-design.md` and
+`plans/2026-07-25-phase4c-stage-pipeline.md`
+(`docs/validation-prompts/phase4c-stage-pipeline-validation-prompt.md`) returned **NEEDS WORK — no blockers.**
+The `PIPE-1`–`PIPE-40` mapping is sound and every cross-phase reference 4c consumes checks out against the earlier
+phase plans: `Transport.send(request, options?, signal?)` + `close()` (Phase 2), `DexpaceError` as the taxonomy
+root under `http/errors.ts` (Phase 2's retrofit), `RequestOptions.EMPTY` (Phase 1), `Status.of`/`Protocol.HTTP_1_1`
+(Phase 1), and 4a's `createRequestContext(request, init?)`, `promoteToRequest`/`promoteToExchange`,
+`ContextStore.install/get/close/clear/size` with the `kind`/`key`/`request`/`instrumentation`/`operationName`
+context shape. Nothing below is a defect in that mapping.
+
+**Status: F1–F8 are applied** to both 4c documents. **F9 remains open — it needs a decision.**
+
+| # | Sev | Finding | Where | Resolution |
+|---|---|---|---|---|
+| F9 | major — **OPEN, needs a decision** | `Cursor` accepts the caller's `AbortSignal`, threads it to the terminal transport, and never checks it between steps. `concurrency-and-async.md:46` requires `signal.throwIfAborted()` "at the top of each loop iteration or before each expensive step"; the step walk (and, worse, a pillar step's fork-driven re-drives) is exactly that. An aborted call keeps walking steps and keeps re-driving until the transport hop finally rejects | PLAN `cursor.ts` `#dispatch`; SPEC "Cursor and fork" | **Undecided**, because the fix is not one line: a raw `signal.throwIfAborted()` surfaces a `DOMException` the SDK taxonomy does not own, against Phase 2's `CancellationError` and `XCUT-1`'s "cancellation is terminal, non-retryable, flag preserved" — and `RECOV-11`/4b's `wrapCancellation` already has a shape for this. Either (a) check in `#dispatch` and map to `CancellationError`, or (b) leave the cursor signal-blind and let 5a's `ctx.signal` + `RETRY-32` carry cancellation, recording (b) as a Deviation Ledger row. Settle before 5a Task 1 lands, since 5a is what makes the signal reachable from a step |
+| F1 | major — ✅ applied | `PIPE-17`'s "options MUST be readable by any step" was claimed satisfied while `StepContext` exposes only `next`/`fork`/`context`. A MUST silently unmet is a blocker; it is a legitimate deferral only if the document names the phase that takes it — neither did. (The work itself is already scheduled: 5a Task 1, per the row in `docs/deferred-items.md`) | SPEC "Steps", PLAN Self-Review `PIPE-17` row | Both documents now record the partial deferral by name — `StepContext.options`/`.signal` land in **Phase 5a Task 1**; the plan's Global Constraints forbid adding them early, since their shape belongs to their first reader |
+| F2 | major — ✅ applied | Spec listed `replace` among the operations that raise `PillarCollisionError` on an occupied pillar; the plan's `replace()` deliberately runs no pillar check. `PIPE-5` exempts replace by name ("it swaps a single occupant within its own stage 1:1") and the collision error points the caller *at* replace — an agent following the spec would have made replacing a pillar step impossible, since the incoming type is distinct by definition | SPEC:285 vs PLAN `replace()` | `replace` removed from the collision bullet, `prependAll` added to it, and the exemption spelled out with `PIPE-5`'s own wording |
+| F3 | major — ✅ applied | `afterEach(() => contextStore.clear())` in `runtime.test.ts` and `builder.test.ts`. 4a's plan forbids this by name — it wipes entries a sibling test file installed in the same `bun test` process (`testing.md:50,52`), and 4a's own store tests avoid the singleton for exactly this reason. Not needed either: `Runtime.send()` evicts its own entry in a `finally` on both paths | PLAN runtime.test.ts, builder.test.ts | Both hooks deleted (and the now-unused `afterEach`/`contextStore` imports), replaced by a comment recording why. The one surviving `contextStore.size` read is a before/after **delta** inside a single test, which the 2026-07-26 review already sanctioned |
+| F4 | major — ✅ applied | `NFR-13`'s SPDX header was absent from all eleven code listings and from Global Constraints, against "written into Phase 1's plan… line 1 of every new file, all phases onward" (Deferred Items Log) and 4a's precedent | PLAN, every code block | Global Constraints bullet added, `// SPDX-License-Identifier: MIT` prepended to every listing, and Task 6 gains Step 3b's grep — 4a's gate, copied. **Project-wide drift, not 4c's alone:** the 4b, 5a, 5b, 5c, 6b and 6c plans carry no SPDX header either; Phase 9's `NFR-13` sweep is where that gets closed |
+| F5 | major — ✅ applied | The design's "**Property tests:**" heading and the Phase 4 checklist's "Property tests where invariants exist ✅ … 4c (edit-order independence, batch ordering)" row both claimed properties the plan never shipped — `builder.test.ts` had no `fast-check` import and two hand-picked examples. `testing.md:29` puts an invariant-bearing assembler like `build()` squarely in property-test territory | SPEC "Testing" vs PLAN builder.test.ts | Three real `fc.assert` properties added (edit-sequence-equals-from-scratch for `PIPE-22`; batch order preserved / reversed for `PIPE-38`), generated over the non-pillar stages so cases exercise ordering rather than `PIPE-5`'s collision. Task 5's expected count 19 → 22; Tech Stack names `fast-check`. The spec's "arbitrary sequence" now says `append`/`prepend`, matching what the generator emits — the anchored edits need a generated anchor that exists, which makes the model larger than the property it proves, so they stay example-tested |
+| F6 | minor — ✅ applied | `PillarCollisionError` and `AnchorNotFoundError` carried their symbols as fields but never rendered them into the message, while `PIPE-5` asks the error to "name both step types", `PIPE-21` to identify "the missing type", both 4c documents claimed exactly that, and `error-handling.md:40` requires identifying inputs in the message — a bare `symbol` field is invisible in a stack trace or log line | PLAN errors.ts | Both messages interpolate `String(type)` (`Symbol(retry)`), matching 4a's `DuplicateContextKeyError`; the fields stay for `error-handling.md:44`, and `errors.test.ts` now asserts the message names them |
+| F7 | minor — ✅ applied | `StepContext.fork?: () => Next` spelled bare, against the plan's own `exactOptionalPropertyTypes` constraint ("optional properties are spelled `?: T \| undefined`, never bare `?: T`") — the same shape 5a Task 1's added fields will use | SPEC:135, PLAN step.ts | `fork?: (() => Next) \| undefined` in both documents |
+| F8 | minor — ✅ applied | Spec's `PipelineBuilder` listing tagged `insertBefore` with `PIPE-19` and `replace` with "PIPE-18/19"; `PIPE-18` covers both inserts and `PIPE-19` covers replace. Also `#exchangeSource` in prose for what is a module-level exported function, not a private field | SPEC:274-275, SPEC:386 | IDs corrected; the prose names `exchangeSource` and says it is the module-level helper |
+
+**Not findings, recorded so they are not re-raised.** Assertion density (`assertions.md:6-7`) is already open
+project-wide as 4b's F2 — 4c is the phase that *satisfies* it, not one that violates it. `STAGE_ORDER` and
+`PILLAR_STAGES` in `CONSTANT_CASE` sit against `naming-conventions.md:14`, whose worked example is literally a
+module-level `new Set(...)` staying `lowerCamelCase` because its contents can mutate; a `ReadonlySet` type does
+not make the underlying `Set` deeply immutable and `Object.freeze` cannot fix a `Set`. Left alone because the
+casing question is project-wide (Phase 1's `Protocol`/`Status` statics, 4b's constants) and renaming one phase's
+two constants would fork the convention rather than settle it — Phase 10's reconciliation owns it.
+
+**Re-deferred 2026-08-30 (Phase 10): NOT SCHEDULED.** Phase 10 does not own it and did not settle it. The
+`CONSTANT_CASE`-vs-`lowerCamelCase` question for module-level immutable collections is a naming-convention
+call, not a deviation from the reference contract, so it is outside a reconciliation phase's scope; Phase 10 is
+also the last row of the phase table, so there is no later phase to hand it to and none is invented here. The
+state is unchanged and still consistent within itself — `STAGE_ORDER` and `PILLAR_STAGES` remain `CONSTANT_CASE`
+and remain the pipeline's only such pair (`packages/core/src/pipeline/builder.ts:12`, `:179`, `:248`, `:269`).
+**Trigger:** the next module-level immutable collection added outside `pipeline/`, which would make the fork
+visible in a third place and force the choice — or a naming-convention sweep commissioned as its own phase.
+Logged in `docs/deferred-items.md` so it is tracked rather than silent.
+
+
+## Section U — Documentation restructure (2026-08-31)
+
+Found while giving `docs/` a stated structure: three frozen trees, a `work/` tree of process records, an
+as-built `sdk-documentation/` tree, and three registers at the root. Everything below is a consequence of
+that pass, not of a phase.
+
+### U1 — Five citations point at paths the restructure moved — **DECIDE**
+
+The move of `docs/superpowers/{specs,plans}/` to `docs/work/mvp/phaseN/` repointed 143 path citations. Five
+were left. Four are in trees the restructure treats as read-only:
+
+| File | Cites |
+|---|---|
+| `docs/knowledge/notes/pagination.md:11` | `docs/superpowers/specs/2026-07-28-phase6c-pagination-design.md` |
+| `docs/knowledge/notes/tooling-and-quality-gates.md:9` | `docs/superpowers/plans/2026-07-23-scaffold-milestone-checklist.md:54` |
+| `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:8` | `docs/superpowers/specs/2026-07-28-phase10-deviation-reconciliation-design.md` |
+| `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:155` | `docs/superpowers/specs/2026-07-28-phase9-cross-cutting-conformance-design.md` |
+
+A fifth sits in `.changeset/2026-08-25-body-lifecycle.md:7`, which cites
+`docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`. **`.changeset/` is frozen release
+history** — the rule, stated here once: a changeset records what a release said when it was written and is
+never retro-edited. `probe.mjs`'s citation check skips the directory for that reason; `guard.mjs`'s `FROZEN`
+list does not include it, because the guard governs what a *tool* may write and nothing writes there, while
+the register rule governs what a *person* may edit. Two mechanisms, two different questions, and the answer
+to both is "leave it".
+
+No gate catches these. `verify:knowledge-structure` applies its source-root check to `harvested/` entries
+only, and notes are exempt by design; nothing checks a `<sub>` path for existence, in either tree.
+`bun run knowledge:drift` reads `SOURCES.md` rows and note *keys*, not note source paths.
+
+Two of the four are `<sub>` provenance lines under `docs/knowledge/notes/`, which is hand-written — editing
+them is mechanically safe and would not disturb a harvest, since a note carries a manual `sha:` marker. The
+other two are prose inside the normative design tree. **The decision is which of "frozen" and "correct"
+wins for a hand-written note.** If `notes/` is editable in principle, these two are a one-line fix and this
+item shrinks to the two `sdk-design-nodejs/10` lines.
+
+### U2 — Three phase deferrals never reached the aggregate log — **CLOSED (recovered 2026-08-31)**
+
+Twenty `## Deferred Items` sections exist under `docs/work/mvp/`, fourteen of them titled "add to the
+roadmap's Deferred Items Log". Walking all twenty against the aggregate found three items that were never
+added:
+
+- RFC 7616 §4 `username*` (RFC 5987) extended notation for a non-ASCII Digest username
+  (`docs/work/mvp/phase5/phase5c/2026-07-26-phase5c-auth-checklist.md:220`)
+- A caller-supplied `ChallengeHandler` list on `AuthStepSettings` (same section)
+- A read-only memory-mapped view for `fileBody()` (`BODY-36`, MAY)
+  (`docs/work/mvp/phase8/phase8a/2026-07-28-phase8a-transport-design.md:581`)
+
+All three are appended to `docs/deferred-items.md`, marked as recovered. Six further items had reached this
+file instead of the log, which is the correct register for what they became, and were left: `AUTH-37` (G12),
+the `PIPE-40`/`REDIR-22` contradiction (G1), and `OBS-19`/`OBS-28`/`OBS-29` (Section L).
+
+The failure mode is worth naming because it is silent by construction: a phase writes its deferral into its
+own checklist, marks the checklist done, and nothing reads the checklist again. "Add to the roadmap's
+Deferred Items Log" is an instruction to a human in a document nobody re-opens.
+
+### U3 — Three `F` namespaces coexist, and one bare citation is already ambiguous — **DECIDE**
+
+Section F numbers its items `F1`–`F9`. Section S (Phase 4b validation review) numbers its rows `F1`–`F10`
+and Section T (Phase 4c validation review) numbers its rows `F1`–`F9`, both the reviews' own numbering,
+carried over unchanged when they moved out of the roadmap.
+
+Renumbering S and T was rejected: `docs/work/mvp/2026-07-23-nodejs-sdk-v1-roadmap-design.md`'s Phase 10
+status note cites "4b's F2/F7" by those numbers, and a dated record whose row IDs change stops matching every
+document that quotes it. The cost is that a bare "F2" is ambiguous across three sections.
+
+**The `###` level is reserved for item IDs, and Section S had one collision.** Its narrative sub-heading
+"F1 resolution — the verified version facts" was an `###`, which put a second `### F1` in the register and
+made the ID set genuinely ambiguous rather than merely context-dependent. It is now an `####`, spelled
+"Section S, row F1 — …". Every `### <Letter><N>` in this file is exactly one item; a narrative sub-heading
+inside a section goes one level deeper. The citation check
+(`node .claude/skills/housekeeping/probe.mjs --only=citations`) reads that level, so the convention is load
+bearing.
+
+**The trigger has already fired.** `docs/work/mvp/phase4/phase4b/2026-07-25-phase4b-recovery-chain-design.md:15`
+reads "see `docs/open-items.md` F8", and `F8` exists three times: Section F's item at `### F8`, a Section S
+row, and a Section T row. Sections F and S are **both about Phase 4b**, so a reader cannot even disambiguate
+by subject. `probe.mjs`'s citation check passes it, because `F8` resolves — the "dangerous kind" U6 names.
+
+Three ways out, and one must be chosen:
+
+1. **Qualify the citation, leave the register alone.** One-line edit: "Section F's F8". Cheapest, and
+   does nothing about the next one.
+2. **Give S and T section-prefixed row IDs** (`S1`–`S10`, `T1`–`T9`), keeping a "was F<n>" column so the
+   roadmap's "4b's F2/F7" still resolves. Removes the ambiguity permanently; edits a dated record's
+   presentation, though not its content.
+3. **Teach the citation check to require a section qualifier** for any ID that appears in more than one
+   namespace. Mechanical, and turns the next occurrence into a finding rather than a reader's problem.
+
+Not taken here: the choice is the owner's, and this pass is scoped to correcting what was recorded
+falsely. The count in the paragraph above was also wrong — see U6 for the one derivation.
+
+### U4 — `docs/deviations.md` is keyed to a file inside a frozen tree — **WATCH**
+
+`docs/deviations.md` states its own coupling: "§10 is the owner of the item numbers… **If §10 renumbers,
+this file must be renumbered in the same commit.**" §10 is
+`docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`, which now sits in a tree
+the housekeeping skill refuses to write to.
+
+That is the right arrangement — the normative ledger should not be edited by a maintenance tool — but it
+means the two halves of one numbering scheme are now on opposite sides of a freeze boundary, and only one of
+them can be repaired by the tool that notices the drift. Nothing checks that the two agree.
+
+**Trigger:** the next deviation added to §10, which is a hand edit by definition, and must carry the matching
+`docs/deviations.md` edit in the same commit.
+
+### U5 — `CLAUDE.md` and `README.md` have no gate, and had drifted for nine phases — **WATCH**
+
+Measured on `f93ccd9`, before this pass: `CLAUDE.md` claimed "two published packages today" against 9
+publishable and 2 private; its API section named 2 committed reports against 9; its gate list omitted
+`verify:sse-37`, a blocking CI step; and its documentation-hierarchy table omitted `docs/open-items.md`, the
+largest file in the tree. `README.md` was two lines and misspelled "platform".
+
+Every one of those is checkable against the repository in a few lines of script, and the `housekeeping`
+skill's probe stage now does check them (`.claude/skills/housekeeping/probe.mjs`). It is deliberately **not**
+a CI step — it is a hand-run tool, like `bun run test:scripts` was before Phase 10 promoted it.
+
+**Trigger:** the same drift recurring after a phase lands. The probe existing is not the same as the probe
+being run; if it recurs, the answer is a blocking CI step, and the precedent for promoting one is `test:scripts`
+(open-items H13).
+
+**The skill's own 77 tests are not run by any CI step either.** `package.json`'s `test:scripts` globs
+`scripts/*.test.mjs`, and these live in `.claude/skills/housekeeping/`. Promoting them is a one-line glob
+change; the argument for it is H13's, exactly — a gate whose own logic degrades still exits 0, so nothing
+else in the run notices. Not done here because wiring this skill into CI was explicitly out of scope for the
+change that added it. Run them by hand with `node --test .claude/skills/housekeeping/*.test.mjs`.
+
+### U6 — Six citations named the wrong section, and four of them resolved to nothing — **CLOSED (fixed 2026-08-31)**
+
+Auditing every `open-items.md <letter><number>` citation against the register's actual `### <ID>` headings —
+the check the acceptance criteria asked for, mechanised — found six citations written `G<n>` that meant
+`K<n>`. Section G is Phase 5b (Redirect); Section K is Phase 7a (Configuration), and every one of the six sits
+in `packages/core/src/config/`:
+
+| Site | Cited | Means |
+|---|---|---|
+| `packages/core/src/config/build-info.ts:37` | `G11` (`DigestChallengeUnsupportedError` — closed) | `K11` — `client-identity-step.ts`'s folder placement, the live outbound-header concern in `config/` |
+| `packages/core/src/config/build-info.ts:38` | `G18` (does not exist) | `K18` — `isHeaderSafe` duplicates `http/ascii-validation.ts` |
+| `packages/core/src/config/configuration.ts:35` | `G14` (does not exist) | `K14` — a configuration seam that fails is silently invisible |
+| `packages/core/src/config/equality.test.ts:40` | `G16` (does not exist) | `K16` — `deepEqual`/`deepHash` require acyclic input |
+| `packages/core/src/config/configuration.test.ts:11` | `G3` (redirect `Decision` reasons) | `K3` — `CFG-12` is documented, not enforced |
+| `.changeset/2026-08-27-configuration-review-pass-3.md:30` | `G16` (does not exist) | `K16` |
+
+All but the changeset are fixed. `.changeset/` is frozen release history and is left as it is.
+
+**Two of the six were the dangerous kind.** `G11` and `G3` both *resolve* — to items about redirects and
+Digest errors that have nothing to do with the comment quoting them. A reader who follows the citation lands
+on a real entry and gets a wrong answer, which no "does this ID exist" check catches. The four that dangled
+were the safe failures.
+
+The mis-citations are pre-existing: reproduced on `f93ccd9` before any change in this pass. `probe.mjs` now
+runs this check, and it is the reason the check exists.
+
+### U7 — `redirectStep()` is public; the guard that makes it safe is not — **DECIDE**
+
+`redirectStep` is exported from the barrel (`packages/core/src/index.ts`). Its companion,
+`stripCrossOriginMarkerStep()` — the `POST_AUTH` step that removes the internal cross-origin marker
+header before dispatch — is `@internal`, and so is `withRedirect()`, the helper that installs the two
+together (`packages/core/src/redirect/strip-marker-step.ts:34,55`).
+
+A caller who builds a pipeline by hand and appends `redirectStep()` therefore gets redirects **and**
+forwards `CROSS_ORIGIN_MARKER_HEADER` to the wire on every cross-origin hop. `withRedirect`'s own
+TSDoc names the hazard — "a caller who installs `redirectStep()` directly against the builder's
+lower-level API is responsible for installing the guard too" — but the guard it names is not reachable
+from outside the package, so that responsibility cannot be discharged. `standardResilience()` is
+currently the only safe way to get a redirect pillar, and `PipelineBuilder.seedFrom()` the only safe
+way to extend one.
+
+`REDIR-11(c)` calls the strip a MUST on the credential-attaching layer and recommends a robust port
+strip it independently. This port does, inside the preset.
+
+Three ways out, and one must be chosen:
+
+1. **Promote `withRedirect()`** to the public barrel and document `redirectStep()` as the
+   lower-level primitive. Smallest change; makes the safe path the obvious one.
+2. **Fold the guard into `redirectStep()`'s own descriptor** so the pillar cannot be installed
+   without it. Impossible as written — a `StepDescriptor` occupies one stage, and the guard is a
+   second step at `POST_AUTH`.
+3. **Unexport `redirectStep()`.** Consistent with `loggingStep`/`authStep`/`retryStep` all being
+   public, so it would be the odd one out; rejected on symmetry unless the whole authoring surface
+   retracts.
+
+Found on 2026-08-31 while writing `packages/core/README.md`'s hand-built-pipeline example, which is
+why that example uses `seedFrom` and says so.
+
+### U8 — Two published READMEs shipped a code sample that does not compile — **CLOSED (fixed 2026-08-31)**
+
+`packages/transport-fetch/README.md:14` and `packages/transport-undici/README.md:14` both opened with
+`await using transport = fetchTransport(...)`. Phase 10 dropped `& AsyncDisposable` from both
+factories' return types on 2026-08-30 — the decision recorded at line 316 of this file, four reasons
+deep — and neither README was updated. `tsc` on the extracted snippet:
+
+```
+error TS2851: The initializer of an 'await using' declaration must be either an object with a
+'[Symbol.asyncDispose]()' or '[Symbol.dispose]()' method, or be 'null' or 'undefined'.
+```
+
+These are the READMEs npm renders on the package page: the first thing a new consumer copies, and it
+would not have compiled for them. Both now show `close()` in a `finally`, and both say why in one
+paragraph.
+
+**What let it through.** Nothing typechecks a Markdown code fence. `verify:consumer-types` compiles
+the built `.d.ts`, `api:ci` diffs the report, and neither reads a README. The harvested styleguide
+asks for exactly this check — "the documentation build typechecks the code fences inside `@example`
+tags so worked examples cannot silently drift"
+(`docs/knowledge/harvested/documentation.md:50`) — for TSDoc `@example` blocks, which this project
+also does not do. The `housekeeping` probe now extracts every ` ```typescript ` fence from every
+package README and typechecks it against the built packages, which is how this was found.
+
+**Trigger:** promote the fence check to a blocking CI step the next time a README sample breaks
+between probe runs. It needs `dist/` and so must sit after Build, which is why it is not there today.
+
+### U9 — A `@throws` tag named an error class that does not exist, and ten more name classes nobody can catch — **PARTLY FIXED (2026-08-31; recounted 2026-09-01)**
+
+Writing [`docs/sdk-documentation/errors.md`](./sdk-documentation/errors.md) against source turned up
+two problems in the same place.
+
+**`MaxHopsExceededError` was never written.** It is named in two `@throws` tags —
+`packages/core/src/redirect/redirect-step.ts:134` and `packages/core/src/auth/preset.ts:80` — and
+`grep -r MaxHopsExceededError packages/` finds nothing else. Both tags shipped into the emitted
+`.d.ts` (`dist/redirect/redirect-step.d.ts:46`, `dist/auth/preset.d.ts:58`), so a consumer's editor
+offered a class to catch that no build ever produced.
+
+Worse, the behaviour it documents is wrong in the other direction: exceeding `maxHops` does not throw
+at all. `packages/core/src/redirect/decide.ts:205` returns `RETURN_CURRENT`, handing the caller the
+unfollowed 3xx — which is also exactly what `maxHops: 0` reduces to, and is why "disable redirects"
+needs no separate branch. Both tags are now replaced with a sentence stating that.
+
+**Ten error classes are documented as catchable and are not exported.** Every one is named as the
+subject of a `@throws` tag on a symbol whose TSDoc ships in the emitted `.d.ts`, and none appears in
+any of the nine committed `*.api.md` reports — so a consumer reads the tag, reaches for `instanceof`,
+and has nothing to reach for.
+
+**Counted 2026-09-01, and the counting rule matters:** a `@throws` tag whose *subject* is the class.
+`packages/core/src/body/materialize.ts:12` mentions `EndOfStreamError` inside a
+`@throws Whatever the delegate's writeTo raises …` tag and is not counted; a grep for lines merely
+containing one of the ten returns 58 rather than 57.
+
+| Class | `@throws` tags | Exported? |
+|---|---|---|
+| `InvariantViolation` | 24 | no — and `invariant.ts:10` tags it `@internal` |
+| `PillarCollisionError` | 9 | no |
+| `ReservedStageError` | 8 | no |
+| `EndOfStreamError` | 4 | no — `index.ts:34` exports only `IoError`, `TransportFailureError` from `io/errors.js` |
+| `AnchorNotFoundError` | 3 | no |
+| `CrossStageEditError` | 3 | no |
+| `SchemeDowngradeError` | 2 | no |
+| `CursorAlreadyAdvancedError` | 2 | no |
+| `DuplicateContextKeyError` | 1 | no — behind the internal `ContextStore` |
+| `NonReplayableBodyError` | 1 | no |
+
+**57 tags, ten classes, none reachable.** An earlier revision of this item said "the seven" and
+tabulated seven; it missed `InvariantViolation`, `EndOfStreamError` and `DuplicateContextKeyError`,
+which are the first, fourth and ninth by weight — the largest of them by a factor of two and a half.
+
+A caller can catch them as `DexpaceError` or test `error.name`. The harvested styleguide's rule for
+`@throws` is that it names the type **and what the caller should do about it**
+(`docs/knowledge/harvested/documentation.md:24`), which is not actionable without the class.
+
+**DECIDE:** promote them, or stop documenting them as catchable.
+
+1. **Export the ten.** Consistent with `AuthResolutionError`, `PlaintextCredentialError`,
+   `PaginationError` and `SseStreamError`, all of which are public for exactly this reason. Costs an
+   API-report regeneration and a `minor` changeset.
+2. **Downgrade the tags to prose** — "raises a `DexpaceError` named `SchemeDowngradeError`" — and
+   keep the surface closed. Honest, but it makes a documented failure unhandleable by class, which is
+   what the styleguide rule is against.
+3. **Split the difference:** export the eight a caller could act on, and drop the tags on
+   `InvariantViolation` and `DuplicateContextKeyError`, which signal bugs rather than conditions.
+
+`InvariantViolation` is the awkward one either way: it extends `Error` rather than `DexpaceError`, so
+even the broad catch misses it, and 24 tags promise it to a consumer who cannot name it.
+
+**Not taken here.** It is a public-surface change, not a documentation fix, and this pass is scoped
+to the latter — but the *count* is corrected now rather than deferred with the decision. A silent
+omission is the failure mode this register exists to prevent; a recorded DECIDE is not.
+
+**Nothing catches this class of defect.** `api-extractor` diffs signatures, not TSDoc bodies; no
+gate reads a `@throws` tag. Both were found by reading source to write a document, which is the
+argument for writing the document.
+
+### U10 — Three documents stated three different, all-wrong citation counts — **CLOSED (2026-09-01)**
+
+`docs/README.md`, `CLAUDE.md` and U3 said "24 citations … nine in `packages/core/src/`" (twice) and
+"Twenty-five … 13". No reading of the repository reaches any of them.
+
+**There is now one derivation and it is a command, not a sentence:**
+
+```bash
+node .claude/skills/housekeeping/probe.mjs --only=citations
+```
+
+It prints four totals — sites, sites outside this register, sites in `packages/core/src/`, and
+distinct IDs against the number of items — from the same regex and the same file set the check itself
+uses.
+
+**No number is written down here on purpose.** The two prose statements were replaced by a pointer to
+that command rather than by a corrected count, because a corrected count is the same defect one
+commit later. This item is its own proof: the figures the audit measured moved within the same
+session that recorded them, as the citations to `open-items.md:316` became anchors and this section
+grew two items.
+
+That is the general lesson, and it is why U11 exists: a count nobody can recompute is a count nobody
+recounts.
+
+### U11 — The count checker could not read the counts it was written for — **CLOSED (fixed 2026-09-01)**
+
+`checkClaims`'s three count regexes all required `(\d+)`. **Every count claim in `CLAUDE.md` and
+`README.md` is spelled as an English word** — "eleven packages", "nine committed reports", "Twenty
+named CI steps" — so the check protected exactly one sentence in the repository, and nothing asserted
+a claim was even present.
+
+Four reproductions, each printing `no drift found` before the fix:
+
+| Mutation | Why it passed |
+|---|---|
+| Append `Two published packages today, and that is the whole workspace.` to `CLAUDE.md` | "Two" is a word |
+| Reword `**20 named steps**` past its pattern | no match, no check |
+| Delete that sentence outright | presence was never asserted |
+| The live tree's own wrong citation counts (U10) | "24"/"nine" never matched a pattern |
+
+The first is verbatim the drift `.claude/skills/housekeeping/SKILL.md:10-12` names as this tool's
+reason for existing, against a workspace of eleven.
+
+Fixed: `parseNumeral` reads digits, words and hyphenated compounds; the claim table is
+subject-anchored and every row is **required** in each document that must state it; fenced code and
+double-quoted spans are excluded, because `CLAUDE.md`'s own upkeep section quotes the drift it fixed
+and reported speech is not a claim.
+
+**The suite did not catch it, and could not have.** Seven of the eight checks had bodies that could be
+replaced with `return;` with the tests still green, and so did `apply.mjs`'s only `assertAllWritable`
+call. `fixture.mjs` now builds throwaway repositories and every check has a pair — a tree it reports
+clean over and a mutation it must fire on — which is the shape
+`scripts/verify-seam-1.test.mjs:6` and `verify-test-partition.test.mjs:4` already use here. 29 tests →
+75.
 
 ## Maintaining this file
 
@@ -1719,4 +2585,16 @@ Add an entry the moment a gap is found, not when it is fixed — the failure mod
 checklist row marked ✅ against code that does not implement it (A1, A2 are both instances). Remove an entry
 only when the underlying requirement is genuinely satisfied *and* its checklist row agrees. When a phase
 closes, re-scan its checklist against the code rather than trusting the marks.
+
+**A new review is a new section, with the next letter.** Never renumber an existing item and never reuse a
+letter: item IDs are cited from source comments, which no gate updates. `node scripts/knowledge.mjs` has
+nothing to do with this file; the check that every citation resolves lives in the `housekeeping` skill's probe
+(`.claude/skills/housekeeping/probe.mjs`), and U6 records what it found the first time it ran.
+
+**Heading form.** `## Section <Letter> — <Subject>` for a section, `### <Letter><N> — <title> — **STATUS**`
+for an item. Sections A–G used `## A.` until 2026-08-31; the letters did not change, only the form.
+
+**Do not open a second register.** One was opened at the repository root in `cba4721` and sat unmerged for
+five days across four phases (now Section P). A finding that is not in this file is not registered, wherever
+else it is written down.
 

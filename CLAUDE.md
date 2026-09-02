@@ -8,10 +8,29 @@ A Node.js/TypeScript HTTP SDK platform, built as a **port of a language-agnostic
 spec in `docs/product-spec/` is normative and numbered; the code exists to satisfy it. Work here is
 spec-driven, not feature-driven: before implementing anything, find the requirement IDs it must satisfy.
 
-Bun workspace. Two published packages today — `@dexpace/core` (`packages/core`) and the reference wire codec
-`@dexpace/codec-json` (`packages/codec-json`, a `@dexpace/core` **peer**, never a dependency) — with more
-planned per `docs/sdk-design-nodejs/02-package-and-workspace-layout.md`. Every gate below runs over all of
-them, not over core alone.
+Bun workspace, **eleven packages**. Nine are published; two are `private` and exist only to serve the build.
+Every gate below runs over all of them, not over core alone — `verify:seam-1` in particular asserts zero
+runtime dependencies for each, which is `NFR-2`'s "core plus at most one external library per optional
+capability".
+
+| Package | Provides | External dependencies |
+|---|---|---|
+| `@dexpace/core` | Models, pipeline, seams, resilience pillars, SSE, pagination, configuration, observability | **none** |
+| `@dexpace/transport-fetch` | `fetchTransport()` over the runtime's global `fetch` | none |
+| `@dexpace/transport-undici` | `undiciTransport()` — pools, proxies, real `close()` | `undici` |
+| `@dexpace/transport-shared` | `@internal` plumbing both transports need identically | none |
+| `@dexpace/codec-json` | `jsonSerde()` — the reference wire codec | none |
+| `@dexpace/body-file` | `fileBody()` over `node:fs` | none |
+| `@dexpace/logging-pino` | `createPinoLogger()` | `pino` (optional peer) |
+| `@dexpace/logging-debug` | `createDebugLogger()` | `debug` (optional peer) |
+| `@dexpace/rx` | `Observable` views of SSE and pagination | `rxjs` (peer) |
+| `@dexpace/shrink-test` | **private.** Proves the published bundles survive minify + tree-shake (`NFR-9`) | — |
+| `@dexpace/transport-conformance` | **private.** The shared `TRANSPORT-N` suite both transports run | — |
+
+**`@dexpace/core` is a peer of every other package, never a dependency.** Two copies of core in one install
+defeat the branded symbols and identity checks the seams rely on — the dual-package hazard — and
+`verify:seam-1` is what enforces it. The layout is `docs/sdk-design-nodejs/02-package-and-workspace-layout.md`;
+what each package is *for*, and how they compose, is `docs/sdk-documentation/architecture.md`.
 
 ## Commands
 
@@ -104,14 +123,17 @@ bun test -t 'rejects blank input'                    # filter by test name
 bun test ./tests/conformance/xcut                    # a tests/ path needs the ./ prefix
 ```
 
-API surface — one committed report per package (`packages/core/etc/core.api.md`,
-`packages/codec-json/etc/codec-json.api.md`):
+API surface — **nine committed reports**, one per publishable package, at `packages/<pkg>/etc/<pkg>.api.md`.
+The two private packages have none: `api-extractor` runs only where something is published.
 
 ```bash
 cd packages/core && bun run api:local     # regenerate that package's report after changing its exports
-cd packages/codec-json && bun run api:local
-bun run api                               # verify BOTH match — this is what CI runs
+bun run api                               # verify all NINE match — this is what CI runs
 ```
+
+`bun run api` chains `api:ci` across `core`, `codec-json`, `logging-pino`, `logging-debug`, `body-file`,
+`transport-shared`, `transport-fetch`, `transport-undici` and `rx`, in that order. A new publishable package
+adds itself to that chain and to `lint:publish`.
 
 Release-shape and invariant gates:
 
@@ -126,13 +148,24 @@ bun run verify:sse-37             # no serde dependency and no reconnect path in
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run verify:test-partition     # the five files that keep tests/ and tests/node-conformance/ apart
 bun run verify:knowledge-structure # docs/knowledge/'s two trees stay separate (see below)
-bun run verify:reproducible-build # two clean builds of one source tree agree, dist/ and tarball (NFR-12)
+bun run verify:reproducible-build # two clean builds of one source tree agree, dist/ and tarball (NFR-12);
+                                  # in CI it runs after every step that resolves a package through dist/,
+                                  # because it sweeps and rebuilds them all
 bun run test:scripts              # the gates' OWN tests (node --test scripts/*.test.mjs)
 bun run audit                     # bun audit --audit-level=high --prod
 ```
 
-**Every one of these is a blocking CI step** (`.github/workflows/ci.yml`). Run the full set before claiming
-work is done — `bun run test` passing is not sufficient evidence.
+**Every one of these is a blocking CI step.** `.github/workflows/ci.yml` is **20 named steps across two
+jobs** — 17 in `ci`, 3 in the `node-conformance` matrix that runs after it. Run the full set before claiming
+work is done; `bun run test` passing is not sufficient evidence, and the one command that runs all twenty in
+CI's order is:
+
+```bash
+node .claude/skills/ci-preflight/run-ci.mjs --clean
+```
+
+The per-step reasoning, including why `verify:reproducible-build` must run last and why `test:scripts` is
+blocking at all, is `docs/sdk-documentation/quality-gates.md`.
 
 `test:scripts` tests the *gates themselves* — the knowledge CLI, `verify-seam-1.mjs`, `verify-sse-37.mjs`,
 `verify-knowledge-structure.mjs`, `verify-test-partition.mjs`. Phase 10 made it a blocking CI step, closing
@@ -180,15 +213,45 @@ passes. The gate checks this too.
 
 ## Documentation hierarchy
 
-Five distinct trees, easy to confuse — `docs/knowledge/` being two of them:
+`docs/README.md` is the index and the contract; this is the working summary. Every entry in `docs/` is below,
+because the one that used to be omitted — `open-items.md` — is the largest file in the tree.
 
-| Path | Role |
-|---|---|
-| `docs/product-spec/` | **Normative.** Numbered requirements (`HTTP-7`, `SEAM-1`, `RETRY-13`, `NFR-5`, …). The source of truth. |
-| `docs/sdk-design-nodejs/` | How each spec area maps to idiomatic TypeScript. Non-normative but binding by convention. |
-| `docs/knowledge/harvested/` | Harvested styleguide + spec knowledge, topic-indexed (`INDEX.md`). Cited as "styleguide 6.7", "ch08". Generated; never hand-edited. |
-| `docs/knowledge/notes/` | What the implementation found, hand-written, role `review`. Overrides a harvested entry. |
-| `docs/superpowers/specs/` + `plans/` | Per-phase design doc, task-by-task implementation plan, and a requirement-coverage checklist. |
+| Path | Role | Writable? |
+|---|---|---|
+| `docs/product-spec/` + `docs/product-spec.md` | **Normative.** Numbered requirements (`HTTP-7`, `SEAM-1`, `RETRY-13`, `NFR-5`, …). The source of truth; the `.md` is its table of contents. | **frozen** |
+| `docs/sdk-design-nodejs/` + `docs/sdk-design-nodejs.md` | How each spec area maps to idiomatic TypeScript. Non-normative but binding by convention. §10 is the **normative deviation ledger**. | **frozen** |
+| `docs/knowledge/harvested/` | Harvested styleguide + spec knowledge, topic-indexed (`INDEX.md`). Cited as "styleguide 6.7", "ch08". Generated; never hand-edited. | **frozen** |
+| `docs/knowledge/notes/` | What the implementation found, hand-written, role `review`. Overrides a harvested entry. | **frozen** |
+| `docs/sdk-documentation/` | **As-built.** How the packages compose, which one to install, worked cross-package examples. Eleven files; `architecture.md` is the front door. | yes |
+| `docs/work/<delivery>/phaseN/` | Per-phase design doc, implementation plan and requirement-coverage checklist. `mvp/` is the only delivery so far. | yes |
+| `docs/superpowers/` | The **inbox** the `brainstorming` and `writing-plans` skills hard-code. Drained into `docs/work/`; never a citation target. | yes |
+| `docs/open-items.md` | **Register.** Everything unmet, unverified, misreported or surprising. Sections A–U; letters and item numbers are permanent. | yes |
+| `docs/deferred-items.md` | **Register.** Work a phase decided not to do yet, with the phase that owns it. | yes |
+| `docs/deviations.md` | **Register.** The as-built audit of §10, and where a deviation found outside a phase lands. | yes |
+| `docs/assets/` | Vendored wordmark SVGs the root `README.md` renders. | yes |
+
+**Frozen means a maintenance tool refuses to write there**, not merely that you should not. The
+`housekeeping` skill's guard (`.claude/skills/housekeeping/guard.mjs`) enforces it and `guard.test.mjs`
+proves it; the per-tree reasons are in `docs/README.md`.
+
+**Which register.** The boundary is *when* an item was created. A **deferral** is a decision made before the
+work ("not this phase, that one") → `deferred-items.md`. An **open item** is a discovery made after ("this is
+not what the checklist says it is") → `open-items.md`. A **deviation** goes in the owning phase spec's own
+`## Deviation Ledger` section, is consolidated into §10, and is audited by `deviations.md` — which is also
+where a deviation with no owning phase lands, since §10 sits in a frozen tree.
+
+**Never renumber `open-items.md`.** Its item IDs are cited from source comments, tests, changesets and the
+`docs/` tree — `docs/open-items.md K11` at `packages/core/src/index.ts:248`, `H12` at `seams/index.ts:11`, and
+so on. A new review appends the next letter; nothing is ever renumbered or reused.
+
+**Do not write the number of them into a document.** Three documents once stated three different, all-wrong
+counts (`docs/open-items.md` U10). One command derives it, from the same regex and file set the check uses:
+
+```bash
+node .claude/skills/housekeeping/probe.mjs --only=citations
+```
+
+That is also the check that every citation still resolves. U6 records what it found the first time it ran.
 
 `docs/product-spec/appendix-c-consolidated-normative-requirement-index.md` is the fastest way to locate a
 requirement ID.
@@ -243,9 +306,10 @@ it. Read them directly; `notes/deliberate-deviations.md` is the pointer. When yo
 at the harvested tree — `--corpus docs/knowledge/harvested` — and hand-move any `supersede` entry it emits
 into `notes/`.
 
-**Citations into the corpus** are written `docs/knowledge/harvested/<topic>.md:<line>`. `docs/superpowers/`
-is the exception: its plans and specs are dated records of what was true when they were written, are never
-retro-edited, and so still carry pre-split paths.
+**Citations into the corpus** are written `docs/knowledge/harvested/<topic>.md:<line>`. `docs/work/` is the
+exception: its phase designs, plans and checklists are dated records of what was true when they were written,
+are never retro-edited, and so still carry pre-split paths — 207 of them, across 33 files
+(`docs/open-items.md` O3).
 
 ## Requirement-ID conventions (enforced by review, not tooling)
 
@@ -314,14 +378,14 @@ class on operations that throw. `api-extractor` will otherwise flag it, and the 
 
 Consumer-facing changes need a changeset — `bun run changeset`, not `bunx changeset`. The wrapper
 (`scripts/changeset.mjs`) forwards every argument to the CLI, then renames the file it generates from
-`@changesets/write`'s random `human-id` name to `YYYY-MM-DD-<slug>.md`, matching
-`docs/superpowers/{specs,plans}`. The slug is prompted for, defaulting to the changeset's own first
+`@changesets/write`'s random `human-id` name to `YYYY-MM-DD-<slug>.md`, the same name shape every document
+under `docs/work/mvp/` carries. The slug is prompted for, defaulting to the changeset's own first
 sentence. Nothing reads the filename back — the CLI globs `.changeset/*.md` and decides from the
 frontmatter — so a hand-written changeset just needs to be named the same way.
 
 ## Phase workflow
 
-Work proceeds phase by phase against `docs/superpowers/specs/2026-07-23-nodejs-sdk-v1-roadmap-design.md`. Each
+Work proceeds phase by phase against `docs/work/mvp/2026-07-23-nodejs-sdk-v1-roadmap-design.md`. Each
 phase has a design spec, an implementation plan with numbered tasks (TDD: write the failing test, confirm it
 fails, implement, confirm it passes, commit), and a checklist mapping every requirement ID to the task that
 satisfies it. When asked to implement or validate a phase, read all three before touching code.
@@ -329,3 +393,33 @@ satisfies it. When asked to implement or validate a phase, read all three before
 Starting a numbered task means starting with what the corpus already knows about its requirement IDs — invoke
 the `knowledge-lookup` skill, which carries both entry points (ID-first via appendix C, topic-first for the
 styleguide-derived areas that carry no IDs).
+
+**A phase's documents are written into `docs/superpowers/` and do not stay there.** The Superpowers
+`brainstorming` and `writing-plans` skills hard-code `docs/superpowers/{specs,plans}/`
+(`brainstorming/SKILL.md:100`, `writing-plans/SKILL.md:18`); they are installed globally, shared across
+projects, and this repository cannot change them. So that directory is an inbox, and the `housekeeping` skill
+collects from it into `docs/work/<delivery>/phaseN/`. Cite the `docs/work/` path — the one the document will
+have for the rest of its life — never the staging path.
+
+## Documentation upkeep
+
+Nothing gates `CLAUDE.md` or `README.md`, and both had drifted for nine phases before 2026-08-31: "two
+published packages" against eleven, two API reports against nine, a gate list missing `verify:sse-37`, a
+documentation table missing the largest file in the tree. The `housekeeping` skill is the check.
+
+```bash
+node .claude/skills/housekeeping/probe.mjs        # read-only. Eight checks. Always first.
+node .claude/skills/housekeeping/apply.mjs        # dry run; --write performs the git mv calls
+bun run build && node .claude/skills/housekeeping/check-fences.mjs   # typecheck every doc code fence
+```
+
+It derives each repository fact once — the package list, the `verify:*` gates, the named CI steps, the API
+reports, the `docs/` tree — and checks every document that states it against that one derivation. It also
+finds phase documents left in the inbox, Markdown stranded at the repository root, a publishable package
+with no README, a broken relative link, an aggregate register left in a specification document, and a
+`docs/open-items.md` citation that resolves to nothing.
+
+It is a **hand-run** tool, not a CI step. Run it after landing a phase, and before claiming the documentation
+is current. Its apply stage moves files; the prose it reports on is edited by you. It refuses to write to
+`docs/knowledge/`, `docs/product-spec/`, `docs/sdk-design-nodejs/` or the two sibling tables of contents, and
+that refusal is a tested guard rather than a stated intention.

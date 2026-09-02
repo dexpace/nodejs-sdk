@@ -77,7 +77,7 @@ function sourceRoots(text) {
 
   // One row at a root's parent would widen the allowlist to everything beneath
   // it — a future `docs/open-items.md` row makes `docs` a root, and then every
-  // `docs/superpowers/...` citation passes. Refuse rather than silently widen.
+  // `docs/work/...` citation passes. Refuse rather than silently widen.
   const sorted = [...roots].sort();
   for (const root of sorted) {
     const swallowed = sorted.find(

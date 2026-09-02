@@ -67,6 +67,10 @@ function noAuthSettings(): AuthStepSettings {
  * configuration that determines whether they can occur at all.
  *
  * @param transport - the terminal transport. Never closed by the pipeline (PIPE-27).
+ * **Exceeding the redirect hop cap does NOT throw** (REDIR-17): the current 3xx response is returned
+ * to the caller unfollowed. See {@link redirectStep}. Stated before the tags below because TSDoc
+ * folds trailing prose into the preceding block tag.
+ *
  * @param options - per-pillar overrides.
  * @returns the built, immutable runtime.
  * @throws PlaintextCredentialError — from the returned runtime's `send()` — when a credentialed scheme
@@ -77,7 +81,6 @@ function noAuthSettings(): AuthStepSettings {
  * @throws HeaderValidationError — from the returned runtime's `send()` — when credential material
  *   will not fit in a header value (HTTP-18).
  * @throws SchemeDowngradeError — from the returned runtime's `send()` — when a redirect attempts an HTTPS to HTTP downgrade not permitted by settings (REDIR-14/15).
- * @throws MaxHopsExceededError — from the returned runtime's `send()` — when redirects exceed maxHops (REDIR-17/22).
  * @throws InvariantViolation — synchronously from this function — when any pillar's settings are
  *   invalid, including a non-finite bearer refresh margin or a non-header-safe Digest username. A
  *   caller-supplied `TokenProvider` or `challengeHook` error passes through `send()` unwrapped.

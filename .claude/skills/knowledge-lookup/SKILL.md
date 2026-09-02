@@ -1,6 +1,6 @@
 ---
 name: knowledge-lookup
-description: Use when starting a phase or a numbered task from a docs/superpowers/plans/ file, implementing or reviewing against a requirement ID (HTTP-7, SEAM-1, RETRY-13, NFR-5), resolving a styleguide citation such as "styleguide 6.7" or "ch08", auditing a subsystem against every rule the corpus holds for it, or recording what an implementation found in docs/knowledge/ — which is a note under notes/, never an edit to harvested/.
+description: Use when starting a phase or a numbered task from a docs/work/mvp/ plan file, implementing or reviewing against a requirement ID (HTTP-7, SEAM-1, RETRY-13, NFR-5), resolving a styleguide citation such as "styleguide 6.7" or "ch08", auditing a subsystem against every rule the corpus holds for it, or recording what an implementation found in docs/knowledge/ — which is a note under notes/, never an edit to harvested/.
 ---
 
 # Knowledge Lookup
@@ -182,7 +182,7 @@ implementation found, and it wins.
 
 ## Superseded
 - **What we found**, superseding `pagination/81881061`. …
-  <sub>review · `docs/superpowers/specs/2026-07-28-phase6c-pagination-design.md` · high · sha:manual-6c-erratum</sub>
+  <sub>review · `docs/work/mvp/phase6/phase6c/2026-07-28-phase6c-pagination-design.md` · high · sha:manual-6c-erratum</sub>
 ```
 
 Which section: `## Superseded` when following the harvested rule would cause damage,

@@ -3,8 +3,8 @@
 //
 // Wrapper around the changesets CLI that renames a newly created changeset
 // from `@changesets/write`'s random `human-id` name (`silly-pandas-jump.md`)
-// to this repo's convention: `YYYY-MM-DD-<kebab-slug>.md`, matching
-// `docs/superpowers/{specs,plans}`.
+// to this repo's convention: `YYYY-MM-DD-<kebab-slug>.md`, the same name shape
+// every document under `docs/work/mvp/` carries.
 //
 // The name is not a config knob — the ID comes from a hardcoded `humanId()`
 // call inside `@changesets/write`, and `.changeset/config.json`'s schema has

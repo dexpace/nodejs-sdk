@@ -12,7 +12,10 @@ npm install @dexpace/rx rxjs
 
 ```typescript
 import {sseEvents$, typedSse$, pageItems$, pages$} from '@dexpace/rx';
-import {sseStreamFrom, Paginator} from '@dexpace/core';
+import {sseStreamFrom, Paginator, type Response} from '@dexpace/core';
+
+declare const response: Response;
+declare const paginator: Paginator<unknown>;
 
 // Server-Sent Events
 sseEvents$(sseStreamFrom(response)).subscribe({

@@ -3,7 +3,7 @@
 `tests/node-conformance/` — run by `bun run test:node` (`node --test tests/node-conformance/*.test.mjs`),
 never by `bun test`.
 
-Closes checkpoint §5.9 (`docs/superpowers/plans/2026-07-25-checkpoint-scaffold-through-phase3a.md:341`).
+Closes checkpoint §5.9 (`docs/work/mvp/2026-07-25-checkpoint-scaffold-through-phase3a.md:341`).
 
 > **This tree must not run on Bun.** That is the only reason it exists. Until Phase 10 it lived at
 > `test/node-conformance/`, outside anything `bun test` could reach; it now sits inside `tests/`, so
@@ -60,7 +60,7 @@ runtime decides.
 
 `ls` this directory. An earlier revision kept a table of file-to-surface descriptions here; it listed 6 of
 14 by the time anyone checked, because nothing regenerated it. What each case covers, and which requirement
-IDs it discharges, is recorded once — in that phase's checklist under `docs/superpowers/plans/`.
+IDs it discharges, is recorded once — in that phase's checklist under `docs/work/mvp/phaseN/`.
 
 One piece of provenance the tree cannot show: `seams.test.mjs` absorbed the retired
 `scripts/verify-node-floor.mjs`, whose two `AbortSignal.any()` assertions were the only Node coverage that
