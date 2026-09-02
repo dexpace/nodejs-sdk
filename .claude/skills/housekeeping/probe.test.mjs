@@ -156,7 +156,7 @@ test("claims: a community-health file's counts are checked when it exists", () =
   );
 });
 
-test("claims: a community-health file is not required to NAME every package", () => {
+test('claims: a community-health file is not required to NAME every package', () => {
   // The roster lives in CLAUDE.md and README.md. CONTRIBUTING.md states the shape once and
   // points at CLAUDE.md for the table; SECURITY.md names only the packages that carry a
   // security surface. Requiring the full list of either reported eighteen findings against
@@ -164,14 +164,17 @@ test("claims: a community-health file is not required to NAME every package", ()
   const found = onFixture(
     {
       overrides: {
-        'CONTRIBUTING.md': '# contributing\n\nTwo packages, one of them published.\n',
+        'CONTRIBUTING.md':
+          '# contributing\n\nTwo packages, one of them published.\n',
         'SECURITY.md': '# security\n\nReport privately.\n',
       },
     },
     ['claims'],
   );
   assert.ok(
-    !found.some(f => /CONTRIBUTING\.md never names|SECURITY\.md never names/.test(f.message)),
+    !found.some(f =>
+      /CONTRIBUTING\.md never names|SECURITY\.md never names/.test(f.message),
+    ),
     JSON.stringify(messages(found)),
   );
 });

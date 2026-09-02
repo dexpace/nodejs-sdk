@@ -375,7 +375,9 @@ function checkClaims(ctx, facts) {
     const text = ctx.read(doc);
     const prose = assertedProse(text);
 
-    for (const pkg of PACKAGE_ROSTER_DOCUMENTS.includes(doc) ? facts.packages : []) {
+    for (const pkg of PACKAGE_ROSTER_DOCUMENTS.includes(doc)
+      ? facts.packages
+      : []) {
       if (!text.includes(pkg.name)) {
         ctx.finding(
           'claims',
