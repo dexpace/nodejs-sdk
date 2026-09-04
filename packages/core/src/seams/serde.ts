@@ -162,13 +162,15 @@ export interface DecodeTarget<T> {
  * streams bytes straight into {@link Deserializer.deserializeFrom} and never holds a parsed value to
  * inspect, and core owning a parser would violate SEAM-1.
  *
- * **Every decode target is treated as non-null.** An implementation sees a schema *value*, which
- * carries no nullability it could read, so the check above cannot be conditional — it rejects a
- * top-level wire `null` unconditionally. A legitimately nullable top-level target is therefore
- * outside this contract: a `200` whose whole body is the literal `null` does not decode, and
- * `tristate(inner)` is a *field* combinator rather than a top-level decode target. This is
- * deliberate — the alternative lets a permissive schema such as `{parse: (i) => i}` launder a wire
- * `null` into a non-null `T`, which is the heap pollution SERDE-5 and SERDE-13 exist to prevent.
+ * **A decode target is treated as non-null unless the caller says otherwise.** An implementation
+ * sees a schema *value*, which carries no nullability it could read, so the check above cannot be
+ * derived from the schema — it rejects a top-level wire `null` unconditionally *by default*. The one
+ * way to admit one is {@link DecodeTarget.admitsNull}, the caller stating what the schema value
+ * cannot: that `T` includes `null`. With it set the check is skipped, the `null` reaches the schema,
+ * which is free to reject it, and `tristate(inner)` can serve as a top-level target rather than only
+ * a *field* combinator. Off by default, and deliberately so — the alternative lets a permissive
+ * schema such as `{parse: (i) => i}` launder a wire `null` into a non-null `T`, which is the heap
+ * pollution SERDE-5 and SERDE-13 exist to prevent.
  *
  * **One spelling, both layers.** Every decode entry point takes the schema and its diagnostic label
  * bundled as a {@link DecodeTarget}: the SPI here, and `decodeResponse` / `decodeSuccessResponse`

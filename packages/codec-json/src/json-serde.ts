@@ -264,12 +264,14 @@ function makeDeserializer(): Deserializer {
  * `JSON.stringify(v, tristateReplacer)` gets the nested and array-element behaviour but not the
  * top-level degradation — see {@link tristateReplacer}.
  *
- * **A top-level wire `null` never decodes (SERDE-13).** Every decode target is treated as non-null:
- * a schema value carries no nullability this codec could read, so the rejection is unconditional and
- * runs *before* the schema. A `200` whose entire body is the literal `null` therefore raises a
- * `DeserializationError`, and `tristate(inner)` is a field combinator for use inside
- * `tristateObject`, not a top-level decode target. Deliberate: checking after the schema would let a
- * permissive schema such as `{parse: (i) => i}` return that `null` as a non-null `T`.
+ * **A top-level wire `null` decodes only into a target that admits one (SERDE-13).** A schema value
+ * carries no nullability this codec could read, so the rejection is unconditional *by default* and
+ * runs *before* the schema: a `200` whose entire body is the literal `null` raises a
+ * `DeserializationError`. Setting `admitsNull: true` on the `DecodeTarget` is the caller stating what
+ * the schema value cannot — that `T` includes `null` — and skips the check, which is the one case
+ * where `tristate(inner)` serves as a top-level target rather than a field combinator for use inside
+ * `tristateObject`. Checking after the schema instead would let a permissive schema such as
+ * `{parse: (i) => i}` return that `null` as a non-null `T`.
  *
  * @param options - opt out of the Tristate wiring; everything else is fixed by the format.
  * @returns a frozen, stateless bundle safe to share across concurrent operations (SERDE-29).
