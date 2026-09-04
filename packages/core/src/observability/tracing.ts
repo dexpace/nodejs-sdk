@@ -5,73 +5,16 @@ import {
   createAsyncScopedStore,
   pushDiagnosticFields,
 } from './diagnostic-context.js';
+import {NOOP_SPAN, NOOP_TRACER} from './span.js';
+import type {Span, Tracer} from './span.js';
 import type {InstrumentationBundle} from '../context/instrumentation.js';
 
-/**
- * Contextual metadata identifying a trace and span in distributed tracing (OBS-23, OBS-26).
- *
- * @public
- */
-export interface SpanContext {
-  readonly traceId: string;
-  readonly spanId: string;
-  readonly traceFlags?: number | undefined;
-  readonly traceState?: string | undefined;
-}
-
-/**
- * A structural subset of `@opentelemetry/api`'s own `Span` shape (OBS-21, OBS-23).
- *
- * @public
- */
-export interface Span {
-  readonly isRecording: boolean;
-  setAttribute(key: string, value: unknown): this;
-  recordException(error: unknown): this;
-  end(): void;
-  spanContext?(): SpanContext | undefined;
-}
-
-/**
- * Tracing facade interface for creating spans.
- *
- * @public
- */
-export interface Tracer {
-  startSpan(name: string): Span;
-}
-
-/**
- * Inert no-op {@link Span} singleton (OBS-21, OBS-25).
- *
- * @public
- */
-export const NOOP_SPAN: Span = Object.freeze({
-  isRecording: false,
-  setAttribute(): Span {
-    return NOOP_SPAN;
-  },
-  recordException(): Span {
-    return NOOP_SPAN;
-  },
-  end(): void {
-    return;
-  },
-  spanContext(): SpanContext {
-    return {traceId: '0'.repeat(32), spanId: '0'.repeat(16)};
-  },
-});
-
-/**
- * Inert no-op {@link Tracer} singleton (OBS-25).
- *
- * @public
- */
-export const NOOP_TRACER: Tracer = Object.freeze({
-  startSpan(): Span {
-    return NOOP_SPAN;
-  },
-});
+// The span/tracer shapes and the two inert singletons live in `span.js` so that
+// `context/instrumentation.ts` can reach `NOOP_SPAN` for CTX-15's disabled-tracing default without
+// closing an import cycle with this module's `InstrumentationBundle` type edge. They are re-exported
+// verbatim here, which is this module's published surface and every existing import path.
+export type {Span, SpanContext, Tracer} from './span.js';
+export {NOOP_SPAN, NOOP_TRACER} from './span.js';
 
 function randomHex(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);

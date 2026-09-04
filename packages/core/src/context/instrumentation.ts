@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/context/instrumentation.ts
+import {NOOP_SPAN} from '../observability/span.js';
 
 /**
  * Correlation/instrumentation bundle every execution context carries (CTX-14), reachable from a
@@ -36,7 +37,8 @@ export interface InstrumentationBundle {
   /** Whether the trace context was propagated in from a caller rather than started locally. */
   readonly isRemote: boolean;
   /**
-   * The span this call runs inside, or `undefined` when tracing is disabled.
+   * The span this call runs inside. Never absent: the disabled-tracing default carries the inert
+   * `NOOP_SPAN` singleton, which is what CTX-15's "a no-op span" asks for.
    *
    * PROVISIONAL: typed `unknown` pending Phase 7a's tracing adapter — see this interface's own note.
    */
@@ -73,6 +75,6 @@ export const noopInstrumentationBundle: InstrumentationBundle = Object.freeze({
   traceIdEncoding: 'none',
   isValid: false,
   isRemote: false,
-  activeSpan: undefined,
+  activeSpan: NOOP_SPAN,
   tracerFactory: () => undefined,
 });
