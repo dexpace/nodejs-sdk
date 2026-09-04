@@ -16,8 +16,12 @@ interface AuthTiers {
 
 The most specific tier that is set wins (`AUTH-4`). `perCall` comes from
 `RequestOptions.newBuilder().auth(descriptor)`, which is how one call opts out of, or into, something
-different from the client default. Only the *selection* is tiered; whether a selected requirement can
-be satisfied at all is `AUTH-6`, and failing it is an `AuthResolutionError`.
+different from the client default. **`operation` comes from `RequestOptions.operationAuth`**, set with
+`RequestOptions.newBuilder().operationAuth(descriptor)` — both per-call slots ride on the same
+`RequestOptions`, and the AUTH pillar step reads them into the two tiers
+(`packages/core/src/auth/auth-step.ts:252,756`; `packages/core/src/auth/resolve.ts:19` names the mapping). `client` is the
+configured default. Only the *selection* is tiered; whether a selected requirement can be satisfied at
+all is `AUTH-6`, and failing it is an `AuthResolutionError`.
 
 An `AuthDescriptor` is a list of `AuthRequirement`s, each a scheme plus optional scopes and
 parameters. Both are built by factory, never as an object literal:

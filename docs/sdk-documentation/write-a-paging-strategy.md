@@ -13,9 +13,18 @@ interface PageInfo<T> {
 }
 ```
 
-Given the page that just arrived and the request template the walk started from, produce this page's
-items and the request that fetches the next one. `undefined` for `nextRequest` is how a walk ends —
-there is no separate "done" flag to keep consistent with it.
+Given the page that just arrived and the request that fetched it, produce this page's items and the
+request that fetches the next one. `undefined` for `nextRequest` is how a walk ends — there is no
+separate "done" flag to keep consistent with it.
+
+**`template` is not the request the walk started from.** The glossary calls it "the original request
+template", but the engine passes the request it sent for *this* page and then makes your `nextRequest`
+the following hop's template — it advances with the walk
+(`packages/core/src/pagination/paginator.ts:165,213`, and the contract on
+`PaginationStrategy.parse` at `strategy.ts:10-15`). Read the parameter as "the request to derive the
+next one from". Where you specifically want the URL the response actually came from — after a redirect
+or a step's rewrite — use `response.request.url`, which is what `pageNumberStrategy` reads its current
+page number from.
 
 ## Three ship already
 
@@ -101,8 +110,10 @@ protects — single use, nothing retained — is what the async signature preser
 [`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
 where the dissolved deferral register's rows went — precisely so an async signature does not later read as an oversight. Every shipped strategy's `extract` above is `async` for the same reason.
 
-**2. Build `nextRequest` from the template, not from the response.** The template carries the headers,
-auth tier and options the walk was started with. A next request built from scratch loses all of them.
+**2. Build `nextRequest` from the template, not from scratch.** The template carries the headers, auth
+tier and options the walk was started with, and it is the previous hop's request rather than page one's,
+so deriving from it accumulates the walk's state instead of re-deriving it. A next request built from
+scratch loses all of that.
 
 ```typescript
 const next = template
