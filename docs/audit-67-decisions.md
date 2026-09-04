@@ -42,6 +42,20 @@ No changesets, no version bumps, no `docs/first-release.md` edits. Each PR lists
 `noopInstrumentationBundle.activeSpan` becomes `NOOP_SPAN`. One line plus a test. #80 lists the same item;
 it is done here, #80 skips it. *Rejected:* ledger row (the fix is smaller than the row).
 
+**D3 outcome (2026-09-04, #69, PR #84).** The size estimate was wrong: importing `NOOP_SPAN` into
+`context/instrumentation.ts` closed an import cycle with `observability/tracing.ts` (which imports
+`InstrumentationBundle`), and `verify:import-cycles` counts type-only edges. Fixed as that gate prescribes:
+`SpanContext`, `Span`, `Tracer`, `NOOP_SPAN`, `NOOP_TRACER` moved to a new leaf module
+`packages/core/src/observability/span.ts`; `tracing.ts` re-exports them, so no import path and no API
+report changed. The decision itself stands. *Constrains #80:* a `file:line` citation into `tracing.ts` for
+those five names is now stale; CTX-15 is done, skip it.
+
+**Trap for every later subtask.** gts turns on `stripInternal`, and TypeScript tests it by substring-scanning
+every leading comment of a declaration, line comments included. A module header that merely *mentions* the
+`@internal` tag deletes the first exported declaration from the emitted `.d.ts` with no `tsc` diagnostic;
+the failure surfaces one package later as an unresolved name in core's own `dist/`. Do not write that tag in
+a file-level comment.
+
 ### D4 — PIPE-37: ledger the gap, do not implement in M1
 No `PRE_REDIRECT` status-mapping pipeline step exists; `statusMappingStep` is a `ResponseStep`. Recorded
 as a row in `deviations.md` naming the gap, the Phase 4→5 hand-off that dropped it, and the petstore
@@ -68,4 +82,6 @@ All six are recorded as rows (evidence + reading). `reasonPhrase` sits beside §
 already done and does not re-ledger it.
 
 ## Deferred — release machinery (recoverable list)
-_(appended per PR)_
+| Issue / PR | Deferred item |
+|---|---|
+| #69 / PR #84 | patch changeset for `@dexpace/core`: `noopInstrumentationBundle.activeSpan` changed from `undefined` to `NOOP_SPAN` (documented default of a `@public` interface) |
