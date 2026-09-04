@@ -354,6 +354,12 @@ async function preemptiveStamp(
  */
 interface OutboundPlan {
   readonly crossOrigin: boolean;
+  /**
+   * Whether the outbound pass ran {@link requireHttps} on this hop -- i.e. whether this is one of
+   * AUTH-28's "paths where a credential will be attached". Carried past the dispatch because the
+   * replay inherits it: see {@link guardReplayScheme}.
+   */
+  readonly guarded: boolean;
   readonly outbound: Request;
 }
 
@@ -379,9 +385,14 @@ async function planOutbound(
     .headers(clearCrossOriginMarker(seedRequest.headers))
     .build();
 
-  if (crossOrigin) return {crossOrigin, outbound: cleared};
-  if (context.scheme !== 'NO_AUTH') requireHttps(cleared.url, context.scheme);
-  return {crossOrigin, outbound: await preemptiveStamp(cleared, context)};
+  if (crossOrigin) return {crossOrigin, guarded: false, outbound: cleared};
+  const guarded = context.scheme !== 'NO_AUTH';
+  if (guarded) requireHttps(cleared.url, context.scheme);
+  return {
+    crossOrigin,
+    guarded,
+    outbound: await preemptiveStamp(cleared, context),
+  };
 }
 
 interface ChallengeSelection {
@@ -518,24 +529,45 @@ async function defaultChallengeHook(
   }
 }
 
+/** What {@link guardReplayScheme} needs. Bundled to stay inside `max-params`. */
+interface ReplayGuardInput {
+  readonly replacement: Request;
+  readonly response: Response;
+  readonly scheme: AuthScheme;
+  /** {@link OutboundPlan.guarded} for this hop. */
+  readonly outboundGuarded: boolean;
+}
+
 /**
  * AUTH-28 on the REPLAY path. The outbound guard is not sufficient here: it is skipped entirely for
  * `NO_AUTH`, and nothing constrains a caller-supplied hook to preserve the request URL. A replay
- * carrying a credential header is by definition "a path where a credential will be attached", and
- * AUTH-28 says ANY such path.
+ * carrying a credential is by definition "a path where a credential will be attached", and AUTH-28
+ * says ANY such path.
+ *
+ * **Once guarded, always guarded.** When the outbound pass ran the guard, so does the replay --
+ * unconditionally, without inspecting a single header name. The rule used to be "the replacement
+ * carries `Authorization` or `Proxy-Authorization`", and that missed the case this step creates
+ * itself: `ApiKeyCredentialConfig.headerName` stamps whatever header the caller names, so a hook
+ * answering a 401 with `X-Api-Key: SECRET` over a downgraded `http://` URL went out in clear text
+ * with no `PlaintextCredentialError` (audit #67 / #71). Deriving the credential-carrying names from
+ * configuration instead was considered and rejected: a `challengeHook` may invent a carrier this step
+ * has never been told about, so no enumeration can be complete, whereas "this hop is credentialed"
+ * is a fact the outbound pass already decided.
+ *
+ * The header test survives as a SECOND arm rather than being replaced, because it still reaches
+ * somewhere the first cannot: a `NO_AUTH` hop is never guarded outbound, and a hook that answers its
+ * challenge with an `Authorization` header is attaching a credential all the same.
  *
  * The challenge response is closed before the throw, for the same reason AUTH-32 closes it on a hook
  * throw: this is past the point where the caller still owns it, so propagating unclosed leaks the body.
  */
-async function guardReplayScheme(
-  replacement: Request,
-  response: Response,
-  scheme: AuthScheme,
-): Promise<void> {
-  const carriesCredential =
+async function guardReplayScheme(input: ReplayGuardInput): Promise<void> {
+  const {replacement, response, scheme, outboundGuarded} = input;
+  const attachesCredential =
+    outboundGuarded ||
     replacement.headers.has('Authorization') ||
     replacement.headers.has('Proxy-Authorization');
-  if (!carriesCredential) return;
+  if (!attachesCredential) return;
   try {
     requireHttps(replacement.url, scheme);
   } catch (error) {
@@ -579,6 +611,8 @@ async function runHook(
 interface ChallengeDrive {
   readonly response: Response;
   readonly outbound: Request;
+  /** {@link OutboundPlan.guarded}, carried in for {@link guardReplayScheme}. */
+  readonly outboundGuarded: boolean;
   readonly fork: () => (request?: Request) => Promise<Response>;
   readonly settings: AuthStepSettings;
   readonly hookContext: DefaultHookContext;
@@ -594,7 +628,8 @@ interface ChallengeDrive {
  * failure.
  */
 async function handleChallenge(drive: ChallengeDrive): Promise<Response> {
-  const {response, outbound, fork, settings, hookContext} = drive;
+  const {response, outbound, outboundGuarded, fork, settings, hookContext} =
+    drive;
 
   const selection = pickChallengeHeader(response);
   // AUTH-33: no matching challenge header -> unchanged, and the hook is never consulted.
@@ -641,7 +676,13 @@ async function handleChallenge(drive: ChallengeDrive): Promise<Response> {
   // a second wire send on a request nobody is waiting for is the one thing that must not happen.
   if (isAborted(hookContext.signal)) return response;
 
-  await guardReplayScheme(replacement, response, hookContext.scheme); // AUTH-28
+  // AUTH-28
+  await guardReplayScheme({
+    replacement,
+    response,
+    scheme: hookContext.scheme,
+    outboundGuarded,
+  });
 
   await response.close(); // AUTH-30: the original is closed before the replacement is driven.
   // AUTH-30: exactly once, through a FRESH chain copy, with no further challenge handling on it.
@@ -678,6 +719,8 @@ async function handleChallenge(drive: ChallengeDrive): Promise<Response> {
  * @returns the descriptor to install in a pipeline's AUTH slot.
  * @throws PlaintextCredentialError — as a rejected promise — when the resolved scheme would attach a
  *   credential over a non-HTTPS URL (AUTH-28), on the outbound pass and again on a challenge replay.
+ *   A replay whose hop was guarded outbound is guarded again whatever URL and headers the hook chose,
+ *   so a hook that downgrades the scheme fails here rather than on the wire.
  *   Recover by fixing the endpoint's scheme; retrying will not help.
  * @throws AuthResolutionError — as a rejected promise — when the selected tier lists no scheme with a
  *   matching configured credential (AUTH-6; AUTH-4 governs only WHICH tier is selected), or when the
@@ -750,7 +793,7 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
         signal,
       };
 
-      const {crossOrigin, outbound} = await planOutbound(
+      const {crossOrigin, guarded, outbound} = await planOutbound(
         seedRequest,
         stampContext,
       );
@@ -769,6 +812,7 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
       return handleChallenge({
         response,
         outbound,
+        outboundGuarded: guarded,
         fork,
         settings,
         hookContext: {...stampContext, composing},

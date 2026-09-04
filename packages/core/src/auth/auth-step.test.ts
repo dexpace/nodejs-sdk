@@ -4,7 +4,9 @@
 // lands before any token fetch or header write, and it applies only on the credential-attaching path --
 // a marker-suppressed cross-origin re-issue may proceed credential-free over any scheme),
 // AUTH-27 (exactly one AUTH-stage descriptor, pinned to the pillar), AUTH-28 (HTTPS guard,
-// NO_AUTH exempt, re-applied on the replay path), AUTH-29 (the cross-origin marker skips the guard and
+// NO_AUTH exempt, re-applied on the replay path -- unconditionally once the outbound pass guarded the
+// hop, whatever header names the replacement carries, and additionally on an Authorization or
+// Proxy-Authorization the hook adds to an unguarded NO_AUTH hop), AUTH-29 (the cross-origin marker skips the guard and
 // stamping, is cleared from the outbound headers, and suppresses the challenge reaction too -- so the
 // credential cannot re-enter via the 401), AUTH-25 (a 407 is answered from Proxy-Authenticate into
 // Proxy-Authorization), AUTH-30 (401 + WWW-Authenticate invokes the hook; a replacement re-drives
@@ -1010,7 +1012,87 @@ describe('authStep: the replay HTTPS guard (AUTH-28)', () => {
     expect(transport.sendCount).toBe(1); // the replacement never reached the wire
     expect(challenged.cancelCount()).toBe(1); // and the 401 was closed before the throw, not leaked
   });
+});
 
+describe('authStep: once guarded, the replay stays guarded (AUTH-28)', () => {
+  test('a replacement carrying a NON-standard credential header over plaintext is refused (AUTH-28)', async () => {
+    // The reported hole (audit #67 / #71): the guard tested two header NAMES, and
+    // `ApiKeyCredentialConfig.headerName` lets this very step stamp any header it is told to. A hook
+    // that downgrades the URL and answers with `X-Api-Key` therefore went out in clear text, with no
+    // `PlaintextCredentialError`. The rule is now "the outbound pass guarded this hop, so the replay
+    // is guarded too", which does not depend on reading header names at all.
+    const challenged = challengeResponse(
+      401,
+      'WWW-Authenticate',
+      'Basic realm="x"',
+    );
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {
+        apiKey: {
+          credential: new ApiKeyCredential('secret'),
+          headerName: 'X-Api-Key',
+        },
+      },
+      tiers: tiersFor('API_KEY'), // the outbound pass DID guard: the seed is https
+      challengeHook: (_response, request) =>
+        Promise.resolve(
+          request
+            .newBuilder()
+            .url('http://example.com/a')
+            .headers(
+              request.headers.newBuilder().set('X-Api-Key', 'SECRET').build(),
+            )
+            .build(),
+        ),
+    });
+
+    const error = await rejectionOf(runThrough(descriptor, transport));
+
+    expect(error).toBeInstanceOf(PlaintextCredentialError);
+    expect(transport.sendCount).toBe(1); // the replacement never reached the wire
+    expect(challenged.cancelCount()).toBe(1); // and the 401 was closed before the throw
+  });
+
+  test('a header-free replacement over plaintext is refused too, once the hop was guarded (AUTH-28)', async () => {
+    // The other half of the same rule, and the reason it is stated as "once guarded, always guarded"
+    // rather than as a wider header list: a hook is free to invent a credential carrier this step has
+    // never heard of, so no enumeration of names can be complete. The scheme that made the outbound
+    // pass credentialed is what the replay inherits.
+    const challenged = challengeResponse(
+      401,
+      'WWW-Authenticate',
+      'Basic realm="x"',
+    );
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {
+        apiKey: {credential: new ApiKeyCredential('secret')},
+      },
+      tiers: tiersFor('API_KEY'),
+      challengeHook: (_response, request) =>
+        Promise.resolve(
+          Request.newBuilder()
+            .url('http://example.com/b')
+            .method(request.method)
+            .build(),
+        ),
+    });
+
+    const error = await rejectionOf(runThrough(descriptor, transport));
+
+    expect(error).toBeInstanceOf(PlaintextCredentialError);
+    expect(transport.sendCount).toBe(1);
+  });
+});
+
+describe('authStep: an unguarded NO_AUTH hop (AUTH-28/AUTH-29)', () => {
   test('a credential-free replacement over plaintext is NOT blocked by the replay guard (AUTH-28/AUTH-29)', async () => {
     const challenged = challengeResponse(
       401,
