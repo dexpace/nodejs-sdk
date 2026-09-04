@@ -126,6 +126,20 @@ events. A non-URL string handed to either public constructor now renders `[malfo
 *Constrains #74:* build any URL-naming message from `redactUrl()` at the constructor. *Constrains #72, #78:*
 `docs/sdk-documentation/errors.md` redirect section was edited here.
 
+**D9 outcome (2026-09-05, #71, PR #86).** `BasicCredential` / `DigestCredential` are classes in
+`auth/credential.ts` with `#password`, read inside the package through an `@internal` `credentialPassword()`
+friend hook; `DigestCredential` takes `algorithmPreference` as a third positional. No construction-time
+validation on the classes — AUTH-14/AUTH-16 stay single-sourced in `basicHandler()` / `digestHandler()`,
+which `authStep()` builds at construction, so a blank password still fails there. Replay guard keys on
+`OutboundPlan.guarded` ("once guarded, always guarded"); `guardReplayScheme` now takes a `ReplayGuardInput`
+bundle. Two `deviations.md` rows: AUTH-8 widened to every credential type; XCUT-16 guard deliberately wider
+than its letter. `scripts/verify-consumer-types.mjs`'s fixture changed because no structural
+`BasicCredential` shape exists any more. *Constrains #74:* `auth-step.ts` conflict surface is the
+`./credential.js` import block, `buildHandlers`, `OutboundPlan`/`planOutbound`, `guardReplayScheme`,
+`ChallengeDrive`; `credential.ts` now has a type-only import of `./digest.js`, so a new edge from
+`digest.ts` back into `credential.ts` closes a cycle. A stubbed `ChallengingTransport` exists in
+`security-by-default.conformance.test.ts` for clauses needing an `https://` hop.
+
 **Trap for later subtasks (api-extractor).** `{@link SomeError.message}` does not resolve (`message` is
 inherited from `Error`; `ae-unresolved-link`). Write it as backticked prose.
 
@@ -135,4 +149,5 @@ inherited from `Error`; `ae-unresolved-link`). Write it as backticked prose.
 | #68 / PR #83 | patch notes for `@dexpace/core` and `@dexpace/codec-json`: shipped `.d.ts` prose changed for `Deserializer`, `jsonSerde()`, `InstrumentationBundle.tracerFactory`, `buildRequest`, `RequestConditions.applyTo` |
 | #68 / PR #83 | `docs/first-release.md:117` claims `serde.ts:99,170` cite `H15` — `H15` appears nowhere in `serde.ts`; `:159` puts `deserializeFrom` at `:162` and `serializeTo` at `:96` (actual `:221`, `:104`). File suspended under D1 |
 | #70 / PR #85 | patch changeset for `@dexpace/core`: redirect error messages now carry redacted URLs (and `[malformed url]` for unparseable input); `http.redirect.rejected` gained `url.full` |
+| #71 / PR #86 | minor changeset for `@dexpace/core`: `BasicCredential`/`DigestCredential` become classes (breaking for object-literal callers); patch note for `authStep`'s `@throws PlaintextCredentialError` prose; `docs/first-release.md` untouched though this is its "free before the first bump" class |
 | #69 / PR #84 | patch changeset for `@dexpace/core`: `noopInstrumentationBundle.activeSpan` changed from `undefined` to `NOOP_SPAN` (documented default of a `@public` interface) |
