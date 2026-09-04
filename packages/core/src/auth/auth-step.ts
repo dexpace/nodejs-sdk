@@ -15,47 +15,20 @@ import {BearerTokenCache} from './bearer-cache.js';
 import {parseChallenges} from './challenge.js';
 import type {Challenge, ChallengeHandler} from './challenge.js';
 import {composingHandler, type ComposingHandler} from './composing-handler.js';
-import type {
-  ApiKeyCredential,
-  NameKeyCredential,
-  TokenProvider,
+import {
+  credentialPassword,
+  type ApiKeyCredential,
+  type BasicCredential,
+  type DigestCredential,
+  type NameKeyCredential,
+  type TokenProvider,
 } from './credential.js';
 import type {AuthDescriptor} from './descriptor.js';
 import {digestHandler} from './digest.js';
-import type {DigestAlgorithm} from './digest.js';
 import {PlaintextCredentialError} from './errors.js';
 import {resolveAuthRequirement, type AuthTiers} from './resolve.js';
 import type {AuthScheme} from './scheme.js';
 import {stampStaticKey} from './static-key.js';
-
-/**
- * Username and password for the `BASIC` scheme.
- *
- * @public
- */
-export interface BasicCredential {
-  /** The user id (AUTH-14: non-empty; whitespace permitted). */
-  readonly username: string;
-  /** The password (AUTH-14: non-empty; whitespace permitted). */
-  readonly password: string;
-}
-
-/**
- * Username, password, and algorithm preference for the `DIGEST` scheme.
- *
- * @public
- */
-export interface DigestCredential {
-  /** The user id. Must not be blank. */
-  readonly username: string;
-  /** The password. Must not be blank. */
-  readonly password: string;
-  /**
-   * Preferred-first order, and also the acceptable set (AUTH-16). Omitted means strongest-first over
-   * all four supported algorithms.
-   */
-  readonly algorithmPreference?: readonly DigestAlgorithm[] | undefined;
-}
 
 /**
  * The token source and refresh margin for the `OAUTH2` scheme.
@@ -145,16 +118,24 @@ function buildHandlers(
   credentials: AuthCredentialSet,
 ): readonly ChallengeHandler[] {
   const handlers: ChallengeHandler[] = [];
+  // `credentialPassword()`, not a public `.password` property: AUTH-8's secret stays off the
+  // published surface and this function is the one sanctioned reader, exactly as `stampStaticKey`
+  // is for `credentialKey()`.
   if (credentials.digest !== undefined) {
     handlers.push(
-      digestHandler(credentials.digest.username, credentials.digest.password, {
-        algorithmPreference: credentials.digest.algorithmPreference,
-      }),
+      digestHandler(
+        credentials.digest.username,
+        credentialPassword(credentials.digest),
+        {algorithmPreference: credentials.digest.algorithmPreference},
+      ),
     );
   }
   if (credentials.basic !== undefined) {
     handlers.push(
-      basicHandler(credentials.basic.username, credentials.basic.password),
+      basicHandler(
+        credentials.basic.username,
+        credentialPassword(credentials.basic),
+      ),
     );
   }
   return handlers;

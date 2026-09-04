@@ -41,7 +41,12 @@ import {
   availableSchemesOf,
   type AuthCredentialSet,
 } from './auth-step.js';
-import {createBearerToken, ApiKeyCredential} from './credential.js';
+import {
+  createBearerToken,
+  ApiKeyCredential,
+  BasicCredential,
+  DigestCredential,
+} from './credential.js';
 import {createAuthDescriptor} from './descriptor.js';
 import {AuthResolutionError, PlaintextCredentialError} from './errors.js';
 import {createAuthRequirement} from './requirement.js';
@@ -236,8 +241,8 @@ describe('availableSchemesOf (AUTH-5)', () => {
 
   test('maps each configured credential to its scheme', () => {
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
-      digest: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
+      digest: new DigestCredential('u', 'p'),
       bearer: {provider: () => Promise.resolve(createBearerToken('t'))},
       apiKey: {credential: new ApiKeyCredential('k')},
     };
@@ -379,7 +384,7 @@ describe('authStep: the HTTPS guard and tier resolution (AUTH-6/AUTH-28)', () =>
   test('BASIC/DIGEST never stamp preemptively -- the outbound request carries no Authorization', async () => {
     const transport = new FakeTransport([countingResponse(200).response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -437,7 +442,7 @@ describe('authStep: the cross-origin marker (AUTH-29)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -464,7 +469,7 @@ describe('authStep: challenge detection (AUTH-25/AUTH-33)', () => {
       success.response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -492,7 +497,7 @@ describe('authStep: challenge detection (AUTH-25/AUTH-33)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -508,7 +513,7 @@ describe('authStep: challenge detection, negative cases (AUTH-33)', () => {
     const the401 = countingResponse(401);
     const transport = new FakeTransport([the401.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -541,7 +546,7 @@ describe('authStep: the challenge replay (AUTH-30/AUTH-31)', () => {
       success.response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -566,7 +571,7 @@ describe('authStep: the challenge replay (AUTH-30/AUTH-31)', () => {
     );
     const transport = new FakeTransport([first.response, second.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -590,7 +595,7 @@ describe('authStep: answering a Digest challenge (AUTH-15..AUTH-22)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      digest: {username: 'u', password: 'p'},
+      digest: new DigestCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('DIGEST')});
 
@@ -617,7 +622,7 @@ describe('authStep: the replayability gate (AUTH-31)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -641,7 +646,7 @@ describe('authStep: the replayability gate (AUTH-31)', () => {
     );
     const transport = new FakeTransport([challenged.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -749,7 +754,7 @@ describe('authStep: hook override and non-reactive schemes (AUTH-30)', () => {
     ]);
     let hookInvoked = false;
     const descriptor = authStep({
-      credentials: {basic: {username: 'u', password: 'p'}},
+      credentials: {basic: new BasicCredential('u', 'p')},
       tiers: tiersFor('BASIC'),
       challengeHook: (_response, request) => {
         hookInvoked = true;
@@ -1137,7 +1142,7 @@ describe('authStep: answering an unrecognized scheme through challengeHook', () 
       countingResponse(200).response,
     ]);
     const descriptor = authStep({
-      credentials: {basic: {username: 'u', password: 'p'}},
+      credentials: {basic: new BasicCredential('u', 'p')},
       tiers: tiersFor('BASIC'),
       challengeHook: (_response, request) =>
         Promise.resolve(
@@ -1459,7 +1464,7 @@ describe('authStep: a challenge this client cannot echo (AUTH-21/AUTH-22)', () =
     );
     const transport = new FakeTransport([challenge.response]);
     const descriptor = authStep({
-      credentials: {digest: {username: 'u', password: 'p'}},
+      credentials: {digest: new DigestCredential('u', 'p')},
       tiers: tiersFor('DIGEST'),
     });
 
