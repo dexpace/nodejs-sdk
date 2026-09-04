@@ -162,6 +162,24 @@ Eight classes that a `@throws` tag named but no package exported were promoted t
 | `CursorAlreadyAdvancedError` | a step reusing an already-invoked `next()`/`fork()` continuation |
 | `EndOfStreamError` | a `BufferedSource` read that required more bytes than the source delivered |
 
+**The two redirect errors carry redacted messages and raw properties, and the split is deliberate.**
+`SchemeDowngradeError.message` and `NonReplayableBodyError.message` name their URLs in the redacted
+form `OBS-11`/`OBS-12` define — userinfo as `***:***@`, every non-allow-listed query value as `***` —
+because a message is rendered by every logger, every `cause` chain and every consumer `console.error`,
+and `http.redirect.rejected` hands the error straight to `LogEvent.cause()`. The unredacted URLs stay
+on `fromUrl` / `toUrl` / `targetUrl`, which is where program code reads them:
+
+```ts
+try {
+  await client.send(request);
+} catch (error) {
+  if (error instanceof SchemeDowngradeError) {
+    console.error(error.message); // https://***:***@api.example.com/v1?token=***
+    retargetTo(error.toUrl); //     the real URL, for code rather than for a log
+  }
+}
+```
+
 Two more joined them on the same date, both from `XCUT-8`'s "never fabricate a successful exception":
 
 | Error | Raised by |

@@ -88,11 +88,22 @@ function emitStopReason(stop: {
   }
 }
 
-function emitRejected(error?: unknown): void {
+/**
+ * REDIR-28's rejection event. Carries `url.full` -- the hop the rejection is about -- through
+ * `redactUrl()`, the same field and the same policy `http.redirect.hop`, `loopDetected` and
+ * `malformedLocation` already use; before that this record named no URL at all, and the only URL a
+ * reader could recover was the raw one interpolated into the cause's message.
+ *
+ * The cause itself is safe to attach because `redirect/errors.ts` now builds both message texts from
+ * `redactUrl()` output. That is deliberately fixed at the ERROR rather than dropped here: `cause` is
+ * also what a caller's own `console.error` renders, and this step cannot redact that one.
+ */
+function emitRejected(request: Request, error?: unknown): void {
   try {
     const event = getGlobalLogger()
       .atLevel('warning')
-      .event('http.redirect.rejected');
+      .event('http.redirect.rejected')
+      .field('url.full', redactUrl(request.url));
     if (error !== undefined) {
       event.cause(error);
     }
@@ -216,7 +227,7 @@ export function redirectStep(
 
         if (decision.kind === 'return-current') {
           if (response.status.isRedirect) {
-            emitRejected();
+            emitRejected(request);
             emitStopReason({
               reason: decision.reason,
               request,
@@ -227,7 +238,7 @@ export function redirectStep(
         }
         if (decision.kind === 'fail') {
           const releaseError = await releaseQuietly(response);
-          emitRejected(decision.error);
+          emitRejected(request, decision.error);
           throw withReleaseFailure(decision.error, releaseError);
         }
         if (signal?.aborted === true) return response;
