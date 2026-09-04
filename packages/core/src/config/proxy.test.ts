@@ -462,6 +462,72 @@ describe('resolveProxyOptions rejection paths (CFG-24, CFG-25)', () => {
   });
 });
 
+describe("CFG-24's WARNING half: a rejected proxy URL is audible", () => {
+  async function collectWarnings(
+    run: () => void,
+  ): Promise<Map<string, unknown>[]> {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+    try {
+      run();
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+    return events.filter(e => e.get('event') === 'http.proxy.configRejected');
+  }
+
+  test('an unparseable URL warns, naming the variable and the reason', async () => {
+    const rejected = await collectWarnings(() => {
+      expect(
+        resolveProxyOptions(configWith({HTTPS_PROXY: 'not a url at all'})),
+      ).toBeNull();
+    });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.get('source')).toBe('HTTPS_PROXY');
+    expect(rejected[0]?.get('reason')).toBe('unparseable');
+  });
+
+  test('an absent port warns, naming the variable and the reason (CFG-25)', async () => {
+    const rejected = await collectWarnings(() => {
+      expect(
+        resolveProxyOptions(configWith({HTTP_PROXY: 'http://p.example.com'})),
+      ).toBeNull();
+    });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.get('source')).toBe('HTTP_PROXY');
+    expect(rejected[0]?.get('reason')).toBe('port');
+  });
+
+  test('an unsupported scheme warns, naming the variable and the reason', async () => {
+    const rejected = await collectWarnings(() => {
+      expect(
+        resolveProxyOptions(
+          configWith({HTTPS_PROXY: 'ftp://p.example.com:21'}),
+        ),
+      ).toBeNull();
+    });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.get('reason')).toBe('scheme');
+  });
+
+  test('a well-formed proxy URL warns about nothing', async () => {
+    const rejected = await collectWarnings(() => {
+      expect(
+        resolveProxyOptions(
+          configWith({HTTPS_PROXY: 'http://p.example.com:8080'}),
+        ),
+      ).not.toBeNull();
+    });
+    expect(rejected).toHaveLength(0);
+  });
+});
+
 describe('resolveProxyOptions URL-layer edges (CFG-24, CFG-25)', () => {
   test('honors an explicitly written default port that the URL parser normalizes away', () => {
     // `new URL('http://p:80').port` is `''` -- the WHATWG parser folds a special scheme's default

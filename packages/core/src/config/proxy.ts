@@ -6,6 +6,7 @@ import {
   CFG_KEY_HTTP_PROXY,
   CFG_KEY_NO_PROXY,
 } from './configuration.js';
+import {getGlobalLogger} from '../observability/logger.js';
 
 /** Property-layer keys, read raw so their camelCase survives (CFG-4, CFG-24, CFG-26). */
 const PROPERTY_KEYS = {
@@ -405,8 +406,33 @@ function readUrlCredentials(url: URL): ProxyCredentials | undefined {
   };
 }
 
-/** CFG-24's environment form: `scheme://user:pass@host:port`. Total -- malformed input is `null`. */
-function parseProxyUrl(raw: string): ProxyEndpoint | null {
+/**
+ * CFG-24's WARNING half: "invalid config -> null + warning". The null half was always here; until
+ * 2026-09-02 the warning had nowhere to go, because no `Logger` seam existed when 7a shipped this
+ * module. The consequence was that a typo'd `HTTPS_PROXY` routed every request DIRECT with
+ * nothing to read anywhere.
+ *
+ * Never the URL itself: a proxy URL carries `user:pass@`, and CFG-22 masks credentials in every
+ * rendering. The variable that supplied it and the reason it was rejected are enough to act on.
+ */
+function warnProxyRejected(source: string, reason: string): void {
+  try {
+    getGlobalLogger()
+      .atLevel('warning')
+      .event('http.proxy.configRejected')
+      .field('source', source)
+      .field('reason', reason)
+      .emit();
+  } catch {
+    // OBS-20: logger failure must never fail resolution, which CFG-24 makes total.
+  }
+}
+
+/**
+ * CFG-24's environment form: `scheme://user:pass@host:port`. Total -- malformed input is `null`,
+ * and every null path warns through {@link warnProxyRejected} naming `source`.
+ */
+function parseProxyUrl(raw: string, source: string): ProxyEndpoint | null {
   const trimmed = raw.trim();
   let url: URL;
   let port: number | null;
@@ -420,10 +446,24 @@ function parseProxyUrl(raw: string): ProxyEndpoint | null {
   } catch {
     // A malformed proxy URL is ordinary bad configuration, not a programmer error: CFG-24 requires
     // resolution to return null rather than throw.
+    warnProxyRejected(source, 'unparseable');
     return null;
   }
+  // Three gates, three distinct warnings. Kept as separate `if`s rather than the single conjunction
+  // they were, because "the proxy was rejected" is not actionable and "the port is unusable" is.
   const type = PROXY_TYPE_BY_SCHEME.get(url.protocol);
-  if (type === undefined || port === null || url.hostname === '') return null;
+  if (type === undefined) {
+    warnProxyRejected(source, 'scheme');
+    return null;
+  }
+  if (port === null) {
+    warnProxyRejected(source, 'port');
+    return null;
+  }
+  if (url.hostname === '') {
+    warnProxyRejected(source, 'host');
+    return null;
+  }
   return {type, host: unbracketHost(url.hostname), port, credentials};
 }
 
@@ -456,10 +496,10 @@ function resolveFromProperties(config: Configuration): ProxyEndpoint | null {
 
 /** CFG-24's environment form, HTTPS_PROXY preferred over HTTP_PROXY. */
 function resolveFromEnvironment(config: Configuration): ProxyEndpoint | null {
-  const raw =
-    config.getString(CFG_KEY_HTTPS_PROXY) ??
-    config.getString(CFG_KEY_HTTP_PROXY);
-  return raw === undefined ? null : parseProxyUrl(raw);
+  const https = config.getString(CFG_KEY_HTTPS_PROXY);
+  const source = https === undefined ? CFG_KEY_HTTP_PROXY : CFG_KEY_HTTPS_PROXY;
+  const raw = https ?? config.getString(CFG_KEY_HTTP_PROXY);
+  return raw === undefined ? null : parseProxyUrl(raw, source);
 }
 
 /**

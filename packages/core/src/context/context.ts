@@ -83,9 +83,33 @@ export interface ContextInit {
   /**
    * Pin to make two contexts share one store slot (CTX-5).
    *
-   * @defaultValue a fresh `Symbol()` per call
+   * @defaultValue a fresh `Symbol()` per call, described `<flavor>#<n>` so CTX-8's duplicate-key
+   *   message names a distinct key rather than a flavor
    */
   readonly key?: symbol | undefined;
+}
+
+/**
+ * Serial number for a default-constructed context key's DESCRIPTION (CTX-8).
+ *
+ * `Symbol()` is already the identity, and CTX-4/5/6's uniqueness never depended on the description.
+ * What did depend on it is CTX-8's message clause, which appendix C states as "an error **whose
+ * message** identifies the key": every default-constructed context of a flavor rendered as the
+ * identical `Symbol(dispatch-context)`, so `DuplicateContextKeyError`'s message named the KIND of
+ * key and not WHICH key. One counter across all three flavors, so no two default keys anywhere in
+ * the process render alike.
+ *
+ * A second module-level mutable binding, on top of the `contextStore` singleton that already takes
+ * that deviation (`docs/knowledge/harvested/variables-and-declarations.md:22`). It is write-only
+ * from outside: nothing reads it, nothing resets it, and no behaviour keys off its value -- it
+ * labels a string.
+ */
+let nextKeySerial = 0;
+
+/** A distinctly-described default key: `flavor#N`. Never called when the caller pinned one. */
+function defaultKey(flavor: string): symbol {
+  nextKeySerial += 1;
+  return Symbol(`${flavor}#${String(nextKeySerial)}`);
 }
 
 /**
@@ -101,7 +125,7 @@ export function createDispatchContext(
 ): DispatchContext {
   const {
     instrumentation = noopInstrumentationBundle,
-    key = Symbol('dispatch-context'),
+    key = defaultKey('dispatch-context'),
   } = init;
   return Object.freeze({
     kind: 'dispatch',
@@ -122,7 +146,7 @@ export function createRequestContext(
   const {
     operationName,
     instrumentation = noopInstrumentationBundle,
-    key = Symbol('request-context'),
+    key = defaultKey('request-context'),
   } = init;
   return Object.freeze({
     kind: 'request',
@@ -146,7 +170,7 @@ export function createExchangeContext(
   const {
     operationName,
     instrumentation = noopInstrumentationBundle,
-    key = Symbol('exchange-context'),
+    key = defaultKey('exchange-context'),
   } = init;
   return Object.freeze({
     kind: 'exchange',

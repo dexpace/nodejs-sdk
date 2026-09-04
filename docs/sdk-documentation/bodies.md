@@ -139,8 +139,9 @@ returns `null` and leaves the response untouched and unread.
 `HttpStatusError` therefore carries the status, the headers, and a bounded body preview. The full
 body is irrecoverably gone; that is the trade, and it is deliberate. The cap itself is required —
 `BODY-30`/`HTTP-52` — and the decision to size it once for every consumer rather than make it
-configurable is recorded as a **closed deferral** in
-[`docs/deferred-items.md`](../deferred-items.md) ("Every buffering **cap**"), not as a deviation:
+configurable is recorded as a **closed deferral** — the "Every buffering cap" row of
+[`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
+where [`docs/deferred-items.md`](../deferred-items.md)'s discharged rows went — not as a deviation:
 nothing here departs from the reference contract. `errors.md` states the same fact the same way.
 
 ### Reading a response as a model

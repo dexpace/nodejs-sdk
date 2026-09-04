@@ -39,7 +39,7 @@ export interface SseEventFields {
 /**
  * Construct a frozen event, defensively copying the data list so later mutation cannot reach inside (SSE-20).
  *
- * @throws InvariantViolation when a field carries a value the grammar can never produce — a NUL-bearing `id`
+ * @throws an assertion failure (a caller bug, not a catchable condition) when a field carries a value the grammar can never produce — a NUL-bearing `id`
  *   (SSE-9 drops those at the parser) or a `retryMs` that is not a non-negative safe integer (SSE-11). Both are
  *   programmer errors, not stream conditions: the parser is the only production caller and it filters both.
  *

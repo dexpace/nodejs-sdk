@@ -20,18 +20,19 @@
  */
 export * from './http/index.js';
 
-// Deliberately NOT `export * from './seams/index.js';`. That file is a folder-level barrel, which
-// docs/knowledge/harvested/module-organization.md:18 bans outright and api-design.md:6 makes this file the sole
-// one of; nothing imports it and the right end state is deleting it (docs/open-items.md H12). Naming
-// each public export here keeps the package's surface a decision made in one place rather than a
-// consequence of what a folder happens to re-export.
+// `packages/core/src/seams/` deliberately has NO folder-level barrel. It carried one from Phase 2
+// until 2026-09-02, when it was deleted: docs/knowledge/harvested/module-organization.md:18 bans
+// internal folder-level barrels outright and api-design.md:6 makes this file the package's sole
+// barrel, and nothing had ever imported it -- its only reference in the workspace was the comment
+// here explaining why it was not re-exported. Naming each public export below keeps the package's
+// surface a decision made in one place rather than a consequence of what a folder re-exports.
 export type {Transport} from './seams/transport.js';
 export {
   composeSignal,
   isTimeoutSignal,
   CancellationError,
 } from './seams/transport.js';
-export {IoError, TransportFailureError} from './io/errors.js';
+export {EndOfStreamError, IoError, TransportFailureError} from './io/errors.js';
 export type {OperationDescriptor} from './seams/operation.js';
 export {buildRequest, OperationAssemblyError} from './seams/operation.js';
 
@@ -46,6 +47,7 @@ export type {Body, FileBodyDescriptor} from './body/body.js';
 export {
   ConsumedBodyError,
   FormBodyValidationError,
+  HttpStatusValidationError,
   isBodyError,
   MultipartBoundaryError,
 } from './body/errors.js';
@@ -84,8 +86,33 @@ export {PILLAR_STAGES, STAGE_ORDER} from './pipeline/stage.js';
 export type {Next, Step, StepContext, StepDescriptor} from './pipeline/step.js';
 export {PipelineBuilder} from './pipeline/builder.js';
 export {Runtime} from './pipeline/runtime.js';
+// The five errors a hand-built pipeline can actually provoke. Every one is the subject of a
+// `@throws` tag on a symbol above, and until 2026-09-02 none was exported, so a consumer read the
+// tag, reached for `instanceof`, and had nothing to reach for.
+export {
+  AnchorNotFoundError,
+  CrossStageEditError,
+  CursorAlreadyAdvancedError,
+  PillarCollisionError,
+  ReservedStageError,
+} from './pipeline/errors.js';
 export {retryStep} from './retry/retry-step.js';
+// The trail entry for a response the engine discarded whose status is outside 400-599 — reachable
+// only through a caller-widened `retryableStatuses`.
+export {RetryDiscardedResponseError} from './retry/errors.js';
 export {redirectStep} from './redirect/redirect-step.js';
+// `withRedirect` installs `redirectStep` together with the REDIR-11(c) guard that keeps the internal
+// cross-origin marker off the wire. Publishing the pillar without them made `withRedirect`'s own
+// instruction -- "a caller who installs redirectStep() directly is responsible for installing the
+// guard too" -- name an obligation no consumer could discharge.
+export {
+  stripCrossOriginMarkerStep,
+  withRedirect,
+} from './redirect/strip-marker-step.js';
+export {
+  NonReplayableBodyError,
+  SchemeDowngradeError,
+} from './redirect/errors.js';
 export {authStep} from './auth/auth-step.js';
 export {standardResilience} from './auth/preset.js';
 
@@ -249,8 +276,11 @@ export {PaginationError} from './pagination/errors.js';
 // Deliberately NOT exported: `config/equality.js`'s deepEqual/deepHash — no requirement gives a
 // caller direct access to them, and they have no in-package caller either as of 2026-08-27, so the
 // module is reachable only from its own test (docs/open-items.md K16 owns the first real consumer);
-// and `config/client-identity-step.js`'s clientIdentityStep, whose StepDescriptor return type is
-// part of the still-internal pipeline authoring surface (docs/open-items.md K1).
+// and `config/client-identity-step.js`'s clientIdentityStep. Its absence is now a DECISION, not a
+// blocker: this comment used to say its `StepDescriptor` return type was "part of the still-internal
+// pipeline authoring surface", which stopped being true when Phase 5c promoted `StepDescriptor`,
+// `Stage`, `Step`, `StepContext` and `PipelineBuilder` 168 lines above. Publishing the step is a
+// deliberate surface widening and wants sign-off (docs/open-items.md K1, corrected 2026-09-02).
 export type {Clock} from './config/clock.js';
 export {defaultClock} from './config/clock.js';
 export type {BuildInfo} from './config/build-info.js';

@@ -51,7 +51,7 @@ function padTwoDigits(value: number): string {
  *
  * @param epochMs - the instant, in epoch milliseconds.
  * @returns the canonical HTTP-date string.
- * @throws InvariantViolation when `epochMs` is not a finite number in `Date`'s representable range,
+ * @throws an assertion failure (a caller bug, not a catchable condition) when `epochMs` is not a finite number in `Date`'s representable range,
  *   or falls outside the four-digit-year span RFC 1123 can render -- a programmer error, not a value
  *   any wire input can produce.
  *

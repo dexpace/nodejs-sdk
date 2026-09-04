@@ -49,6 +49,14 @@ function carriesCancellation(error: unknown): boolean {
   return false;
 }
 
+/** True when the chain carries the SDK's own terminal cancellation type, not merely an abort. */
+function carriesSdkCancellationError(error: unknown): boolean {
+  for (const link of chainOf(error)) {
+    if (link instanceof CancellationError) return true;
+  }
+  return false;
+}
+
 /** True when anything in the chain is a timeout -- the classification `XCUT-3` forbids here. */
 function carriesTimeout(error: unknown): boolean {
   for (const link of chainOf(error)) {
@@ -168,14 +176,15 @@ describe('XCUT-3: an inter-attempt wait is promptly cancellable', () => {
     }, 50).unref();
     const surfaced = await rejectionOf(pending);
 
-    // Asserted on the chain rather than the top-level type ON PURPOSE. The cancellation arrives
-    // here as a bare DOMException `AbortError` under a `SuppressedError`, NOT as the SDK's own
-    // `CancellationError` -- 5a's engine surfaces `signal.reason` and whatever `clock.sleep` threw
-    // verbatim, while the transport path maps the same abort through `abortToSdkError` and does
-    // produce `CancellationError`. XCUT-3's letter is met either way (a cancellation is surfaced
-    // and it is not a timeout), so this asserts exactly that, and the cross-layer type
-    // inconsistency is filed as a finding rather than pinned here -- see docs/open-items.md N1.
+    // Asserted on the chain rather than the top-level type, because the top level is a
+    // `SuppressedError` pairing the cancellation with the prior attempt's failure. What the chain
+    // must carry is the SDK's OWN type: until 2026-09-02 the retry engine surfaced `signal.reason`
+    // verbatim, so a cancelled backoff arrived as a bare DOMException `AbortError` while the
+    // transport path mapped the identical abort to `CancellationError` -- one requirement, two
+    // types, depending on which layer noticed. Both layers now map through the same shape, so this
+    // asserts the type as well as XCUT-3's letter.
     expect(carriesCancellation(surfaced)).toBe(true);
+    expect(carriesSdkCancellationError(surfaced)).toBe(true);
     expect(carriesTimeout(surfaced)).toBe(false);
 
     await pipeline.close();

@@ -6,9 +6,12 @@
 // XCUT-8 (the status-to-exception mapping factory refuses to fabricate a "successful exception":
 // toHttpError returns null for 1xx/2xx/3xx rather than an error, which is the absent/null
 // convenience form XCUT-8 explicitly permits in place of a throwing strict mapper. The port ships
-// only that form -- see docs/open-items.md N2 for the constructor-level hole in the same guarantee).
+// only that form, and since 2026-09-02 the CONSTRUCTOR enforces the 400-599 band too, so the
+// guarantee holds at both levels rather than only at the factory).
 import {describe, expect, test} from 'bun:test';
 import {Headers} from '../http/headers.js';
+import {HttpStatusError} from './http-status-error.js';
+import {HttpStatusValidationError} from './errors.js';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import {Response} from '../http/response.js';
@@ -47,6 +50,109 @@ describe('toHttpError (BODY-31)', () => {
   test('returns an HttpStatusError for 4xx and 5xx', async () => {
     expect(await toHttpError(responseWith(404, null))).not.toBeNull();
     expect(await toHttpError(responseWith(500, null))).not.toBeNull();
+  });
+});
+
+describe("the constructor refuses a status outside HTTP-11's error band (N2, XCUT-8)", () => {
+  test('rejects a non-error status -- the "successful exception" XCUT-8 forbids', () => {
+    for (const status of [200, 204, 301, 399]) {
+      expect(() => new HttpStatusError(status, undefined, undefined)).toThrow(
+        HttpStatusValidationError,
+      );
+    }
+  });
+
+  test('rejects a status outside 100-599 entirely', () => {
+    expect(() => new HttpStatusError(600, undefined, undefined)).toThrow(
+      HttpStatusValidationError,
+    );
+    expect(() => new HttpStatusError(0, undefined, undefined)).toThrow(
+      HttpStatusValidationError,
+    );
+  });
+
+  test('rejects a non-integer or non-finite status', () => {
+    expect(() => new HttpStatusError(404.5, undefined, undefined)).toThrow(
+      HttpStatusValidationError,
+    );
+    expect(() => new HttpStatusError(Number.NaN, undefined, undefined)).toThrow(
+      HttpStatusValidationError,
+    );
+    expect(
+      () => new HttpStatusError(Number.POSITIVE_INFINITY, undefined, undefined),
+    ).toThrow(HttpStatusValidationError);
+  });
+
+  test('accepts the whole band, inclusive at both edges', () => {
+    for (const status of [400, 404, 500, 599]) {
+      expect(new HttpStatusError(status, undefined, undefined).status).toBe(
+        status,
+      );
+    }
+  });
+});
+
+describe('toHttpError survives a failing close (H14/P1, RECOV-12)', () => {
+  /**
+   * A body whose `cancel()` hook fails INDEPENDENTLY of the read, which is the only shape that makes
+   * the masking observable: for a plain errored `ReadableStream` the read error and the cancel error
+   * are the same object, so nothing is masked. Here the stream reads cleanly to completion and only
+   * teardown fails.
+   */
+  /** Fails the memoized close ONCE, so the drain's own release meets the stored rejection. */
+  async function failFirstClose(response: Response): Promise<void> {
+    let closeError: unknown;
+    try {
+      await response.close();
+    } catch (error: unknown) {
+      closeError = error;
+    }
+    expect(String(closeError)).toContain('CLOSE FAILED');
+  }
+
+  function bodyFailingToCancel(bytes: Uint8Array): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start: c => {
+        c.enqueue(bytes);
+        c.close();
+      },
+      cancel: () => {
+        throw new Error('CLOSE FAILED');
+      },
+    });
+  }
+
+  test('a 5xx whose close() fails still yields the HttpStatusError the docs promise', async () => {
+    const response = responseWith(
+      500,
+      bodyFailingToCancel(new TextEncoder().encode('boom')),
+    );
+    await failFirstClose(response);
+
+    const error = await toHttpError(response);
+    expect(error).toBeInstanceOf(HttpStatusError);
+    expect(error?.status).toBe(500);
+  });
+
+  test("the release failure is not lost: it rides along as the error's cause", async () => {
+    const response = responseWith(
+      500,
+      bodyFailingToCancel(new TextEncoder().encode('boom')),
+    );
+    await failFirstClose(response);
+
+    const error = await toHttpError(response);
+    expect(String((error as Error | null)?.cause)).toContain('CLOSE FAILED');
+  });
+
+  test('a bodiless 4xx whose close() fails still yields the HttpStatusError', async () => {
+    const response = responseWith(404, bodyFailingToCancel(new Uint8Array()));
+    await failFirstClose(response);
+    // Drain the (already-cancelled) body path: the body is non-null, so this exercises the drain
+    // branch; the bodiless branch is covered by the null-body cases above.
+    const error = await toHttpError(response);
+    expect(error).toBeInstanceOf(HttpStatusError);
+    expect(error?.status).toBe(404);
   });
 });
 

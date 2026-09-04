@@ -44,6 +44,15 @@ export const DEFAULT_RETRY_SETTINGS: RetrySettings = Object.freeze({
   retryableStatuses: RETRYABLE_STATUSES,
 });
 
+/**
+ * A duration this module will hand to `Clock.sleep`, or compare against elapsed time.
+ *
+ * Bounded below only. A ceiling of `Clock`'s `MAX_SLEEP_MS` sat here between 2026-09-02 and later
+ * the same day: it was the right guard while `Clock.sleep` REFUSED a longer wait, and it became
+ * unnecessary the moment the clock started chaining timers to honor any finite duration. Re-adding
+ * it would now reject a duration the platform can wait -- and would make `RETRY-18`'s 365-day
+ * pacing clamp unconfigurable, which is the very collision V13 closed.
+ */
 function validateDuration(label: string, value: number | undefined): void {
   if (value === undefined) return;
   invariant(
@@ -66,8 +75,8 @@ function validateDuration(label: string, value: number | undefined): void {
  *
  * @param overrides - the fields to change; everything else takes RETRY-12's default.
  * @returns frozen, validated settings.
- * @throws InvariantViolation for a negative or non-finite duration, a multiplier below 1.0,
- *   `maxAttempts` below 1, or a jitter outside [0,1].
+ * @throws InvariantViolation for a negative or non-finite duration; a multiplier below 1.0 or
+ *   non-finite; a `maxAttempts` that is not an integer >= 1; or a jitter outside [0,1].
  *
  * @internal
  */
@@ -79,13 +88,19 @@ export function retrySettings(
   validateDuration('maxDelayMs', merged.maxDelayMs);
   validateDuration('totalTimeoutMs', merged.totalTimeoutMs);
   validateDuration('fixedDelayMs', merged.fixedDelayMs);
+  // `Number.isFinite` on both, and integrality on the one that counts wire sends. The lower bound
+  // alone let `Infinity` through on the multiplier -- which makes the second delay `Infinity` and
+  // fails inside the retry loop at `Clock.sleep`'s ceiling instead of at the call that configured it
+  // -- and let a fractional `maxAttempts` through, which is not a count. Same reasoning as HTTP-35's
+  // on `RequestOptionsBuilder.maxRetries`: these two are among the four holes the 2026-09-02 sweep
+  // of every public numeric setter closed to the full range.
   invariant(
-    merged.multiplier >= 1,
-    `retry multiplier must be >= 1.0, got ${String(merged.multiplier)}`,
+    Number.isFinite(merged.multiplier) && merged.multiplier >= 1,
+    `retry multiplier must be a finite number >= 1.0, got ${String(merged.multiplier)}`,
   );
   invariant(
-    Number.isFinite(merged.maxAttempts) && merged.maxAttempts >= 1,
-    `retry maxAttempts must be >= 1 (1 disables retries), got ${String(merged.maxAttempts)}`,
+    Number.isInteger(merged.maxAttempts) && merged.maxAttempts >= 1,
+    `retry maxAttempts must be an integer >= 1 (1 disables retries), got ${String(merged.maxAttempts)}`,
   );
   invariant(
     merged.jitter >= 0 && merged.jitter <= 1,

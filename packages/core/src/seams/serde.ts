@@ -92,6 +92,11 @@ export interface Serializer {
    * directional-agnostic, so a genuine write failure is never re-wrapped as a serde exception.
    * The writer lock is released on that path too; the sink itself is left errored and unclosed,
    * because the caller owns it (SERDE-3).
+   *
+   * @remarks Takes no `AbortSignal`. The project-wide position is that a signal is required where an
+   * API drives a stream it did not open, and this method does — so it is one of the two SPI methods
+   * queued to gain `{signal}` in the pre-publish breaking-change batch. Tracked at
+   * `docs/open-items.md` H15.
    */
   serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>;
 }
@@ -158,6 +163,11 @@ export interface Deserializer {
    * reader lock released on that path too and `source` left uncancelled (SERDE-3).
    * @throws TypeError when `source` is already locked by another reader — the plain platform error,
    * not re-typed, because a contended source is a programmer error rather than a decode failure.
+   *
+   * @remarks Takes no `AbortSignal`. The project-wide position is that a signal is required where an
+   * API drives a stream it did not open, and this method does — so it is one of the two SPI methods
+   * queued to gain `{signal}` in the pre-publish breaking-change batch. Tracked at
+   * `docs/open-items.md` H15.
    */
   deserializeFrom<T>(
     source: ReadableStream<Uint8Array>,

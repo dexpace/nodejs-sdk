@@ -81,7 +81,7 @@ function noAuthSettings(): AuthStepSettings {
  * @throws HeaderValidationError — from the returned runtime's `send()` — when credential material
  *   will not fit in a header value (HTTP-18).
  * @throws SchemeDowngradeError — from the returned runtime's `send()` — when a redirect attempts an HTTPS to HTTP downgrade not permitted by settings (REDIR-14/15).
- * @throws InvariantViolation — synchronously from this function — when any pillar's settings are
+ * @throws an assertion failure (a caller bug, not a catchable condition) — synchronously from this function — when any pillar's settings are
  *   invalid, including a non-finite bearer refresh margin or a non-header-safe Digest username. A
  *   caller-supplied `TokenProvider` or `challengeHook` error passes through `send()` unwrapped.
  *

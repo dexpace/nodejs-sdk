@@ -47,7 +47,7 @@ export function randomUuidFrom(webCrypto: Crypto | undefined): string {
  * primitive; a `node:crypto` import would break the browser/Workers half of the runtime floor.
  *
  * @returns a lower-case, hyphenated 36-character UUID.
- * @throws InvariantViolation when the runtime exposes no global WebCrypto to draw from -- a
+ * @throws an assertion failure (a caller bug, not a catchable condition) when the runtime exposes no global WebCrypto to draw from -- a
  *   deployment error, reported by name rather than as the bare `TypeError` that reading
  *   `getRandomValues` off `undefined` would otherwise produce.
  *

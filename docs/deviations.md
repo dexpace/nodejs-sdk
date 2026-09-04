@@ -325,9 +325,15 @@ answer for callers who need proxying. Recorded here for completeness, not as a p
 ## 14. `NFR-16` — publish provenance
 
 **Verified.** `prepublishOnly` is wired in all nine publishable packages (e.g.
-`packages/core/package.json:29`). There is **no** release workflow — `.github/workflows/` contains `ci.yml`
+`packages/core/package.json`). ~~There is **no** release workflow — `.github/workflows/` contains `ci.yml`
 only — and the string `provenance` appears in no `package.json`, no workflow, and no `.npmrc` (there is no
-`.npmrc`).
+`.npmrc`).~~
+
+**Superseded 2026-09-02.** `.github/workflows/release.yml` now exists: it triggers on a push to
+`main`, runs `changesets/action@v1`, declares `id-token: write`, and sets
+`NPM_CONFIG_PROVENANCE: 'true'`. So `provenance` is now scripted, and the "no release workflow"
+statement above is false. There is still no `.npmrc`, which is correct — `changesets/action` writes
+one from `NPM_TOKEN` at run time.
 
 **Why it cannot be corrected here.** `NFR-16`'s conformance test is behavioral: "a CI/release build fails an
 unsigned publication; a local build without keys still publishes unsigned." Satisfying it requires a real
@@ -339,11 +345,26 @@ produce that evidence; it unblocks at first release and not before.
 > "Publish + provenance CI job" ([`#d-nfr-16-provenance`](./open-items.md#d-nfr-16-provenance)) already recorded this
 > accurately ("`prepublishOnly` wired; nothing published yet"); §10 did not, and now does.
 >
-> **Still actionable, and not done here:** authoring the release workflow with `--provenance` and
+> ~~**Still actionable, and not done here:** authoring the release workflow with `--provenance` and
 > `id-token: write` is doable today — it is only *exercising* it that needs a registry. That is the one
 > remaining piece of work this audit identified and deliberately did not perform, because a release workflow
 > is an outward-facing artifact whose shape (trigger, environment, tag convention, who may publish) is a
-> project decision rather than a defect repair.
+> project decision rather than a defect repair.~~
+>
+> **Done 2026-09-02.** `.github/workflows/release.yml` is authored. It is **inert until an `NPM_TOKEN`
+> repository secret exists** — without one `changesets/action` cannot authenticate, so it maintains
+> the "Version Packages" pull request and publishes nothing. Two prerequisites that blocked the first
+> real publish are now one:
+>
+> - **Fixed 2026-09-02** — no manifest carried a `repository` field, which npm requires before it
+>   will accept `--provenance`. All nine publishable manifests now carry one; the two private
+>   packages deliberately do not.
+> - **Still open, and a maintainer call** — `.changeset/config.json` sets `"access": "restricted"`,
+>   which conflicts with provenance: attestations go to a public transparency log and require a
+>   public package. Publishing privately and publishing with provenance cannot both be true.
+>
+> The *behavioural* half of `NFR-16` is unchanged and still uncorrectable here, for the reason stated
+> above: it needs a real registry and a real OIDC token.
 >
 > **`NFR-12` was split out of this row and closed on evidence** — 644 emitted files and 9 `npm pack` tarballs
 > byte-identical across two clean builds, and a new blocking CI gate
@@ -405,7 +426,7 @@ a fourth level is not sanctioned by this entry.
 
 ## Deviations recorded outside a phase
 
-Empty as of 2026-08-31.
+Four rows as of 2026-09-02, all from the `docs/open-items.md` register audit (that file's Section V).
 
 A row here has no owning phase — it was found by a review, an audit, or a maintenance pass over shipped code.
 It is recorded on the day it is found rather than waiting for `docs/sdk-design-nodejs/10-…`, which is in a
@@ -414,4 +435,7 @@ frozen tree and is amended only deliberately, by hand. When §10 is next amended
 
 | Deviation | Found by | Date | Evidence | §10 status |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| **`HTTP-11`'s range classifications are on `Status` only, not mirrored onto `Response`.** The spec places them on both: `docs/product-spec/04-core-http-domain-model.md:23` reads "Status MUST classify by range … **and a response MUST expose these derived from its status**", and appendix C (`appendix-c-consolidated-normative-requirement-index.md:47`) restates it as "Response MUST expose these same classifications derived from its status." The port ships them once, on `Status`, reachable as `response.status.isSuccess`. Six delegating getters on `Response` would duplicate surface that cannot drift, since there would be one implementation behind both — but the letter of the requirement does name the response, so the reading is recorded rather than assumed | `open-items.md` A3, register audit | 2026-09-02 | `packages/core/src/http/status.ts` carries all six; `packages/core/src/http/response.ts` carries `status` and no classification of its own | not yet in §10 |
+| **`REDIR-20`'s "fully override" is read as scoped to code/method eligibility, not to the safety mechanics that follow it.** A configured redirect predicate replaces the built-in follow decision; it does **not** bypass userinfo stripping, credential hygiene, the downgrade guard, body replayability, or loop/cap detection. Those are stated as unconditional MUSTs elsewhere in the same chapter and are not "should this kind of redirect be followed" policy — a caller predicate opting to follow a 307 with a single-use body still cannot make that body re-sendable. Genuinely ambiguous wording, decided one way and now recorded as decided | `open-items.md` G4, register audit | 2026-09-02 | `packages/core/src/redirect/decide.ts` consults `settings.predicate` at the eligibility gate and runs every later guard unconditionally; pinned by "the predicate does NOT bypass the safety mechanics" in `decide.test.ts`. Phase 9's conformance sweep was to re-confirm this and closed without doing so | not yet in §10 |
+| **Span-shaped tracing carries `OBS-29`'s ordered lifecycle, but not its 1:1 tracer-to-operation binding.** `OBS-29` (MUST) requires `operationStarted` once at the start, `operationSucceeded`/`operationFailed` mutually exclusive and once each at the end, and **one tracer instance per logical operation**. The port has no method of those names; it has `Tracer.startSpan(name): Span`. The **ordering half is satisfied** under different names: a span is started once (`observability/logging-step.ts:427`) and ended once on exactly one of two paths — `span.end()` for success (`:398`), or `span.recordException(error)` then `span.end()` for failure (`:414-415`) — mutually exclusive, once each, in order. **The 1:1 binding is NOT met**, and this row says so plainly rather than implying the requirement is covered: `PIPE-2` fixes the `LOGGING` pillar step *inside* the `RETRY` and `REDIRECT` pipelines, so a span is opened per transmission attempt and per redirect hop, not once per logical operation (`open-items.md` L4 records the same). The per-attempt and retries-exhausted events therefore have no operation-scoped tracer to attach to. Appendix C's own entry (`appendix-c-consolidated-normative-requirement-index.md:509`) anticipates the gap: "This is a documented emission contract; pipeline/transport wiring to emit it is a follow-up, so it is not yet runtime-enforced." The wiring stays open as `open-items.md` V2 | `open-items.md` L1/V2, register audit | 2026-09-02 | `packages/core/src/observability/tracing.ts:40-42` (`Tracer`, one method); `observability/logging-step.ts:398,414-415,427` (the lifecycle); `docs/product-spec/15-instrumentation-and-observability.md:54` (the requirement) | not yet in §10 |
+| **`invariant()` density is not a target, project-wide.** `docs/knowledge/harvested/assertions.md:6-7` sets a 2-per-function module average. The port's position: a module gains an `invariant()` when it has an internal precondition worth asserting, and `recovery/`, `http/`, `seams/` and `generated/` have none — measured 2026-09-02, all four at zero. Adding assertions to reach an average would assert nothing. `recovery/` is the sharp case: an `invariant()` inside `ResponseRecoveryChain.apply()` throws, and `RECOV-8` forbids `apply()` from throwing, so a density rule would push that module toward a shape the specification forbids | `open-items.md` F3/H6 and `deferred-items.md`'s *Assertion-density rule applied project-wide* row (retired to [the purge note](./work/mvp/2026-09-04-register-retirement-purge.md)), register audit | 2026-09-02 | `packages/core/src/recovery/`, `http/`, `seams/`: zero `invariant(` calls. `pipeline/` ships fifteen and `context/` three, so the rule is applied where it earns its place | not yet in §10 |

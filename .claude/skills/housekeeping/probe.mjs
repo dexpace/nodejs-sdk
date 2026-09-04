@@ -61,7 +61,12 @@ function createContext(root) {
       )
         .trim()
         .split('\n')
-        .filter(Boolean),
+        .filter(Boolean)
+        // `ls-files` lists the INDEX, so a file deleted in the working tree and not yet staged is
+        // still listed. Every caller goes on to read what it gets back, and an `ENOENT` there takes
+        // the whole run down with a raw stack instead of producing a finding -- which is what
+        // happened the first time a check ran against a tree with an uncommitted deletion in it.
+        .filter(path => existsSync(join(root, path))),
     /** Tracked paths PLUS untracked, non-ignored ones. */
     present: (...globs) =>
       execFileSync(
@@ -585,9 +590,89 @@ function checkRegisterLeakage(ctx) {
 
 // ---------------------------------------------------------------------------------------
 // 8. Every `open-items.md <Letter><N>` citation resolves to a real item.
+//
+// "Real" spans TWO files since 2026-09-04: the live register, and the dated note that holds the
+// contents of the retirement table the register used to end with. See `PURGE_NOTE` below.
 // ---------------------------------------------------------------------------------------
 
-const CITATION = /open-items\.md`?[  ]*(?:§)?\s*([A-Z]\d+)/g;
+// An optional `[Q-T].` qualifier: Sections Q, R, S and T carry the relocated reviews' OWN row
+// numbering, so three `F` namespaces coexist and a bare `F8` resolves to any of them. The register's
+// Section index states the qualified form; option 2 (renumbering the dated records) was rejected in
+// favour of teaching this check instead.
+const CITATION = /open-items\.md`?[  ]*(?:§)?\s*(?:([Q-T])\.)?([A-Z]\d+)/g;
+
+// `## Section <Letter> — …`. Sections Q-T hold their rows as `| <ID> | …` table rows rather than as
+// `### <ID>` headings, so a qualified citation has to be resolved against the section's own rows.
+const SECTION_HEADING = /^## Section ([A-Z])(?:[^\n]*)$/gm;
+const TABLE_ROW_ID = /^\|\s*([A-Z]\d+)\s*\|/gm;
+const QUALIFIED_SECTIONS = 'QRST';
+
+// The second namespace of resolvable IDs, and it is NOT in the register any more. A resolved item's
+// BODY was removed and replaced by one row in `## Retired items`; on 2026-09-04 that table — and
+// `deferred-items.md`'s `## Delivered and retired` beside it — was deleted outright, and its 102 rows
+// were reproduced verbatim into the dated note below. The IDs were never released, so a source comment
+// citing `K10` or `T.F9` must still resolve; deleting the table without moving the namespace left 25
+// citations pointing at nothing. The note is therefore read exactly as the table was, bare
+// (`| \`K10\` |`) and section-qualified (`| \`T.F9\` |`) alike.
+//
+// ONLY the `## Purged item IDs` table is parsed. The note's second table, `## Purged rows without an
+// item ID`, holds the Section D / Section R / `L1 —` rows that never carried an ID; the old code
+// ignored them because their first cell is not one (`D — …` fails `[A-Z]\d+` immediately, `L1 — …`
+// fails the closing `|`), and slicing to the one heading keeps that true by construction rather than
+// by luck.
+const PURGE_NOTE = 'docs/work/mvp/2026-09-04-register-retirement-purge.md';
+const PURGED_HEADING = /^## Purged item IDs\s*$/m;
+const PURGED_ROW = /^\|\s*`?(?:([Q-T])\.)?([A-Z]\d+)`?\s*\|/gm;
+
+/**
+ * The IDs the note's `## Purged item IDs` table reserves, as `{bare: Set, qualified: Map}`.
+ *
+ * Empty maps when the note carries no such section — and the caller passes `''` when the note is
+ * absent entirely — so the check degrades to the pre-retirement behaviour rather than throwing.
+ * `ctx.read` is `readFileSync`: an absent path is an `ENOENT` that takes the whole run down with a
+ * raw stack instead of producing a finding, which is why the call site guards on `ctx.exists`.
+ */
+function purgedIds(note) {
+  const heading = PURGED_HEADING.exec(note);
+  const bare = new Set();
+  const qualified = new Map();
+  if (heading === null) return {bare, qualified};
+  const from = heading.index + heading[0].length;
+  const next = note.slice(from).search(/^## /m);
+  const body = next === -1 ? note.slice(from) : note.slice(from, from + next);
+  for (const [, section, id] of body.matchAll(PURGED_ROW)) {
+    if (section === undefined) bare.add(id);
+    else {
+      if (!qualified.has(section)) qualified.set(section, new Set());
+      qualified.get(section).add(id);
+    }
+  }
+  return {bare, qualified};
+}
+
+/**
+ * Row IDs per qualifiable section, as `{Q: Set('D1', …), R: Set('E1', …), …}`.
+ *
+ * Read from the table rows, not from headings: a relocated review's rows have no `###` of their own,
+ * which is the whole reason a bare citation into one is ambiguous.
+ */
+function qualifiableRows(register) {
+  const bounds = [];
+  for (const match of register.matchAll(SECTION_HEADING)) {
+    bounds.push({letter: match[1], start: match.index});
+  }
+  const rows = new Map();
+  for (const [i, section] of bounds.entries()) {
+    if (!QUALIFIED_SECTIONS.includes(section.letter)) continue;
+    const end = bounds[i + 1]?.start ?? register.length;
+    const body = register.slice(section.start, end);
+    rows.set(
+      section.letter,
+      new Set([...body.matchAll(TABLE_ROW_ID)].map(m => m[1])),
+    );
+  }
+  return rows;
+}
 
 function citedFiles(ctx) {
   return ctx
@@ -614,30 +699,49 @@ export function registerCitations(ctx) {
   const ids = new Set(
     [...register.matchAll(/^### ([A-Z]\d+)\b/gm)].map(m => m[1]),
   );
+  const rows = qualifiableRows(register);
+  // A purged item has no heading and no section row left anywhere in the register — only its row in
+  // the note. Merged in rather than checked separately: a citation does not know, and must not care,
+  // whether the item it names is still live, and the two namespaces are one to every caller.
+  const purged = purgedIds(ctx.exists(PURGE_NOTE) ? ctx.read(PURGE_NOTE) : '');
+  for (const id of purged.bare) ids.add(id);
+  for (const [section, set] of purged.qualified) {
+    if (!rows.has(section)) rows.set(section, new Set());
+    for (const id of set) rows.get(section).add(id);
+  }
   const sites = [];
   for (const file of citedFiles(ctx)) {
     const text = ctx.read(file);
     for (const match of text.matchAll(CITATION)) {
+      const [, qualifier, id] = match;
       sites.push({
         file,
         line: text.slice(0, match.index).split('\n').length,
-        id: match[1],
-        resolves: ids.has(match[1]),
+        id,
+        qualifier,
+        cited: qualifier === undefined ? id : `${qualifier}.${id}`,
+        resolves:
+          qualifier === undefined
+            ? ids.has(id)
+            : (rows.get(qualifier)?.has(id) ?? false),
       });
     }
   }
-  return {ids, sites};
+  return {ids, rows, sites};
 }
 
 function checkRegisterCitations(ctx) {
   const {sites} = registerCitations(ctx);
   for (const site of sites.filter(s => !s.resolves)) {
+    const where =
+      site.qualifier === undefined
+        ? `which has no \`### <ID>\` heading and no \`## Purged item IDs\` row in ${PURGE_NOTE}`
+        : `which Section ${site.qualifier} carries as neither a table row nor a purged row in ${PURGE_NOTE}`;
     ctx.finding(
       'citations',
       'act',
-      `${site.file}:${String(site.line)} cites docs/open-items.md ${site.id}, which has no ` +
-        '`### <ID>` heading. Item IDs are permanent; a dangling one means the citation, ' +
-        'not the register, is wrong.',
+      `${site.file}:${String(site.line)} cites docs/open-items.md ${site.cited}, ${where}. ` +
+        'Item IDs are permanent; a dangling one means the citation, not the register, is wrong.',
     );
   }
 }
@@ -737,8 +841,9 @@ function main(argv) {
     process.stdout.write(
       `citations: ${String(sites.length)} total, ${String(outside.length)} outside the ` +
         `register, ${String(core.length)} in packages/core/src/, ` +
-        `${String(new Set(sites.map(s => s.id)).size)} distinct IDs against ` +
-        `${String(ids.size)} items\n`,
+        `${String(new Set(sites.map(s => s.cited)).size)} distinct IDs against ` +
+        `${String(ids.size)} items ` +
+        `(${String(sites.filter(s => s.qualifier !== undefined).length)} section-qualified)\n`,
     );
   }
   process.stdout.write('\n');

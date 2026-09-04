@@ -39,6 +39,7 @@ import assert from 'node:assert/strict';
 import {getEventListeners} from 'node:events';
 import {describe, it} from 'node:test';
 import {
+  CancellationError,
   Request,
   authStep,
   createAuthDescriptor,
@@ -329,8 +330,15 @@ describe('single-flight cancellation over Node AbortSignal (AUTH-34)', () => {
     });
     assert.equal(invocations, 1);
 
-    controller.abort(new Error('caller A gave up'));
-    await assert.rejects(aborting, /caller A gave up/u);
+    const givenUp = new Error('caller A gave up');
+    controller.abort(givenUp);
+    // N1/XCUT-1: the SDK's own terminal type on Node's AbortController too, with the caller's
+    // reason kept as the cause -- not the raw reason the cache used to rethrow.
+    await assert.rejects(aborting, error => {
+      assert.ok(error instanceof CancellationError);
+      assert.equal(error.cause, givenUp);
+      return true;
+    });
 
     release(createBearerToken('t1', 10_000));
     assert.equal((await patient).token, 't1');

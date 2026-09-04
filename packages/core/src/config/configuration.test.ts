@@ -585,3 +585,65 @@ describe('a total lookup when a seam fails (CFG-5, CFG-6, CFG-7, CFG-11)', () =>
     expect(config.getInt('X', 7)).toBe(7);
   });
 });
+
+describe('K14: a failing seam is now audible (CFG-5, CFG-11, CFG-24 sibling)', () => {
+  test('a failing seam is warned about, naming the source (K14)', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const config = new ConfigurationBuilder()
+        .withEnvSource(() => {
+          throw new Error('env seam exploded');
+        })
+        .build();
+
+      expect(config.getString('X', 'fallback')).toBe('fallback');
+
+      const failures = events.filter(
+        e => e.get('event') === 'config.sourceFailed',
+      );
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.get('source')).toBe('environment');
+      expect(failures[0]?.get('key')).toBe('X');
+      expect(String(failures[0]?.get('cause'))).toContain('env seam exploded');
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+
+  test('a failing property seam names the property source (K14)', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const config = new ConfigurationBuilder()
+        .withPropertySource(() => {
+          throw new Error('property seam exploded');
+        })
+        .build();
+
+      expect(config.getRawProperty('X', 'fallback')).toBe('fallback');
+
+      const failures = events.filter(
+        e => e.get('event') === 'config.sourceFailed',
+      );
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.get('source')).toBe('property');
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+});

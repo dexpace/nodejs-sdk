@@ -30,7 +30,7 @@ export const STRIP_MARKER_STEP_TYPE: unique symbol = Symbol(
  *
  * @returns the descriptor to install in a pipeline's POST_AUTH slot.
  *
- * @internal
+ * @public
  */
 export function stripCrossOriginMarkerStep(): StepDescriptor {
   return {
@@ -68,7 +68,7 @@ export function stripCrossOriginMarkerStep(): StepDescriptor {
  * @param overrides - redirect policy overrides; omitted yields the spec defaults.
  * @returns the same builder, for chaining.
  *
- * @internal
+ * @public
  */
 export function withRedirect(
   builder: PipelineBuilder,

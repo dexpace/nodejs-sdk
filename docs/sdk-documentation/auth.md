@@ -122,7 +122,8 @@ There is deliberately **no** way to append a handler to the built-in list. A `ha
 and was cut at review: it forced three types onto the public barrel and could not compose with the
 internal handlers, so it was replace-semantics masquerading as extension. The shape to ship, if a
 caller ever needs it, is an append field plus public `basicHandler`/`digestHandler` factories
-(`docs/deferred-items.md`).
+(`docs/deferred-items.md`, the *caller-supplied `ChallengeHandler` list on `AuthStepSettings`* row — still
+deferred, unscheduled until a second auth scheme needs one).
 
 **Basic and Digest never stamp preemptively.** They react to a challenge. That is an interpretation of
 `§11` rather than a stated requirement, and it is ledgered as one.
@@ -134,9 +135,10 @@ pillar marks a cross-origin hop with an internal header; the auth step is that m
 first stripper, and a `POST_AUTH` guard strips it again as an idempotent backstop, so the marker can
 never reach the wire (`REDIR-11`, `AUTH-29`).
 
-That guard is installed by `standardResilience()` and is not publicly reachable, which is why a
-hand-built pipeline should start from `PipelineBuilder.seedFrom()` rather than `redirectStep()` — see
-[`pipelines.md`](./pipelines.md) and `docs/open-items.md` U7.
+That guard is installed by `standardResilience()`, and as of 2026-09-02 a hand-built pipeline can
+install it too: `withRedirect(builder)` seats the pillar and its guard together, and
+`stripCrossOriginMarkerStep()` is the guard on its own. Reaching for bare `redirectStep()` without
+one of them is what forwards the marker — see [`pipelines.md`](./pipelines.md).
 
 ## Proxy credentials are a separate axis
 

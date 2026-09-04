@@ -13,8 +13,8 @@ is the index; the rule is that nothing in `docs/` is unowned, and nothing is wri
 | [`sdk-documentation/`](./sdk-documentation/) | **As-built.** How the packages compose, which one to install, worked cross-package examples | A human, or the skill on request | Yes |
 | [`work/`](./work/) | Process records: per-phase design, plan and checklist, one directory per phase under a unit of delivery | The phase that produced them; **collected** here by the skill | Yes — `git mv` only |
 | [`superpowers/`](./superpowers/) | Nothing, for long. The **inbox** the Superpowers skills write into | `brainstorming`, `writing-plans` | Yes — it drains it |
-| [`open-items.md`](./open-items.md) | Everything unmet, unverified, misreported, or surprising. Sections A–U, letters permanent | Every review | Yes — appends |
-| [`deferred-items.md`](./deferred-items.md) | Work a phase decided not to do yet, with the phase that owns it | Every phase's brainstorm | Yes — appends |
+| [`open-items.md`](./open-items.md) | Everything unmet, unverified, misreported, or surprising. Sixteen lettered sections, A through V with the emptied letters dropped; a letter is permanent and never reused | Every review | Yes — appends |
+| [`deferred-items.md`](./deferred-items.md) | One table: work a phase decided not to do yet and has not done. A discharged row is removed, not archived here — the ones discharged before 2026-09-04 are in [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md). Cite a row by its key, never by line | Every phase's brainstorm | Yes — appends, and retires |
 | [`deviations.md`](./deviations.md) | The as-built audit of §10, and the landing point for a deviation found outside a phase | An audit or review | Yes — appends |
 | [`assets/`](./assets/) | Vendored wordmark SVGs the root `README.md` renders | Copied from `dexpace/morphic` | Yes |
 
@@ -51,8 +51,10 @@ The boundary is **when** the item was created, not what it is about.
   phase's `## Deviation Ledger` section, consolidated into §10; `deviations.md` audits §10 and
   catches what has no owning phase.
 
-The same requirement ID can legitimately appear in two. `AUTH-37` is deferred to Phase 7b in
-`deferred-items.md` and recorded as a live silent swallow at `open-items.md` G12.
+The same requirement ID can legitimately appear in two. `AUTH-37` was deferred to Phase 7b in
+`deferred-items.md` and recorded at `open-items.md` G12 as a live silent swallow; both rows are
+discharged now, the log half having landed on 2026-09-02, which is the shape a requirement takes as
+it moves between the two files.
 
 Register letters and item numbers in `open-items.md` are **permanent**: they are cited across the
 repository from source comments, tests, changesets and this tree. A new review appends the next

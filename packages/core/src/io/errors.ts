@@ -24,10 +24,12 @@ export class IoError extends DexpaceError {
  * A source ended before delivering the requested number of bytes (IO-11, IO-12, IO-15), or a sink write
  * found fewer bytes in its source buffer than requested (IO-4).
  *
- * @internal
+ * @public
  */
 export class EndOfStreamError extends DexpaceError {
+  /** How many bytes the source actually delivered before ending. */
   readonly delivered: number;
+  /** How many bytes the caller required. */
   readonly requested: number;
 
   constructor(delivered: number, requested: number, options?: ErrorOptions) {

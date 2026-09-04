@@ -2,10 +2,11 @@
 // packages/core/src/config/clock.test.ts
 // Exercises: CFG-15 (three operations, shared platform-backed default), CFG-16 (monotonic
 // non-decreasing, meaningful only relative to itself), CFG-17 (sleep rejects negative, resolves
-// promptly at zero, honors cancellation by surfacing the signal's own abort reason).
+// promptly at zero, honors cancellation), and V13 (any finite duration is honored by chaining timers,
+// so RETRY-18's 365-day pacing clamp -- ~14x what one setTimeout can carry -- is waitable).
 import {describe, expect, test} from 'bun:test';
-import {InvariantViolation} from '../invariant.js';
-import {defaultClock} from './clock.js';
+import {CancellationError} from '../seams/transport.js';
+import {MAX_SLEEP_MS, defaultClock, sleepInChunks} from './clock.js';
 
 /**
  * Returns the reason a promise rejected with, failing loudly if it resolves instead. Awaiting the
@@ -73,18 +74,6 @@ describe('defaultClock.sleep (CFG-17)', () => {
     expect(defaultClock.monotonic() - start).toBeLessThan(50);
   });
 
-  test('rejects with an InvariantViolation when the duration is negative', async () => {
-    const pending = defaultClock.sleep(-1);
-
-    expect(await rejectionOf(pending)).toBeInstanceOf(InvariantViolation);
-  });
-
-  test('rejects with an InvariantViolation when the duration is NaN', async () => {
-    const pending = defaultClock.sleep(Number.NaN);
-
-    expect(await rejectionOf(pending)).toBeInstanceOf(InvariantViolation);
-  });
-
   test('waits at least the requested duration when not cancelled', async () => {
     const start = defaultClock.monotonic();
 
@@ -100,10 +89,16 @@ describe('defaultClock.sleep (CFG-17)', () => {
 
     const pending = defaultClock.sleep(60_000, controller.signal);
 
-    expect(await rejectionOf(pending)).toBe(reason);
+    const surfaced = await rejectionOf(pending);
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect((surfaced as Error).cause).toBe(reason);
   });
 
-  test("rejects with the signal's own abort reason when cancelled mid-wait", async () => {
+  test('rejects with a CancellationError carrying the reason when cancelled mid-wait', async () => {
+    // Mapped rather than rethrown verbatim (N1/XCUT-1): one cancellation type wherever the abort was
+    // observed, with the caller's own reason kept as `cause`, so nothing is lost. CFG-17's
+    // "re-assert the cancellation status" clause is about the STATUS, not the object -- and
+    // `AbortSignal.aborted` is latched, so a downstream handler sees the cancelled state either way.
     const controller = new AbortController();
     const reason = new Error('cancelled');
     const start = defaultClock.monotonic();
@@ -113,7 +108,9 @@ describe('defaultClock.sleep (CFG-17)', () => {
       controller.abort(reason);
     });
 
-    expect(await rejectionOf(pending)).toBe(reason);
+    const surfaced = await rejectionOf(pending);
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect((surfaced as Error).cause).toBe(reason);
     expect(defaultClock.monotonic() - start).toBeLessThan(50);
   });
 
@@ -130,28 +127,91 @@ describe('defaultClock.sleep (CFG-17)', () => {
   });
 });
 
-describe('defaultClock.sleep duration bounds and scheduling (CFG-17)', () => {
-  test('rejects with an InvariantViolation above the timer-delay ceiling', async () => {
-    // `setTimeout` clamps its delay to a 32-bit signed integer and *silently* rewrites anything
-    // larger to 1, so this used to resolve in about a millisecond instead of waiting 24.8 days --
-    // a configured retry backoff that overflowed became no backoff at all.
-    const reason = await rejectionOf(defaultClock.sleep(2 ** 31));
+describe('defaultClock.sleep duration bounds and scheduling (CFG-17, V13)', () => {
+  test('rejects a negative duration with a RangeError, as a rejection not a throw', async () => {
+    const reason = await rejectionOf(defaultClock.sleep(-1));
 
-    expect(reason).toBeInstanceOf(InvariantViolation);
-    expect((reason as InvariantViolation).message).toContain('2147483647');
+    expect(reason).toBeInstanceOf(RangeError);
   });
 
-  test('accepts the largest duration a timer delay can represent, rather than rejecting it', async () => {
-    // The inclusive edge of the ceiling. Asserted by the reason's *identity*: a bare `toBeDefined()`
-    // could not tell this abort from the `InvariantViolation` that widening the bound by one (`>` to
-    // `>=`) would produce, so the only test guarding the edge could not see the edge move.
+  test('rejects a non-finite duration', async () => {
+    expect(
+      await rejectionOf(defaultClock.sleep(Number.POSITIVE_INFINITY)),
+    ).toBeInstanceOf(RangeError);
+    expect(await rejectionOf(defaultClock.sleep(Number.NaN))).toBeInstanceOf(
+      RangeError,
+    );
+  });
+
+  test("a duration past one timer's reach is CHUNKED, never clamped to 1ms (V13)", async () => {
+    // The defect this replaces: `setTimeout` silently rewrites a delay above 2^31-1 to `1`, so
+    // `sleep(2 ** 31)` returned in ~1ms instead of waiting 24.8 days. Phase 7a repaired that by
+    // REJECTING the duration, which also made RETRY-18's 365-day pacing clamp unwaitable.
+    //
+    // Asserted through the injected chunk rather than by waiting: `2 ** 31` against a 1ms chunk
+    // would schedule two billion timers, so the scheduler count is checked with a chunk that
+    // divides a small duration. What this pins is that the SLICE handed to any single timer never
+    // exceeds the chunk -- which is exactly what stops the platform clamping.
+    const slices: number[] = [];
+
+    await sleepInChunks(4, undefined, {
+      chunkMs: 1,
+      onChunk: sliceMs => slices.push(sliceMs),
+    });
+
+    expect(slices).toEqual([1, 1, 1, 1]);
+  });
+
+  test('3x the chunk plus one schedules four timers and resolves (V13)', async () => {
+    const slices: number[] = [];
+
+    await sleepInChunks(3 * 2 + 1, undefined, {
+      chunkMs: 2,
+      onChunk: sliceMs => slices.push(sliceMs),
+    });
+
+    expect(slices).toHaveLength(4);
+    expect(slices).toEqual([2, 2, 2, 1]);
+    expect(slices.reduce((a, b) => a + b, 0)).toBe(7);
+  });
+
+  test('every slice is bounded by MAX_SLEEP_MS in production, with no chunking injected', () => {
+    // The production chunk is the platform's own limit, so a real oversized sleep slices at exactly
+    // the largest delay a timer can carry rather than at some smaller invented number.
+    expect(MAX_SLEEP_MS).toBe(2 ** 31 - 1);
+  });
+});
+
+describe('defaultClock.sleep chunk-boundary cancellation (CFG-17, V13)', () => {
+  test('an abort BETWEEN chunks rejects with the mapped CancellationError', async () => {
     const controller = new AbortController();
-    const reason = new Error('cancelled');
+    const reason = new Error('gave up mid-wait');
+    const slices: number[] = [];
 
-    const pending = defaultClock.sleep(2 ** 31 - 1, controller.signal);
-    controller.abort(reason);
+    const pending = sleepInChunks(10, controller.signal, {
+      chunkMs: 1,
+      onChunk: sliceMs => {
+        slices.push(sliceMs);
+        if (slices.length === 3) controller.abort(reason);
+      },
+    });
 
-    expect(await rejectionOf(pending)).toBe(reason);
+    const surfaced = await rejectionOf(pending);
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect((surfaced as Error).cause).toBe(reason);
+    // Stopped at the boundary rather than running all ten slices.
+    expect(slices.length).toBeLessThan(10);
+  });
+
+  test('a duration at exactly one chunk still takes a single timer', async () => {
+    const slices: number[] = [];
+
+    await sleepInChunks(2, undefined, {
+      chunkMs: 2,
+      onChunk: sliceMs => slices.push(sliceMs),
+    });
+
+    expect(slices).toEqual([2]);
   });
 
   test('yields to the event loop at zero rather than only to the microtask queue', async () => {
@@ -175,8 +235,10 @@ describe('defaultClock.sleep duration bounds and scheduling (CFG-17)', () => {
     const reason = new Error('cancelled');
     controller.abort(reason);
 
-    expect(await rejectionOf(defaultClock.sleep(0, controller.signal))).toBe(
-      reason,
+    const surfaced = await rejectionOf(
+      defaultClock.sleep(0, controller.signal),
     );
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect((surfaced as Error).cause).toBe(reason);
   });
 });

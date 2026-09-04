@@ -15,10 +15,11 @@
 # wrong key here is safe: `scripts/verify-test-partition.mjs` checks for a DECLARATION, not a
 # mention, so this file is free to warn about the trap it sits next to.)
 #
-# Measured on `bun run test`, pinned Bun 1.3.14: with the key, 164 files and exit 0; without it,
-# 178 files -- the 14 Node files collected by a runner that cannot prove anything about Node. That
-# run exits 1 rather than 0, but only by accident: 13 of the 14 pass silently under Bun and the
-# 14th fails on an unrelated timer assertion, pointing nowhere near the real cause.
+# Measured on `bun run test`, pinned Bun 1.3.14, 2026-09-04: with the key, 165 files and exit 0;
+# without it, 179 files -- the 14 Node files collected by a runner that cannot prove anything about
+# Node. That run exits 1 rather than 0, but only by accident: 13 of the 14 pass silently under Bun
+# and the 14th fails on an unrelated timer assertion in config-primitives.test.mjs, pointing nowhere
+# near the real cause.
 root = "packages"
 pathIgnorePatterns = ["tests/node-conformance/**"]
 coverage = true

@@ -33,15 +33,66 @@ describe('validation (RECOV-34)', () => {
     expect(() => retrySettings({multiplier: 0.5})).toThrow();
   });
 
+  test('rejects a non-finite multiplier (P2 sweep)', () => {
+    expect(() =>
+      retrySettings({multiplier: Number.POSITIVE_INFINITY}),
+    ).toThrow();
+    expect(() => retrySettings({multiplier: Number.NaN})).toThrow();
+  });
+
   test('rejects maxAttempts below 1, never clamping to the default (RETRY-41/HTTP-35)', () => {
     expect(() => retrySettings({maxAttempts: 0})).toThrow();
     expect(() => retrySettings({maxAttempts: -3})).toThrow();
   });
 
+  test('rejects a fractional maxAttempts -- an attempt count is integral (P2 sweep)', () => {
+    expect(() => retrySettings({maxAttempts: 2.5})).toThrow();
+  });
+
   test('accepts maxAttempts of 1, which disables retries', () => {
     expect(retrySettings({maxAttempts: 1}).maxAttempts).toBe(1);
   });
+});
 
+describe('validation: duration bounds (RECOV-34, V4/V13)', () => {
+  test('accepts a delay past what ONE timer can carry (V13)', () => {
+    // V4 briefly bounded these at `Clock`'s MAX_SLEEP_MS, because `Clock.sleep` rejected anything
+    // larger. V13 made the clock chain timers instead, so the bound became a restriction on a
+    // duration the platform CAN wait -- and it would have made RETRY-18's 365-day pacing clamp
+    // (~14x one timer's reach) unconfigurable.
+    const pastOneTimer = 2 ** 31;
+    expect(retrySettings({initialDelayMs: pastOneTimer}).initialDelayMs).toBe(
+      pastOneTimer,
+    );
+    expect(retrySettings({maxDelayMs: pastOneTimer}).maxDelayMs).toBe(
+      pastOneTimer,
+    );
+    expect(retrySettings({fixedDelayMs: pastOneTimer}).fixedDelayMs).toBe(
+      pastOneTimer,
+    );
+  });
+
+  test("accepts RETRY-18's 365-day pacing ceiling as a configured delay (V13)", () => {
+    const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+    expect(retrySettings({maxDelayMs: oneYearMs}).maxDelayMs).toBe(oneYearMs);
+  });
+
+  test('still rejects a non-finite or negative duration', () => {
+    expect(() =>
+      retrySettings({initialDelayMs: Number.POSITIVE_INFINITY}),
+    ).toThrow();
+    expect(() => retrySettings({maxDelayMs: Number.NaN})).toThrow();
+    expect(() => retrySettings({fixedDelayMs: -1})).toThrow();
+  });
+
+  test('leaves totalTimeoutMs on the same rule -- it is a budget, never a sleep', () => {
+    expect(retrySettings({totalTimeoutMs: 2 ** 32}).totalTimeoutMs).toBe(
+      2 ** 32,
+    );
+  });
+});
+
+describe('validation: the remaining fields (RECOV-34)', () => {
   test('rejects a jitter outside [0,1]', () => {
     expect(() => retrySettings({jitter: -0.1})).toThrow();
     expect(() => retrySettings({jitter: 1.1})).toThrow();

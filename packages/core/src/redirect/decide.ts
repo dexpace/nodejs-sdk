@@ -31,6 +31,33 @@ export interface RedirectContext {
 }
 
 /**
+ * WHY a hop stopped, on a `'return-current'` decision.
+ *
+ * `REDIR-28` names four structured events, and two of them -- loop-detected and malformed-Location
+ * -- are indistinguishable from ordinary termination once the decision is a bare `{kind}`. They were
+ * blocked on this discriminant and are emitted by `redirectStep` as of 2026-09-02. The other three
+ * reasons are carried for symmetry: a discriminant set on some paths and absent on others is a worse
+ * shape than either extreme.
+ *
+ * @internal
+ */
+export type RedirectStopReason =
+  /**
+   * The status is not a redirect code this SDK follows. Covers a non-3xx status AND the three 3xx
+   * codes REDIR-2 excludes by name (300/304/305), both of which take REDIR-21's fast path before
+   * the eligibility gate is reached.
+   */
+  | 'not-a-redirect'
+  /** A caller predicate said no, or the code/method pair is not eligible (REDIR-2, REDIR-20). */
+  | 'not-eligible'
+  /** Location was absent, empty, unparseable, or named an unsupported scheme (REDIR-18, REDIR-19). */
+  | 'malformed-location'
+  /** The target is already in the visited set (REDIR-16). */
+  | 'loop-detected'
+  /** Following would exceed `maxHops` (REDIR-17). */
+  | 'hop-cap';
+
+/**
  * One hop's outcome. `'return-current'` hands the live response back to the caller unclosed (REDIR-16,
  * REDIR-17, REDIR-18, REDIR-19, PIPE-40); `'fail'` is the caller's to close before rethrowing (REDIR-22b).
  *
@@ -42,13 +69,32 @@ export type Decision =
       readonly nextRequest: Request;
       readonly crossOrigin: boolean;
     }
-  | {readonly kind: 'return-current'}
+  | {readonly kind: 'return-current'; readonly reason: RedirectStopReason}
   | {readonly kind: 'fail'; readonly error: Error};
 
-// Frozen because it is SHARED: one instance is handed to every caller on every no-follow path, so an
-// accidental write would corrupt every later decision in the process. `outcome.ts`'s `success`/`failure`
-// build a fresh object per call and have no equivalent exposure.
-const RETURN_CURRENT: Decision = Object.freeze({kind: 'return-current'});
+// Frozen because each is SHARED: one instance per reason is handed to every caller taking that path,
+// so an accidental write would corrupt every later decision in the process. `outcome.ts`'s
+// `success`/`failure` build a fresh object per call and have no equivalent exposure.
+const RETURN_CURRENT: Readonly<Record<RedirectStopReason, Decision>> =
+  Object.freeze({
+    'not-a-redirect': Object.freeze({
+      kind: 'return-current',
+      reason: 'not-a-redirect',
+    }),
+    'not-eligible': Object.freeze({
+      kind: 'return-current',
+      reason: 'not-eligible',
+    }),
+    'malformed-location': Object.freeze({
+      kind: 'return-current',
+      reason: 'malformed-location',
+    }),
+    'loop-detected': Object.freeze({
+      kind: 'return-current',
+      reason: 'loop-detected',
+    }),
+    'hop-cap': Object.freeze({kind: 'return-current', reason: 'hop-cap'}),
+  });
 
 /**
  * The only schemes this SDK will re-issue a request against. Anything else -- `javascript:`, `data:`,
@@ -176,7 +222,9 @@ export function decide(
   context: RedirectContext,
   settings: RedirectSettings,
 ): Decision {
-  if (!isRecognizedRedirect(response.status.code)) return RETURN_CURRENT;
+  if (!isRecognizedRedirect(response.status.code)) {
+    return RETURN_CURRENT['not-a-redirect'];
+  }
 
   const {currentRequest, seedOrigin, visited, redirectsFollowed} = context;
   // REDIR-20: the snapshot is defensively COPIED, not merely typed `ReadonlySet`. `visited` is the
@@ -192,7 +240,7 @@ export function decide(
     settings.predicate === undefined
       ? isEligibleByCode(response.status.code, currentRequest.method, settings)
       : settings.predicate(condition);
-  if (!eligible) return RETURN_CURRENT;
+  if (!eligible) return RETURN_CURRENT['not-eligible'];
 
   // `Request.url` hands back a FRESH `URL` on every access (HTTP-5) -- read it once.
   const currentUrl = currentRequest.url;
@@ -200,9 +248,11 @@ export function decide(
     response.headers.get(settings.locationHeader),
     currentUrl,
   );
-  if (target === null) return RETURN_CURRENT;
-  if (visited.has(target.href)) return RETURN_CURRENT;
-  if (redirectsFollowed + 1 > settings.maxHops) return RETURN_CURRENT;
+  if (target === null) return RETURN_CURRENT['malformed-location'];
+  if (visited.has(target.href)) return RETURN_CURRENT['loop-detected'];
+  if (redirectsFollowed + 1 > settings.maxHops) {
+    return RETURN_CURRENT['hop-cap'];
+  }
 
   if (
     currentUrl.protocol.toLowerCase() === 'https:' &&

@@ -154,7 +154,7 @@ failure alongside other failures is the same signal, just surfaced earlier.
 
 Not in CI at all, so the runner does not include it: changesets (a consumer-facing change
 still needs `bun run changeset`). `test:scripts` used to be on this list; Phase 10 wired it
-into the `ci` job (open-items H13), so the runner covers it now.
+into the `ci` job, so the runner covers it now.
 
 ## Runner flags
 

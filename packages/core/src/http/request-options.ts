@@ -141,16 +141,23 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   /**
    * Sets the per-call timeout.
    *
+   * The range check is the FULL range, not merely its lower bound. `Infinity` and `NaN` are as out
+   * of range as `-1`: a non-finite deadline is one no clock can compare against, so it degrades to
+   * "no deadline" silently rather than failing at the call site that supplied it, which is exactly
+   * what HTTP-35 exists to prevent. Not required to be integral, unlike `maxRetries` -- a timeout is
+   * a duration and a fractional millisecond is meaningful.
+   *
    * @param value - the timeout in milliseconds, or `undefined` for no override. Zero is rejected
    * rather than reinterpreted: it means "no timeout" in one transport and is an error in another
    * (HTTP-35).
    * @returns this builder, for chaining.
-   * @throws {@link RequestOptionsValidationError} when a defined value is zero or negative.
+   * @throws {@link RequestOptionsValidationError} when a defined value is zero, negative, or not
+   * finite.
    */
   timeoutMs(value: number | undefined): this {
-    if (value !== undefined && value <= 0) {
+    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
       throw new RequestOptionsValidationError(
-        `timeout must be positive, got ${String(value)}`,
+        `timeout must be a finite positive duration, got ${String(value)}`,
       );
     }
     this.#timeoutMs = value;

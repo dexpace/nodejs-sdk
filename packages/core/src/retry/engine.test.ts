@@ -325,6 +325,26 @@ describe('cancellation (RETRY-26/32)', () => {
     expect(outcome.kind).toBe('failure');
   });
 
+  test('surfaces the SDK CancellationError, not the raw abort reason (N1/XCUT-1)', async () => {
+    const {CancellationError} = await import('../seams/transport.js');
+    const controller = new AbortController();
+    const reason = new Error('caller went away');
+    controller.abort(reason);
+    const dispatch = scriptedDispatch([
+      success(countingResponse(200).response),
+    ]);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf(),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    const error = outcome.kind === 'failure' ? outcome.error : undefined;
+    expect(error).toBeInstanceOf(CancellationError);
+    expect((error as Error).cause).toBe(reason);
+  });
+
   test('aborting during the backoff wait stops the loop promptly', async () => {
     const controller = new AbortController();
     const config: RetryConfig = {
@@ -421,6 +441,63 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
     expect(isSuppressedShape(outcome.error)).toBe(true);
     if (!isSuppressedShape(outcome.error)) return;
     expect(outcome.error.error).toBeInstanceOf(IoError);
+    expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
+  });
+});
+
+describe('a discarded response OUTSIDE the 400-599 band (V14/N2, XCUT-8)', () => {
+  test('a widened retryable status yields RetryDiscardedResponseError, not a "successful exception"', async () => {
+    const {RetryDiscardedResponseError} = await import('./errors.js');
+    // A caller may widen `retryableStatuses` to include a sub-400 code. `toHttpError` correctly
+    // returns null for it (BODY-31), and the engine used to fabricate
+    // `new HttpStatusError(200, ...)` -- exactly the "successful exception" XCUT-8 forbids, built by
+    // core itself. The trail now carries a leaf that says what actually happened.
+    const dispatch = scriptedDispatch([
+      success(countingResponse(200).response),
+      failure(new IoError('final')),
+    ]);
+
+    const outcome = await runWithRetry(
+      GET,
+      dispatch,
+      configOf({
+        maxAttempts: 2,
+        fixedDelayMs: 0,
+        retryableStatuses: new Set([200]),
+      }),
+    );
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(isSuppressedShape(outcome.error)).toBe(true);
+    if (!isSuppressedShape(outcome.error)) return;
+    expect(outcome.error.suppressed).toBeInstanceOf(
+      RetryDiscardedResponseError,
+    );
+    expect(outcome.error.suppressed).not.toBeInstanceOf(HttpStatusError);
+    expect((outcome.error.suppressed as {status: number}).status).toBe(200);
+  });
+
+  test('a discarded 404 still becomes an HttpStatusError -- the band is unchanged', async () => {
+    const dispatch = scriptedDispatch([
+      success(countingResponse(404).response),
+      failure(new IoError('final')),
+    ]);
+
+    const outcome = await runWithRetry(
+      GET,
+      dispatch,
+      configOf({
+        maxAttempts: 2,
+        fixedDelayMs: 0,
+        retryableStatuses: new Set([404]),
+      }),
+    );
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(isSuppressedShape(outcome.error)).toBe(true);
+    if (!isSuppressedShape(outcome.error)) return;
     expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
   });
 });

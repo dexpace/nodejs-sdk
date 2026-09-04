@@ -22,7 +22,6 @@ import {dirname, relative, resolve, sep} from 'node:path';
  * an edit inside one changes no sha and the next harvest regenerates or duplicates it
  * silently. `notes/` is hand-written and could in principle be edited; it is frozen here
  * because the CLI reads the two as one corpus and a note's key citation couples them.
- * Whether that grouping is right is `docs/open-items.md` U1.
  */
 export const FROZEN = Object.freeze([
   'docs/knowledge',

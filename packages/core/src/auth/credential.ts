@@ -88,7 +88,7 @@ export class BearerToken {
  * @param expiresAt - epoch ms at which the token expires, or `undefined` for "never locally expires".
  *   When present it must be a finite number.
  * @returns the frozen token.
- * @throws InvariantViolation when `token` is blank (AUTH-9), or when `expiresAt` is present but not
+ * @throws an assertion failure (a caller bug, not a catchable condition) when `token` is blank (AUTH-9), or when `expiresAt` is present but not
  *   finite -- both caller misconfigurations.
  *
  * @public
@@ -199,7 +199,7 @@ export class ApiKeyCredential {
 
   /**
    * @param key - the secret key. Must not be blank.
-   * @throws InvariantViolation when `key` is blank (AUTH-9).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `key` is blank (AUTH-9).
    */
   constructor(key: string) {
     invariant(key.trim().length > 0, 'ApiKeyCredential key must not be blank'); // AUTH-9
@@ -247,7 +247,7 @@ export class NameKeyCredential {
   /**
    * @param name - the non-secret identifier. Must not be blank.
    * @param key - the secret key. Must not be blank.
-   * @throws InvariantViolation when either is blank (AUTH-9).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when either is blank (AUTH-9).
    */
   constructor(name: string, key: string) {
     invariant(

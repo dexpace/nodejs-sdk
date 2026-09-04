@@ -14,6 +14,13 @@ export function activateSpan(span: Span): Scope;
 export function activateSpanForCorrelation(span: Span): Scope;
 
 // @public
+export class AnchorNotFoundError extends DexpaceError {
+    constructor(anchorType: symbol, operation: string, options?: ErrorOptions);
+    readonly anchorType: symbol;
+    readonly operation: string;
+}
+
+// @public
 export class ApiKeyCredential {
     [INSPECT](): string;
     constructor(key: string);
@@ -243,6 +250,19 @@ export interface CreateLoggerOptions {
 export function createProxyOptions(init: ProxyOptionsInit): ProxyOptions;
 
 // @public
+export class CrossStageEditError extends DexpaceError {
+    constructor(anchorStage: Stage, incomingStage: Stage, options?: ErrorOptions);
+    readonly anchorStage: Stage;
+    readonly incomingStage: Stage;
+}
+
+// @public
+export class CursorAlreadyAdvancedError extends DexpaceError {
+    constructor(stage: Stage, options?: ErrorOptions);
+    readonly stage: Stage;
+}
+
+// @public
 export function cursorStrategy<T>(init: {
     extract: (response: Response_2) => Promise<{
         items: readonly T[];
@@ -318,6 +338,14 @@ export class DomainModelError extends DexpaceError {
 
 // @public
 export type DroppedHeaderPolicy = 'mark' | 'omit';
+
+// @public
+class EndOfStreamError_2 extends DexpaceError {
+    constructor(delivered: number, requested: number, options?: ErrorOptions);
+    readonly delivered: number;
+    readonly requested: number;
+}
+export { EndOfStreamError_2 as EndOfStreamError }
 
 // @public
 export class ETag {
@@ -483,6 +511,12 @@ export class HttpStatusError extends DexpaceError {
     constructor(status: number, bodyBytes: Uint8Array | undefined, mediaType: string | undefined, options?: ErrorOptions);
     body(): Body_2 | undefined;
     preview(charset?: string): string | null;
+    readonly status: number;
+}
+
+// @public
+export class HttpStatusValidationError extends DexpaceError {
+    constructor(status: number, options?: ErrorOptions);
     readonly status: number;
 }
 
@@ -692,6 +726,12 @@ export class NameKeyCredential {
 export type Next = (request?: Request_2) => Promise<Response_2>;
 
 // @public
+export class NonReplayableBodyError extends DexpaceError {
+    constructor(targetUrl: string, options?: ErrorOptions);
+    readonly targetUrl: string;
+}
+
+// @public
 export const NOOP_LOGGER: Logger;
 
 // @public
@@ -793,6 +833,14 @@ export function parseHttpDate(raw: string): number | null;
 
 // @public
 export const PILLAR_STAGES: ReadonlySet<Stage>;
+
+// @public
+export class PillarCollisionError extends DexpaceError {
+    constructor(stage: Stage, existingType: symbol, incomingType: symbol, options?: ErrorOptions);
+    readonly existingType: symbol;
+    readonly incomingType: symbol;
+    readonly stage: Stage;
+}
 
 // @public
 export class PipelineBuilder {
@@ -997,6 +1045,12 @@ export class RequiredFieldError extends DomainModelError {
 }
 
 // @public
+export class ReservedStageError extends DexpaceError {
+    constructor(operation: string, options?: ErrorOptions);
+    readonly operation: string;
+}
+
+// @public
 export function resolveProxyOptions(config: Configuration): ProxyOptions | null;
 
 // @public
@@ -1030,6 +1084,12 @@ export class ResponseBuilder implements Builder<Response_2> {
 export const RETRYABLE_STATUSES: ReadonlySet<number>;
 
 // @public
+export class RetryDiscardedResponseError extends DexpaceError {
+    constructor(status: number, options?: ErrorOptions);
+    readonly status: number;
+}
+
+// @public
 export interface RetrySettings extends BackoffSettings {
     readonly attemptHeaderName?: string | undefined;
     readonly maxAttempts: number;
@@ -1059,6 +1119,13 @@ export class Runtime implements Transport {
 // @public
 export interface Schema<T> {
     parse(input: unknown): T;
+}
+
+// @public
+export class SchemeDowngradeError extends DexpaceError {
+    constructor(fromUrl: string, toUrl: string, options?: ErrorOptions);
+    readonly fromUrl: string;
+    readonly toUrl: string;
 }
 
 // @public
@@ -1280,6 +1347,9 @@ export class StringBody implements Body_2 {
 export function stringBody(text: string, mediaType?: string): StringBody;
 
 // @public
+export function stripCrossOriginMarkerStep(): StepDescriptor;
+
+// @public
 export function toHttpError(response: Response_2): Promise<HttpStatusError | null>;
 
 // @public
@@ -1348,5 +1418,8 @@ export class UrlConstructionError extends DomainModelError {
 
 // @public
 export function valueOrNull<T>(tristate: Tristate<T>): T | null;
+
+// @public
+export function withRedirect(builder: PipelineBuilder, overrides?: Partial<RedirectSettings>): PipelineBuilder;
 
 ```

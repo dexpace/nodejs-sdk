@@ -118,11 +118,12 @@ raise on a second; the surrounding `PRE_`/`POST_` stages stack.
 `seedFrom(runtime, 'flatten' | 'nest')` is how the preset composes with a customized builder, rather
 than the preset growing a "skip occupied slots" branch.
 
-**Start from `seedFrom`, not from a bare `new PipelineBuilder(transport)`, if you want redirects.**
-`redirectStep()` is public but its companion `POST_AUTH` guard is not: the redirect pillar marks a
-cross-origin hop with an internal header, and the step that strips it before dispatch is `@internal`
-and reachable only through the preset. A hand-built pipeline that installs `redirectStep()` directly
-forwards that marker to the wire (`docs/open-items.md` U7).
+**Install redirects with `withRedirect(builder)`, not with bare `redirectStep()`.** The redirect
+pillar marks a cross-origin hop with an internal header, and a second `POST_AUTH` step strips it
+before dispatch; `withRedirect` seats both, and `stripCrossOriginMarkerStep()` is that guard on its
+own. Both became public on 2026-09-02 (`docs/open-items.md` U7) — before that only
+`standardResilience()` and `seedFrom` could produce a safe redirect pipeline. A hand-built pipeline
+that installs `redirectStep()` and neither guard forwards the marker to the wire.
 
 `Runtime` implements `Transport`, so a pipeline is substitutable for the transport it wraps.
 `Runtime.close()` is a documented no-op: the pipeline never owns the transport it was given

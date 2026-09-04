@@ -66,6 +66,44 @@ export class FormBodyValidationError extends DexpaceError {
 }
 
 /**
+ * A {@link HttpStatusError} construction whose status is not in HTTP-11's 400-599 error band, or is
+ * not an integer at all.
+ *
+ * `XCUT-8` requires the status-to-exception mapping to reject a non-error status "rather than
+ * fabricate a 'successful exception'". `toHttpError` always satisfied that — it returns `null` for
+ * anything outside the band — but the published constructor validated nothing, so
+ * `new HttpStatusError(200, …)` built exactly the object the requirement forbids and contradicted
+ * the class's own documented invariant. Enforced from 2026-09-02.
+ *
+ * A two-level leaf under {@link DexpaceError} rather than a new `DomainModelError` leaf, matching
+ * its siblings in this file: checkpoint §5.2 is queued to flatten that tier
+ * (`docs/open-items.md` R.E2), and this pass does not add an eleventh leaf to it.
+ *
+ * Deliberately NOT part of {@link isBodyError}. That guard groups the three failures a caller meets
+ * while *working with* a body; this one reports a programmer error at the moment an error object is
+ * constructed, and widening the guard's return type would change a published signature for a case
+ * no body-handling `catch` wants to see.
+ *
+ * @public
+ */
+export class HttpStatusValidationError extends DexpaceError {
+  /** The rejected status value, exactly as supplied. */
+  readonly status: number;
+
+  /**
+   * @param status - the rejected status value.
+   * @param options - standard error options; pass `{cause}` when wrapping a caught error.
+   */
+  constructor(status: number, options?: ErrorOptions) {
+    super(
+      `HttpStatusError status must be an integer in HTTP-11's 400-599 error band, got ${String(status)}`,
+      options,
+    );
+    this.status = status;
+  }
+}
+
+/**
  * Type guard for body errors.
  *
  * @public

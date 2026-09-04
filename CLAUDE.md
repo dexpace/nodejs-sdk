@@ -195,9 +195,9 @@ must agree:
 `[test]` key without complaint. A wrong key gives no warning, does not fail, and does not stop the run. Bun
 then collects the Node suite. Bun runs `node:test` files without an error and reports them as passing. The
 run reports success over a suite that proves nothing about Node. Measured on `bun run test`, pinned Bun
-1.3.14: with the key, 164 files; without it, 178. Thirteen of the fourteen extra files pass silently; the
-run goes red only because the fourteenth trips an unrelated timer assertion, which points nowhere near the
-cause. Treat the exit code as an accident, not a control.
+1.3.14, 2026-09-04: with the key, 165 files and 2216 tests; without it, 179 files. Thirteen of the fourteen
+extra files pass silently; the run goes red only because the fourteenth trips an unrelated timer assertion in
+`tests/node-conformance/config-primitives.test.mjs`, which points nowhere near the cause. Treat the exit code as an accident, not a control.
 
 Never change one of these five files alone. Change one, then change all of them. Then run
 `node scripts/verify-test-partition.mjs`. That gate catches the wrong key name, and CI blocks on it.
@@ -225,8 +225,8 @@ because the one that used to be omitted — `open-items.md` — is the largest f
 | `docs/sdk-documentation/` | **As-built.** How the packages compose, which one to install, worked cross-package examples. Eleven files; `architecture.md` is the front door. | yes |
 | `docs/work/<delivery>/phaseN/` | Per-phase design doc, implementation plan and requirement-coverage checklist. `mvp/` is the only delivery so far. | yes |
 | `docs/superpowers/` | The **inbox** the `brainstorming` and `writing-plans` skills hard-code. Drained into `docs/work/`; never a citation target. | yes |
-| `docs/open-items.md` | **Register.** Everything unmet, unverified, misreported or surprising. Sections A–U; letters and item numbers are permanent. | yes |
-| `docs/deferred-items.md` | **Register.** Work a phase decided not to do yet, with the phase that owns it. | yes |
+| `docs/open-items.md` | **Register.** Everything unmet, unverified, misreported or surprising. Sixteen lettered sections; a resolved item's body is removed and its ID leaves the Section index, and a letter whose items are all resolved goes with them, but neither is ever renumbered or reused. | yes |
+| `docs/deferred-items.md` | **Register.** One table: work a phase decided not to do yet. A discharged row is removed rather than archived here. Cite a row by its key, never by line. | yes |
 | `docs/deviations.md` | **Register.** The as-built audit of §10, and where a deviation found outside a phase lands. | yes |
 | `docs/assets/` | Vendored wordmark SVGs the root `README.md` renders. | yes |
 
@@ -241,8 +241,11 @@ not what the checklist says it is") → `open-items.md`. A **deviation** goes in
 where a deviation with no owning phase lands, since §10 sits in a frozen tree.
 
 **Never renumber `open-items.md`.** Its item IDs are cited from source comments, tests, changesets and the
-`docs/` tree — `docs/open-items.md K11` at `packages/core/src/index.ts:248`, `H12` at `seams/index.ts:11`, and
-so on. A new review appends the next letter; nothing is ever renumbered or reused.
+`docs/` tree — `docs/open-items.md K11` in `packages/core/src/index.ts`, `V13` in `config/clock.ts`, and so on.
+A new review appends the next letter; nothing is ever renumbered or reused. **A resolved item is retired:** its
+body goes and nothing takes its place, but its ID stays reserved and still resolves — the probe's citation check
+reads the IDs retired before 2026-09-04 from `docs/work/mvp/2026-09-04-register-retirement-purge.md` alongside
+the live `### <ID>` headings.
 
 **Do not write the number of them into a document.** Three documents once stated three different, all-wrong
 counts (`docs/open-items.md` U10). One command derives it, from the same regex and file set the check uses:
@@ -308,8 +311,9 @@ into `notes/`.
 
 **Citations into the corpus** are written `docs/knowledge/harvested/<topic>.md:<line>`. `docs/work/` is the
 exception: its phase designs, plans and checklists are dated records of what was true when they were written,
-are never retro-edited, and so still carry pre-split paths — 207 of them, across 33 files
-(`docs/open-items.md` O3).
+are never retro-edited, and so still carry pre-split paths — 206 of them, across 33 files, measured
+2026-09-02 with `grep -rhoE "docs/knowledge/[a-z0-9-]+\.md" docs/work | wc -l` (`docs/open-items.md`
+O3, which carried 207 until the same date).
 
 ## Requirement-ID conventions (enforced by review, not tooling)
 
