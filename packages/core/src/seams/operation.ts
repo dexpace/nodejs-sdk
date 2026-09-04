@@ -162,6 +162,9 @@ function composeQuery(
  * or a supplied value is a dot segment (`.`/`..`) — fix the descriptor; no request was assembled.
  * @throws {@link UrlConstructionError} when `baseUrl` is malformed, non-absolute, or carries a
  * fragment — supply a clean absolute base URL.
+ * @throws {@link RequestBodyNotAllowedError} when the descriptor pairs a body with GET, HEAD, TRACE
+ * or CONNECT (HTTP-7). Assembly ends at `Request.Builder.build()`, so that builder's validation is
+ * this function's validation.
  *
  * @public
  */

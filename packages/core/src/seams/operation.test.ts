@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/seams/operation.test.ts
 // Exercises: SEAM-26 (the four projections default to empty), SEAM-27 (buildRequest's encoding and base-URL
-// composition rules), reusing HTTP-29's encodeRfc3986Component for path-segment encoding.
+// composition rules), HTTP-7 (a body projected onto a body-forbidding method fails assembly), reusing
+// HTTP-29's encodeRfc3986Component for path-segment encoding.
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {
@@ -9,7 +10,10 @@ import {
   OperationAssemblyError,
   type OperationDescriptor,
 } from './operation.js';
-import {UrlConstructionError} from '../http/errors.js';
+import {
+  RequestBodyNotAllowedError,
+  UrlConstructionError,
+} from '../http/errors.js';
 import {QueryParams} from '../http/query-params.js';
 import {Headers} from '../http/headers.js';
 
@@ -112,6 +116,20 @@ describe('operation headers and body projections are threaded through', () => {
     });
     expect(request.headers.get('x-trace')).toBe('abc');
     expect(request.body).toBe(body);
+  });
+
+  // HTTP-7: assembly ends at `Request.Builder.build()`, so the builder's method/body legality check is
+  // buildRequest's. Pinned because the throw reaches a caller through `buildRequest` and was absent from
+  // its `@throws` list until audit #67 / #68 added it -- an undocumented, unpinned throw path is exactly
+  // the kind that a later refactor swallows.
+  test('a body on a body-forbidding method throws RequestBodyNotAllowedError', () => {
+    expect(() =>
+      buildRequest('https://host', {
+        method: 'GET',
+        pathTemplate: '/pets',
+        body: stringBody('Fido'),
+      }),
+    ).toThrow(RequestBodyNotAllowedError);
   });
 });
 
