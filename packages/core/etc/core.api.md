@@ -105,8 +105,10 @@ export interface BackoffSettings {
 }
 
 // @public
-export interface BasicCredential {
-    readonly password: string;
+export class BasicCredential {
+    [INSPECT](): string;
+    constructor(username: string, password: string);
+    toString(): string;
     readonly username: string;
 }
 
@@ -345,9 +347,11 @@ export class DexpaceError extends Error {
 export type DigestAlgorithm = 'MD5' | 'MD5-sess' | 'SHA-256' | 'SHA-256-sess';
 
 // @public
-export interface DigestCredential {
-    readonly algorithmPreference?: readonly DigestAlgorithm[] | undefined;
-    readonly password: string;
+export class DigestCredential {
+    [INSPECT](): string;
+    constructor(username: string, password: string, algorithmPreference?: readonly DigestAlgorithm[]);
+    readonly algorithmPreference: readonly DigestAlgorithm[] | undefined;
+    toString(): string;
     readonly username: string;
 }
 

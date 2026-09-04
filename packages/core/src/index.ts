@@ -165,20 +165,20 @@ export type {
   ApiKeyCredentialConfig,
   AuthCredentialSet,
   AuthStepSettings,
-  BasicCredential,
   BearerCredential,
   ChallengeHook,
-  DigestCredential,
 } from './auth/auth-step.js';
 export type {AuthTiers} from './auth/resolve.js';
 export type {AuthScheme} from './auth/scheme.js';
 export type {DigestAlgorithm} from './auth/digest.js';
 
 // Factories, not bare interfaces: AUTH-3 validates and freezes inside `createAuthDescriptor`, and
-// `ApiKeyCredential`/`NameKeyCredential`/`BearerToken` are NOMINAL -- they carry a `#` field, so no
-// caller-side object literal is assignable and the AUTH-9 validation in each factory cannot be routed
-// around. Without these, API_KEY and OAUTH2 auth are unreachable from outside the package.
-// `BearerToken` is a VALUE export, not a type-only one: it is a class, and `TokenProvider` returns it.
+// every credential type is NOMINAL -- each carries a `#` field, so no caller-side object literal is
+// assignable and the AUTH-9 validation in each factory cannot be routed around. Without these,
+// API_KEY, OAUTH2, BASIC and DIGEST auth are unreachable from outside the package.
+// All five are VALUE exports, not type-only ones: they are classes, `TokenProvider` returns a
+// `BearerToken`, and `BasicCredential`/`DigestCredential` became classes on 2026-09-04 so AUTH-8's
+// redaction covers their passwords too (audit #67 / #71).
 export type {AuthDescriptor} from './auth/descriptor.js';
 export {createAuthDescriptor} from './auth/descriptor.js';
 export type {AuthRequirement} from './auth/requirement.js';
@@ -189,7 +189,9 @@ export {
 export type {TokenProvider} from './auth/credential.js';
 export {
   ApiKeyCredential,
+  BasicCredential,
   BearerToken,
+  DigestCredential,
   NameKeyCredential,
   bearerTokensEqual,
   createBearerToken,

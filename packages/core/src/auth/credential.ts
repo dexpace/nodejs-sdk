@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/credential.ts
 import {invariant} from '../invariant.js';
+import type {DigestAlgorithm} from './digest.js';
 
 // No `as unique symbol` cast: TypeScript rejects `unique symbol` in a type assertion (TS1335). A
 // `const` initialized directly by a `Symbol.for()` call already gets the `unique symbol` type, which
@@ -270,6 +271,173 @@ export class NameKeyCredential {
    */
   toString(): string {
     return `NameKeyCredential{name=${this.name}, key=***}`;
+  }
+
+  /**
+   * The same redaction for `console.log`/`util.inspect`. See {@link ApiKeyCredential} for why both
+   * hooks are needed.
+   *
+   * @returns the redacted representation.
+   */
+  [INSPECT](): string {
+    return this.toString();
+  }
+}
+
+/**
+ * The friend-class hooks for the two password credentials' secrets, and the reason those two are
+ * classes at all. `auth-step.ts`'s `buildHandlers` -- the ONLY sanctioned reader -- reaches them
+ * through {@link credentialPassword}.
+ *
+ * They shipped as structural interfaces with a public `readonly password: string` until 2026-09-04,
+ * which put a live password on the published `.d.ts` and, worse, on the object graph: `util.inspect`
+ * of an `AuthCredentialSet` printed `password: 'hunter2'` beside `ApiKeyCredential{key=***}`, and
+ * `JSON.stringify` serialized it. AUTH-8's redaction clause names bearer, API-key and name-key
+ * explicitly; reading it as covering EVERY credential type is a deliberate widening, recorded in
+ * `docs/deviations.md` (found by audit #67 / #71).
+ */
+let readBasicPassword: (credential: BasicCredential) => string;
+let readDigestPassword: (credential: DigestCredential) => string;
+
+/**
+ * The in-package read hook for a Basic or Digest credential's password.
+ *
+ * Exported (still internal-only, absent from the package barrel) because the one caller --
+ * `buildHandlers` in `auth-step.ts` -- lives in another module and TypeScript has no friend-class
+ * visibility to express that with. The same shape {@link credentialKey} uses for the static keys.
+ *
+ * @param credential - the credential whose password is about to reach a handler.
+ * @returns the raw password.
+ *
+ * @internal
+ */
+export function credentialPassword(
+  credential: BasicCredential | DigestCredential,
+): string {
+  return credential instanceof BasicCredential
+    ? readBasicPassword(credential)
+    : readDigestPassword(credential);
+}
+
+/**
+ * Username and password for the `BASIC` scheme (AUTH-8, AUTH-14).
+ *
+ * `#password`, not `readonly password`, for the runtime-privacy reason {@link ApiKeyCredential}
+ * states at length: `private` is erased and a plain property is reachable through
+ * `credential['password']`, `Object.keys`, `JSON.stringify` and a default `util.inspect`. The
+ * redacted `toString`/inspect pair below is what those paths get instead. `username` is non-secret,
+ * which AUTH-8 explicitly permits to stay visible.
+ *
+ * Reference equality, like the two key credentials and for the same reason: there is deliberately no
+ * `equals` member anywhere in this module.
+ *
+ * **Validation is not repeated here.** AUTH-14's rule -- non-empty, whitespace permitted, which is
+ * deliberately laxer than `.trim().length > 0` -- lives in `basicHandler()`, and `authStep()` builds
+ * a handler for every configured credential at construction, so a blank password still fails
+ * synchronously from that factory. Restating the rule here would put a second copy of it one edit
+ * away from disagreeing with the copy that is actually applied to the wire.
+ *
+ * @public
+ */
+export class BasicCredential {
+  /** The user id (AUTH-14: non-empty; whitespace permitted). Non-secret, so visible. */
+  readonly username: string;
+  readonly #password: string;
+
+  /**
+   * @param username - the user id.
+   * @param password - the password. Never readable back off the instance.
+   */
+  constructor(username: string, password: string) {
+    this.username = username;
+    this.#password = password;
+    Object.freeze(this);
+  }
+
+  static {
+    readBasicPassword = credential => credential.#password;
+  }
+
+  /**
+   * AUTH-8's redacted string form: the username survives, the password does not.
+   *
+   * @returns the representation with the password masked.
+   */
+  toString(): string {
+    return `BasicCredential{username=${this.username}, password=***}`;
+  }
+
+  /**
+   * The same redaction for `console.log`/`util.inspect`, which do not route object arguments through
+   * `toString`. See {@link ApiKeyCredential} for why both hooks are needed.
+   *
+   * @returns the redacted representation.
+   */
+  [INSPECT](): string {
+    return this.toString();
+  }
+}
+
+/**
+ * Username, password, and algorithm preference for the `DIGEST` scheme (AUTH-8, AUTH-16).
+ *
+ * `#password` for the same runtime-privacy reason as {@link BasicCredential}. `username` and
+ * `algorithmPreference` are non-secret and stay visible.
+ *
+ * **Validation is not repeated here**, for the reason {@link BasicCredential} states: AUTH-16's
+ * acceptable-set rule and the blank/header-safety checks live in `digestHandler()`, which
+ * `authStep()` builds at construction.
+ *
+ * @public
+ */
+export class DigestCredential {
+  /** The user id. Non-secret, so visible. */
+  readonly username: string;
+  /**
+   * Preferred-first order, and also the acceptable set (AUTH-16). `undefined` means strongest-first
+   * over all four supported algorithms -- the default is applied by `digestHandler()`, not
+   * materialized here, so there is only ever one copy of that list.
+   */
+  readonly algorithmPreference: readonly DigestAlgorithm[] | undefined;
+  readonly #password: string;
+
+  /**
+   * @param username - the user id.
+   * @param password - the password. Never readable back off the instance.
+   * @param algorithmPreference - preferred-first acceptable algorithms; copied and frozen, so a
+   *   caller mutating the array afterwards cannot change what this credential accepts (HTTP-3's
+   *   no-aliasing rule, applied to the one collection this type holds).
+   */
+  constructor(
+    username: string,
+    password: string,
+    algorithmPreference?: readonly DigestAlgorithm[],
+  ) {
+    this.username = username;
+    this.#password = password;
+    this.algorithmPreference =
+      algorithmPreference === undefined
+        ? undefined
+        : Object.freeze([...algorithmPreference]);
+    Object.freeze(this);
+  }
+
+  static {
+    readDigestPassword = credential => credential.#password;
+  }
+
+  /**
+   * AUTH-8's redacted string form: the username and the algorithm preference survive, the password
+   * does not.
+   *
+   * @returns the representation with the password masked.
+   */
+  toString(): string {
+    const preference =
+      this.algorithmPreference === undefined
+        ? 'default'
+        : this.algorithmPreference.join('|');
+    return `DigestCredential{username=${this.username}, password=***, algorithmPreference=${preference}}`;
   }
 
   /**

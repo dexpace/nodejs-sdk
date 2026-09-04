@@ -43,8 +43,8 @@ The factories validate and freeze (`AUTH-3`). A descriptor containing a `NO_AUTH
 ```typescript
 interface AuthCredentialSet {
   readonly bearer?: {provider: TokenProvider; marginMs?: number};
-  readonly basic?: {username: string; password: string};
-  readonly digest?: {username: string; password: string; algorithmPreference?: DigestAlgorithm[]};
+  readonly basic?: BasicCredential;
+  readonly digest?: DigestCredential;
   readonly apiKey?: {credential: ApiKeyCredential | NameKeyCredential; headerName?: string; prefix?: string};
 }
 ```
@@ -53,17 +53,36 @@ The five schemes are `OAUTH2`, `API_KEY`, `BASIC`, `DIGEST` and `NO_AUTH`. A req
 scheme; the credential set supplies the material for it. A requirement with no matching credential is
 an `AuthResolutionError` at send time, not a silent unauthenticated request.
 
-**`ApiKeyCredential`, `NameKeyCredential` and `BearerToken` are nominal, not structural.** Each carries
-a `#private` field, so no caller-side object literal is assignable to them and the validation in each
-factory cannot be routed around. They also override `toString()` and Node's inspect symbol, so a
-credential cannot leak into a log line or a stack trace by accident.
+**Every credential type is nominal, not structural.** `ApiKeyCredential`, `NameKeyCredential`,
+`BearerToken`, `BasicCredential` and `DigestCredential` each carry a `#private` field, so no
+caller-side object literal is assignable to them and the validation behind each cannot be routed
+around. All five override `toString()` and Node's inspect symbol, so a credential cannot leak into a
+log line or a stack trace by accident.
 
 ```typescript
-import {ApiKeyCredential, createBearerToken} from '@dexpace/core';
+import {
+  ApiKeyCredential,
+  BasicCredential,
+  createBearerToken,
+  DigestCredential,
+} from '@dexpace/core';
+
+const credentials = {
+  basic: new BasicCredential('alice', 'super-secret'),
+  digest: new DigestCredential('bob', 'super-secret', ['SHA-256', 'MD5']),
+  apiKey: {credential: new ApiKeyCredential('super-secret'), headerName: 'X-Api-Key'},
+};
 
 String(new ApiKeyCredential('super-secret')); // 'ApiKeyCredential{key=***}'
 String(createBearerToken('t', 1)); // 'BearerToken{token=***, expiresAt=1}' — the expiry survives
+String(credentials.basic); // 'BasicCredential{username=alice, password=***}'
 ```
+
+There is no `password` property to read back, by design: `BasicCredential` and `DigestCredential`
+shipped as plain `{username, password}` records until 2026-09-04, and a plain property is reachable
+through `credential['password']`, `Object.keys`, `JSON.stringify` and a default `util.inspect` — so
+`util.inspect(credentials)` printed the password in clear beside `ApiKeyCredential{key=***}`. The
+username and the Digest algorithm preference stay visible; `AUTH-8` permits non-secret fields to.
 
 The inspect symbol matters as much as `toString`: `console.log(credential)` and `util.inspect` do not
 route an object argument through `toString`, so both are overridden (`AUTH-8`).
@@ -105,6 +124,14 @@ A credentialed scheme meeting a non-HTTPS URL is a `PlaintextCredentialError`, r
 request is dispatched (`AUTH-28`). There is no option to disable it. `NO_AUTH` never trips it, which
 is why an auth-less `standardResilience()` installs a `NO_AUTH`-only step rather than no step at all —
 the pillar slot stays filled and the behaviour stays uniform.
+
+**Once guarded, always guarded.** A `challengeHook` may return any request it likes, including one
+whose URL has been downgraded to `http://`. When the outbound pass ran the guard, the replay is
+guarded too — unconditionally, without inspecting a single header name, because
+`ApiKeyCredentialConfig.headerName` lets this step stamp a header no fixed list would contain. On a
+`NO_AUTH` hop, which is never guarded outbound, a replacement carrying `Authorization` or
+`Proxy-Authorization` still trips the guard. A genuinely credential-free re-issue over `http://` is
+what `XCUT-16` explicitly permits, and it still proceeds.
 
 ## Challenges
 
