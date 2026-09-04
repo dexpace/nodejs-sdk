@@ -12,7 +12,7 @@ fold-site postconditions. Both are tracked in the roadmap's "Open Findings — P
 the unified dispatch orchestrator, the cancellation-wrapping helper, and the status→typed-exception mapping step
 — satisfying `docs/product-spec/08-execution-pipelines.md` §8.2 (`RECOV-1`–`RECOV-16`). This is the second of
 three sub-phases the roadmap's Phase 4 ("Execution Context & Pipelines") splits into: 4a (execution context,
-**not yet implemented** — 4b turned out not to depend on it; see `docs/open-items.md` F8), **4b** (this
+**not yet implemented** — 4b turned out not to depend on it; see `docs/work/mvp/2026-09-04-open-items-dissolution.md` F8), **4b** (this
 document, `§8.2`), 4c (stage-based pipeline, `§8.1`, which does depend on both 4a and 4b).
 
 **Governing documents:** `docs/product-spec/08-execution-pipelines.md` §8.2/§8.3 (normative, cited by ID

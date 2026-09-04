@@ -10,7 +10,7 @@
  * @param value - the text to inspect.
  * @returns `true` when at least one byte is forbidden.
  */
-export function hasForbiddenOutboundByte(value: string): boolean {
+export function hasForbiddenOutboundValueByte(value: string): boolean {
   for (const ch of value) {
     const code = ch.codePointAt(0) ?? 0;
     const allowed = code === 0x09 || (code >= 0x20 && code <= 0x7e);
@@ -38,7 +38,7 @@ export function hasForbiddenNameByte(value: string): boolean {
  * Reports whether `value` contains a byte forbidden in an *inbound* header value: control
  * characters (C0 except HTAB, plus DEL) only.
  *
- * Deliberately laxer than {@link hasForbiddenOutboundByte} — RFC 7230 permits obs-text (≥ 0x80) in
+ * Deliberately laxer than {@link hasForbiddenOutboundValueByte} — RFC 7230 permits obs-text (≥ 0x80) in
  * a response field value, and applying the outbound grammar inbound would silently drop legitimate
  * headers such as a Latin-1 `Content-Disposition` filename (HTTP-19).
  *

@@ -5,7 +5,7 @@
  * The shape of an error carrying a suppressed secondary throwable — structurally identical to the
  * ECMAScript `SuppressedError` this module produces when the runtime has one.
  *
- * @internal
+ * @public
  */
 export interface SuppressedErrorLike extends Error {
   /** The primary throwable — the one the caller actually cares about. */

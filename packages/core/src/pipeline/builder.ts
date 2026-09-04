@@ -97,11 +97,7 @@ export class PipelineBuilder {
     const anchor = this.#requireAnchor(anchorType, 'insertAfter');
     this.#requireSameStage(anchor.stage, descriptor.stage);
     if (this.#pillarSlot(descriptor) === 'occupied-same-type') return this;
-    const bucket = this.#buckets.get(anchor.stage);
-    invariant(
-      bucket !== undefined,
-      'anchor stage bucket must exist -- #requireAnchor just located an entry in it',
-    );
+    const bucket = this.#requireAnchorBucket(anchor);
     bucket.splice(anchor.index + 1, 0, descriptor);
     return this;
   }
@@ -119,11 +115,7 @@ export class PipelineBuilder {
     const anchor = this.#requireAnchor(anchorType, 'insertBefore');
     this.#requireSameStage(anchor.stage, descriptor.stage);
     if (this.#pillarSlot(descriptor) === 'occupied-same-type') return this;
-    const bucket = this.#buckets.get(anchor.stage);
-    invariant(
-      bucket !== undefined,
-      'anchor stage bucket must exist -- #requireAnchor just located an entry in it',
-    );
+    const bucket = this.#requireAnchorBucket(anchor);
     bucket.splice(anchor.index, 0, descriptor);
     return this;
   }
@@ -141,11 +133,7 @@ export class PipelineBuilder {
     this.#rejectReservedStage(descriptor.stage, 'replace');
     const anchor = this.#requireAnchor(anchorType, 'replace');
     this.#requireSameStage(anchor.stage, descriptor.stage);
-    const bucket = this.#buckets.get(anchor.stage);
-    invariant(
-      bucket !== undefined,
-      'anchor stage bucket must exist -- #requireAnchor just located an entry in it',
-    );
+    const bucket = this.#requireAnchorBucket(anchor);
     bucket.splice(anchor.index, 1, descriptor);
     return this;
   }
@@ -298,6 +286,20 @@ export class PipelineBuilder {
    * earliest-staged instance, and an edit declaring one of the later stages is a cross-stage edit even
    * though an instance does sit in that stage.
    */
+  /**
+   * The bucket `anchor` was found in. `#requireAnchor` has already located an entry there, so the
+   * absence of the bucket would be an internal inconsistency rather than a caller error — which is
+   * what the invariant says, once, instead of three times.
+   */
+  #requireAnchorBucket(anchor: {stage: Stage}): StepDescriptor[] {
+    const bucket = this.#buckets.get(anchor.stage);
+    invariant(
+      bucket !== undefined,
+      'anchor stage bucket must exist -- #requireAnchor just located an entry in it',
+    );
+    return bucket;
+  }
+
   #requireAnchor(type: symbol, operation: string): AnchorLocation {
     for (const stage of STAGE_ORDER) {
       const bucket = this.#buckets.get(stage);

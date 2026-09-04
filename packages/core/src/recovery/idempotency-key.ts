@@ -10,11 +10,16 @@ const DEFAULT_METHODS: readonly Method[] = ['POST', 'PUT', 'PATCH'];
 /**
  * Everything {@link idempotencyKeyStep} accepts (RECOV-32).
  *
- * @internal
+ * @public
  */
 export interface IdempotencyKeyOptions {
   /** The key strategy. Invoked at most once per applicable request (RECOV-32). */
   readonly generate: () => string;
+  /**
+   * The header to stamp.
+   *
+   * @defaultValue `'Idempotency-Key'`
+   */
   readonly headerName?: string | undefined;
   /** Defaults to the non-idempotent write methods; defensively copied at construction. */
   readonly methods?: ReadonlySet<Method> | undefined;
@@ -32,7 +37,7 @@ export interface IdempotencyKeyOptions {
  * @param options - the key strategy plus the header name, method set, and existing-key policy.
  * @returns the request step to install in a `RequestRecoveryChain`.
  *
- * @internal
+ * @public
  */
 export function idempotencyKeyStep(
   options: IdempotencyKeyOptions,

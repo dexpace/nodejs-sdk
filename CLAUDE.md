@@ -147,6 +147,7 @@ bun run verify:seam-1             # zero runtime dependencies in EVERY package, 
 bun run verify:sse-37             # no serde dependency and no reconnect path in core SSE
 bun run verify:runtime-floor      # tsconfig target vs package engines.node consistency
 bun run verify:test-partition     # the five files that keep tests/ and tests/node-conformance/ apart
+bun run verify:import-cycles      # no import cycle in any package's src/; type-only edges count
 bun run verify:knowledge-structure # docs/knowledge/'s two trees stay separate (see below)
 bun run verify:reproducible-build # two clean builds of one source tree agree, dist/ and tarball (NFR-12);
                                   # in CI it runs after every step that resolves a package through dist/,
@@ -155,9 +156,9 @@ bun run test:scripts              # the gates' OWN tests (node --test scripts/*.
 bun run audit                     # bun audit --audit-level=high --prod
 ```
 
-**Every one of these is a blocking CI step.** `.github/workflows/ci.yml` is **20 named steps across two
-jobs** — 17 in `ci`, 3 in the `node-conformance` matrix that runs after it. Run the full set before claiming
-work is done; `bun run test` passing is not sufficient evidence, and the one command that runs all twenty in
+**Every one of these is a blocking CI step.** `.github/workflows/ci.yml` is **22 named steps across two
+jobs** — 19 in `ci`, 3 in the `node-conformance` matrix that runs after it. Run the full set before claiming
+work is done; `bun run test` passing is not sufficient evidence, and the one command that runs all of them in
 CI's order is:
 
 ```bash
@@ -169,7 +170,7 @@ blocking at all, is `docs/sdk-documentation/quality-gates.md`.
 
 `test:scripts` tests the *gates themselves* — the knowledge CLI, `verify-seam-1.mjs`, `verify-sse-37.mjs`,
 `verify-knowledge-structure.mjs`, `verify-test-partition.mjs`. Phase 10 made it a blocking CI step, closing
-`docs/open-items.md` H13. It was not one before, and the proof that it should have been is that
+`docs/work/mvp/2026-09-04-open-items-dissolution.md` H13. It was not one before, and the proof that it should have been is that
 `knowledge.test.mjs` had been failing on `main` since `36c3f96` with nobody noticing. A gate whose own logic
 degrades still exits 0, so nothing else in the run would.
 
@@ -214,7 +215,8 @@ passes. The gate checks this too.
 ## Documentation hierarchy
 
 `docs/README.md` is the index and the contract; this is the working summary. Every entry in `docs/` is below,
-because the one that used to be omitted — `open-items.md` — is the largest file in the tree.
+because the one that used to be omitted — the open-items register — was the largest file in the tree
+until it was dissolved on 2026-09-04.
 
 | Path | Role | Writable? |
 |---|---|---|
@@ -225,7 +227,7 @@ because the one that used to be omitted — `open-items.md` — is the largest f
 | `docs/sdk-documentation/` | **As-built.** How the packages compose, which one to install, worked cross-package examples. Eleven files; `architecture.md` is the front door. | yes |
 | `docs/work/<delivery>/phaseN/` | Per-phase design doc, implementation plan and requirement-coverage checklist. `mvp/` is the only delivery so far. | yes |
 | `docs/superpowers/` | The **inbox** the `brainstorming` and `writing-plans` skills hard-code. Drained into `docs/work/`; never a citation target. | yes |
-| `docs/open-items.md` | **Register.** Everything unmet, unverified, misreported or surprising. Sixteen lettered sections; a resolved item's body is removed and its ID leaves the Section index, and a letter whose items are all resolved goes with them, but neither is ever renumbered or reused. | yes |
+| [`docs/work/mvp/2026-09-04-open-items-dissolution.md`](docs/work/mvp/2026-09-04-open-items-dissolution.md) | **Archive of record, not a register.** The dissolved open-items register, moved here whole on 2026-09-04 with every open question in it decided. Nothing is appended to it; its item IDs stay reserved and still resolve, because they are cited from source. | no — archive |
 | `docs/first-release.md` | **Live.** Release-readiness: what the release path already does, and the blockers that must clear before a first publish. Was the `NFR-16` row of the dissolved deferral register. | yes |
 | `docs/deviations.md` | **Register.** The as-built audit of §10, and where a deviation found outside a phase lands. | yes |
 | `docs/assets/` | Vendored wordmark SVGs the root `README.md` renders. | yes |
@@ -234,25 +236,26 @@ because the one that used to be omitted — `open-items.md` — is the largest f
 `housekeeping` skill's guard (`.claude/skills/housekeeping/guard.mjs`) enforces it and `guard.test.mjs`
 proves it; the per-tree reasons are in `docs/README.md`.
 
-**Which register. There are two, not three, from 2026-09-04.** An **open item** is a discovery made after the
-work ("this is not what the checklist says it is") → `open-items.md`. A **deferral** — a decision made before
-the work, "not this phase, that one" — goes there too now, as an open item stating the trigger that would
-discharge it; the separate `deferred-items.md` register was dissolved, its `NFR-16` row becoming
-`docs/first-release.md` and its five still-live rows archived under *Live deferrals* in
-`docs/work/mvp/2026-09-04-register-retirement-purge.md`. That archive is not an intake: nothing is appended
-to it. A **deviation** goes in the owning phase spec's own `## Deviation Ledger` section, is consolidated
+**Which register. There are two, and neither is a general-purpose one, from 2026-09-04.** All three
+registers were dissolved that day. A **deviation** — a place this port deliberately differs from the
+reference contract — goes to `docs/deviations.md`. A **release blocker**, or a decision that is only free
+before the first version bump, goes to `docs/first-release.md`. **Everything else goes where it is
+enforced**: a gate, a test, or a TSDoc comment on the thing it concerns. Do not open a third register; the
+lesson of the two that were dissolved is that a concern only a register remembered was a concern nothing
+acted on — twenty items came to name a phase that had shipped without doing the work. A **deviation** goes in the owning phase spec's own `## Deviation Ledger` section, is consolidated
 into §10, and is audited by `deviations.md` — which is also where a deviation with no owning phase lands,
 since §10 sits in a frozen tree.
 
-**Never renumber `open-items.md`.** Its item IDs are cited from source comments, tests, changesets and the
-`docs/` tree — `docs/open-items.md K11` in `packages/core/src/index.ts`, `V13` in `config/clock.ts`, and so on.
-A new review appends the next letter; nothing is ever renumbered or reused. **A resolved item is retired:** its
-body goes and nothing takes its place, but its ID stays reserved and still resolves — the probe's citation check
-reads the IDs retired before 2026-09-04 from `docs/work/mvp/2026-09-04-register-retirement-purge.md` alongside
-the live `### <ID>` headings.
+**Never renumber an open-item ID, and never reuse one.** They are cited from source comments, tests,
+changesets and the `docs/` tree — `K11` in `packages/core/src/index.ts`, `V13` in `config/clock.ts`, `H8` in
+`io/index.ts`. Since the register was dissolved they resolve against two dated archives rather than a live
+file: the `### <ID>` headings in `docs/work/mvp/2026-09-04-open-items-dissolution.md`, and the
+`## Purged item IDs` table in `docs/work/mvp/2026-09-04-register-retirement-purge.md`. The probe's citation
+check reads both, and matches the old `open-items.md K11` spelling as well as the archive path, because
+`docs/work/` is never retro-edited and every phase record still carries the old one.
 
 **Do not write the number of them into a document.** Three documents once stated three different, all-wrong
-counts (`docs/open-items.md` U10). One command derives it, from the same regex and file set the check uses:
+counts (`docs/work/mvp/2026-09-04-open-items-dissolution.md` U10). One command derives it, from the same regex and file set the check uses:
 
 ```bash
 node .claude/skills/housekeeping/probe.mjs --only=citations
@@ -307,16 +310,16 @@ entry carries any more). Not a gate: the styleguide root is a sibling repository
 the 47 sources are absent from any CI checkout, and drift is normal — a design chapter a phase edits to record
 an outcome *should* drift, and the fix is a re-harvest.
 
-**A register is not harvested.** `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`
-and `docs/open-items.md` are ledgers that every phase appends to, so any harvest of one is a stale fraction of
-it. Read them directly; `notes/deliberate-deviations.md` is the pointer. When you re-harvest, point the skill
+**A ledger is not harvested.** `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`
+is a ledger that every phase appends to, so any harvest of it is a stale fraction of
+it. Read it directly; `notes/deliberate-deviations.md` is the pointer. When you re-harvest, point the skill
 at the harvested tree — `--corpus docs/knowledge/harvested` — and hand-move any `supersede` entry it emits
 into `notes/`.
 
 **Citations into the corpus** are written `docs/knowledge/harvested/<topic>.md:<line>`. `docs/work/` is the
 exception: its phase designs, plans and checklists are dated records of what was true when they were written,
 are never retro-edited, and so still carry pre-split paths — 206 of them, across 33 files, measured
-2026-09-02 with `grep -rhoE "docs/knowledge/[a-z0-9-]+\.md" docs/work | wc -l` (`docs/open-items.md`
+2026-09-02 with `grep -rhoE "docs/knowledge/[a-z0-9-]+\.md" docs/work | wc -l` (`docs/work/mvp/2026-09-04-open-items-dissolution.md`
 O3, which carried 207 until the same date).
 
 ## Requirement-ID conventions (enforced by review, not tooling)
@@ -430,7 +433,7 @@ It derives each repository fact once — the package list, the `verify:*` gates,
 reports, the `docs/` tree — and checks every document that states it against that one derivation. It also
 finds phase documents left in the inbox, Markdown stranded at the repository root, a publishable package
 with no README, a broken relative link, an aggregate register left in a specification document, and a
-`docs/open-items.md` citation that resolves to nothing.
+an open-item citation that resolves to nothing.
 
 It is a **hand-run** tool, not a CI step. Run it after landing a phase, and before claiming the documentation
 is current. Its apply stage moves files; the prose it reports on is edited by you. It refuses to write to

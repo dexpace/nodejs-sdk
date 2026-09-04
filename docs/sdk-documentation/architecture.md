@@ -191,4 +191,4 @@ built-ins the SDK actually calls — `globalThis.crypto` is absent from ESM on e
 a mechanical bump, and one such request has already been refused: `Symbol.asyncDispose` arrived in
 20.4, so `await using` is **not** offered on `Page`, `fetchTransport()` or `undiciTransport()`, and
 `close()` is the teardown on every runtime — see `open-items.md`'s Section D row
-[`await using` support](../open-items.md#d-nfr-10-await-using).
+[`await using` support](../work/mvp/2026-09-04-open-items-dissolution.md#d-nfr-10-await-using).

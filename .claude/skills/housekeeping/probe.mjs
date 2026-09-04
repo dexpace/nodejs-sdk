@@ -591,21 +591,37 @@ function checkRegisterLeakage(ctx) {
 // ---------------------------------------------------------------------------------------
 // 8. Every `open-items.md <Letter><N>` citation resolves to a real item.
 //
-// "Real" spans TWO files since 2026-09-04: the live register, and the dated note that holds the
-// contents of the retirement table the register used to end with. See `PURGE_NOTE` below.
+// "Real" spans TWO dated notes since 2026-09-04, and NEITHER is a live register. `docs/open-items.md`
+// was dissolved that day and moved whole to `DISSOLUTION_NOTE`; the retirement table it used to end
+// with had already moved to `PURGE_NOTE`. Item IDs stay reserved and still resolve because they are
+// cited from source comments, which no gate rewrites — so this check outlives the register it was
+// written for, and reads the archive instead.
 // ---------------------------------------------------------------------------------------
 
 // An optional `[Q-T].` qualifier: Sections Q, R, S and T carry the relocated reviews' OWN row
 // numbering, so three `F` namespaces coexist and a bare `F8` resolves to any of them. The register's
 // Section index states the qualified form; option 2 (renumbering the dated records) was rejected in
 // favour of teaching this check instead.
-const CITATION = /open-items\.md`?[  ]*(?:§)?\s*(?:([Q-T])\.)?([A-Z]\d+)/g;
+// Matches BOTH spellings: the pre-2026-09-04 `open-items.md K11` and the archive path the
+// dissolution rewrote them to, `…/2026-09-04-open-items-dissolution.md K11`. Widened rather than
+// swapped: `docs/work/` is never retro-edited, so the old spelling survives in every phase record,
+// and a regex that matched only one of the two would have gone quietly blind to most of the corpus
+// -- it did, for one run, reporting 9 citations where there were 61.
+const CITATION =
+  /open-items(?:-dissolution)?\.md`?[  ]*(?:§)?\s*(?:([Q-T])\.)?([A-Z]\d+)/g;
 
 // `## Section <Letter> — …`. Sections Q-T hold their rows as `| <ID> | …` table rows rather than as
 // `### <ID>` headings, so a qualified citation has to be resolved against the section's own rows.
 const SECTION_HEADING = /^## Section ([A-Z])(?:[^\n]*)$/gm;
 const TABLE_ROW_ID = /^\|\s*([A-Z]\d+)\s*\|/gm;
 const QUALIFIED_SECTIONS = 'QRST';
+
+/**
+ * The register itself, archived. `docs/open-items.md` was dissolved on 2026-09-04 — every open
+ * question in it decided, and what remained moved here whole. The `### <ID>` headings live on, so a
+ * citation written when the register was live still resolves.
+ */
+const DISSOLUTION_NOTE = 'docs/work/mvp/2026-09-04-open-items-dissolution.md';
 
 // The second namespace of resolvable IDs, and it is NOT in the register any more. A resolved item's
 // BODY was removed and replaced by one row in `## Retired items`; on 2026-09-04 that table — and
@@ -695,7 +711,9 @@ function citedFiles(ctx) {
  * There is one derivation, and `--only=citations` prints it.
  */
 export function registerCitations(ctx) {
-  const register = ctx.read('docs/open-items.md');
+  const register = ctx.exists(DISSOLUTION_NOTE)
+    ? ctx.read(DISSOLUTION_NOTE)
+    : '';
   const ids = new Set(
     [...register.matchAll(/^### ([A-Z]\d+)\b/gm)].map(m => m[1]),
   );
@@ -740,7 +758,7 @@ function checkRegisterCitations(ctx) {
     ctx.finding(
       'citations',
       'act',
-      `${site.file}:${String(site.line)} cites docs/open-items.md ${site.cited}, ${where}. ` +
+      `${site.file}:${String(site.line)} cites open-items.md ${site.cited}, ${where}. ` +
         'Item IDs are permanent; a dangling one means the citation, not the register, is wrong.',
     );
   }
@@ -752,7 +770,6 @@ function checkRegisterCitations(ctx) {
 
 const WRITABLE_SURFACE = [
   'docs/README.md',
-  'docs/open-items.md',
   'docs/first-release.md',
   'docs/deviations.md',
   'docs/sdk-documentation',
@@ -836,7 +853,7 @@ function main(argv) {
 
   if (only?.includes('citations')) {
     const {ids, sites} = registerCitations(ctx);
-    const outside = sites.filter(s => s.file !== 'docs/open-items.md');
+    const outside = sites.filter(s => s.file !== DISSOLUTION_NOTE);
     const core = sites.filter(s => s.file.startsWith('packages/core/src/'));
     process.stdout.write(
       `citations: ${String(sites.length)} total, ${String(outside.length)} outside the ` +

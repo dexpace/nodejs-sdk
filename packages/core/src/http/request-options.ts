@@ -10,6 +10,7 @@ let createRequestOptions: (
   maxRetries: number | undefined,
   tags: ReadonlyMap<string, string>,
   auth: AuthDescriptor | undefined,
+  operationAuth: AuthDescriptor | undefined,
 ) => RequestOptions;
 
 /**
@@ -31,6 +32,7 @@ export class RequestOptions {
   readonly #maxRetries: number | undefined;
   readonly #tags: ReadonlyMap<string, string>;
   readonly #auth: AuthDescriptor | undefined;
+  readonly #operationAuth: AuthDescriptor | undefined;
 
   // eslint-disable-next-line max-params -- private, builder-internal; one parameter per HTTP-34 field
   private constructor(
@@ -38,28 +40,31 @@ export class RequestOptions {
     maxRetries: number | undefined,
     tags: ReadonlyMap<string, string>,
     auth: AuthDescriptor | undefined,
+    operationAuth: AuthDescriptor | undefined,
   ) {
     this.#timeoutMs = timeoutMs;
     this.#maxRetries = maxRetries;
     this.#tags = tags;
     this.#auth = auth;
+    this.#operationAuth = operationAuth;
     Object.freeze(this);
   }
 
   static {
     // eslint-disable-next-line max-params -- private, builder-internal plumbing; one parameter per HTTP-34 field
-    createRequestOptions = (timeoutMs, maxRetries, tags, auth) =>
-      new RequestOptions(timeoutMs, maxRetries, tags, auth);
+    createRequestOptions = (timeoutMs, maxRetries, tags, auth, operationAuth) =>
+      new RequestOptions(timeoutMs, maxRetries, tags, auth, operationAuth);
   }
 
   /**
-   * The canonical "override nothing" instance: no timeout, no retry override, no tags, no per-call
+   * The canonical "override nothing" instance: no timeout, no retry override, no tags, and neither
    * auth descriptor.
    */
   static readonly EMPTY = new RequestOptions(
     undefined,
     undefined,
     Object.freeze(new Map()),
+    undefined,
     undefined,
   );
 
@@ -83,7 +88,8 @@ export class RequestOptions {
       .timeoutMs(this.#timeoutMs)
       .maxRetries(this.#maxRetries)
       .tags(this.#tags)
-      .auth(this.#auth);
+      .auth(this.#auth)
+      .operationAuth(this.#operationAuth);
   }
 
   /** The per-call timeout in milliseconds, or `undefined` to use the configured default. */
@@ -122,6 +128,27 @@ export class RequestOptions {
   get auth(): AuthDescriptor | undefined {
     return this.#auth;
   }
+
+  /**
+   * The operation's declared auth descriptor, or `undefined` when the operation declares none.
+   *
+   * Fills AUTH-4's middle `operation` tier. Selection is `perCall ?? operation ?? client`, so
+   * {@link RequestOptions.auth} still wins over this, and this still wins over whatever descriptor
+   * the AUTH pillar step was constructed with. A tier below the selected one is never consulted even
+   * if the selected one turns out to be unsatisfiable.
+   *
+   * This slot exists for a generated client, not for a hand-written call: it is where an operation
+   * table's static `auth` declaration goes, so the caller's genuine per-call override stays
+   * distinguishable from it. Without it a generator has to fold the two together itself — which
+   * reimplements this very precedence rule outside core and leaves core unable to tell which tier
+   * won. `examples/petstore/FINDINGS.md` §4 measures that cost; `docs/work/mvp/2026-09-04-open-items-dissolution.md` W1 records it.
+   *
+   * Returned by reference: an {@link AuthDescriptor} is frozen at construction, so there is nothing
+   * to copy defensively.
+   */
+  get operationAuth(): AuthDescriptor | undefined {
+    return this.#operationAuth;
+  }
 }
 
 /**
@@ -137,6 +164,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   #maxRetries: number | undefined;
   readonly #tags = new Map<string, string>();
   #auth: AuthDescriptor | undefined;
+  #operationAuth: AuthDescriptor | undefined;
 
   /**
    * Sets the per-call timeout.
@@ -217,6 +245,22 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
   }
 
   /**
+   * Sets the operation's declared auth descriptor, filling AUTH-4's `operation` tier for this call.
+   *
+   * Independent of {@link RequestOptionsBuilder.auth}: filling both is the normal case for a
+   * generated client whose caller also passed an override, and `perCall ?? operation ?? client`
+   * resolves them. No validation beyond the type, for the same reason
+   * {@link RequestOptionsBuilder.auth} needs none.
+   *
+   * @param descriptor - the operation's descriptor, or `undefined` when it declares none.
+   * @returns this builder, for chaining.
+   */
+  operationAuth(descriptor: AuthDescriptor | undefined): this {
+    this.#operationAuth = descriptor;
+    return this;
+  }
+
+  /**
    * Copies and freezes the accumulated state into an immutable {@link RequestOptions}.
    *
    * Tags are defensively copied here, so later mutation of any source map a caller passed to
@@ -230,6 +274,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
       this.#maxRetries,
       Object.freeze(new Map(this.#tags)),
       this.#auth,
+      this.#operationAuth,
     );
   }
 }

@@ -38,11 +38,10 @@ const stringSchema: Schema<string> = {
 };
 
 const decode = <T>(json: string, schema: Schema<T>): T =>
-  jsonSerde().deserializer.deserialize(
-    new TextEncoder().encode(json),
+  jsonSerde().deserializer.deserialize(new TextEncoder().encode(json), {
     schema,
-    'Target',
-  );
+    typeName: 'Target',
+  });
 
 // Typed as `Schema<unknown>` rather than inferred: `test.each` would otherwise widen the column to a
 // union of the three schema types, which no single `decode` call site can accept. Schemas are
@@ -180,7 +179,7 @@ test('SERDE-29: one bundle serves many concurrent operations without cross-talk'
       try {
         return await serde.deserializer.deserializeFrom(
           drip(serde.serializer.serializeToString({i})),
-          identity,
+          {schema: identity},
         );
       } finally {
         inFlight -= 1;

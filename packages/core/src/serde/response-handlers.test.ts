@@ -14,7 +14,7 @@ import {
   IoError,
   SourceContractViolationError,
 } from '../io/errors.js';
-import type {Deserializer, Schema} from '../seams/serde.js';
+import type {DecodeTarget, Deserializer, Schema} from '../seams/serde.js';
 import type {SuppressedErrorLike} from '../suppress.js';
 import {DeserializationError} from './errors.js';
 import {decodeResponse, decodeSuccessResponse} from './response-handlers.js';
@@ -39,14 +39,18 @@ const dtoSchema: Schema<Dto> = {
 
 /** A deserializer that reads the source to EOF and JSON-parses it. Never cancels the source. */
 const jsonish: Deserializer = {
-  deserialize<T>(data: Uint8Array, schema: Schema<T>): T {
+  deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T {
     // `as unknown`: `JSON.parse` is typed `any`; the cast narrows away from it at the boundary.
-    return schema.parse(JSON.parse(new TextDecoder().decode(data)) as unknown);
+    return target.schema.parse(
+      JSON.parse(new TextDecoder().decode(data)) as unknown,
+    );
   },
   async deserializeFrom<T>(
     source: ReadableStream<Uint8Array>,
-    schema: Schema<T>,
+    target: DecodeTarget<T>,
+    options?: {readonly signal?: AbortSignal | undefined},
   ): Promise<T> {
+    options?.signal?.throwIfAborted();
     const reader = source.getReader();
     const chunks: Uint8Array[] = [];
     for (;;) {
@@ -55,7 +59,7 @@ const jsonish: Deserializer = {
       chunks.push(value);
     }
     const text = chunks.map(c => new TextDecoder().decode(c)).join('');
-    return schema.parse(JSON.parse(text) as unknown);
+    return target.schema.parse(JSON.parse(text) as unknown);
   },
 };
 

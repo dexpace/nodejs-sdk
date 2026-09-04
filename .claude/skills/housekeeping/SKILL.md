@@ -48,7 +48,7 @@ another.
 | `readmes` | A publishable package with no README, one under 800 bytes, or one declaring `@dexpace/core` as a dependency rather than a peer |
 | `links` | Broken relative links in `docs/`, `CLAUDE.md`, `README.md` and every package README |
 | `registers` | An aggregate `## Open Findings` / `## Deferred Items Log` / `## Open Items` left in a specification document instead of a register at the `docs/` root |
-| `citations` | A `docs/open-items.md <Letter><N>` citation matching neither a live `### <ID>` heading nor a `## Purged item IDs` row in `docs/work/mvp/2026-09-04-register-retirement-purge.md` — the note that holds the retirement table the register used to end with |
+| `citations` | An `open-items.md <Letter><N>` citation — in either spelling, the pre-dissolution one or the archive path — matching neither a `### <ID>` heading in `docs/work/mvp/2026-09-04-open-items-dissolution.md` nor a `## Purged item IDs` row in `docs/work/mvp/2026-09-04-register-retirement-purge.md`. Both are dated archives; the register itself was dissolved on 2026-09-04 |
 | `guard` | The frozen list and the writable surface overlapping — the one way the apply stage could eat a normative document |
 
 A **separate** check needs the built packages and so runs on its own:
@@ -153,7 +153,7 @@ bodies of seven of the eight checks with `return;` left it fully green. They are
 **not** in `bun run test:scripts`, which globs `scripts/*.test.mjs` — promoting them is a
 one-line glob change, and the argument for it is the same one that made `test:scripts`
 blocking in Phase 10: a gate whose own logic degrades still exits 0, so nothing else
-notices. Tracked in `docs/open-items.md` U5. No count is written here on purpose:
+notices. Tracked in `docs/work/mvp/2026-09-04-open-items-dissolution.md` U5. No count is written here on purpose:
 `node --test .claude/skills/housekeeping/*.test.mjs` reports it.
 
 ## Structure

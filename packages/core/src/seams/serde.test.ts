@@ -33,7 +33,7 @@ test("decode's return type is driven by the schema argument, not by the bundle",
   expectTypeOf<Decoded>().toBeUnknown();
 
   const decode = (d: Deserializer, s: Schema<{id: number}>): {id: number} =>
-    d.deserialize(new Uint8Array(), s);
+    d.deserialize(new Uint8Array(), {schema: s});
   expectTypeOf(decode).returns.toEqualTypeOf<{id: number}>();
 });
 
@@ -41,7 +41,7 @@ test('a parametric target needs no special carrier — the schema is a combinato
   const decodeMany = (
     d: Deserializer,
     s: Schema<readonly {id: number}[]>,
-  ): readonly {id: number}[] => d.deserialize(new Uint8Array(), s);
+  ): readonly {id: number}[] => d.deserialize(new Uint8Array(), {schema: s});
   expectTypeOf(decodeMany).returns.toEqualTypeOf<readonly {id: number}[]>();
 });
 

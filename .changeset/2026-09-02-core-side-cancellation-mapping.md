@@ -3,7 +3,7 @@
 ---
 
 A cancellation observed inside core now surfaces as `CancellationError`, the same type the transport
-layer already produced for the identical abort (XCUT-1, `docs/open-items.md` N1).
+layer already produced for the identical abort (XCUT-1, `docs/work/mvp/2026-09-04-open-items-dissolution.md` N1).
 
 The retry engine's `RETRY-32` exit handed back `config.signal.reason` verbatim, and the bearer
 cache's `raceAbort` rejected with it, so a caller writing

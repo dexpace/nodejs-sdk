@@ -7,7 +7,7 @@ import {failure, success, type Outcome} from './outcome.js';
 /**
  * One link of the response phase, run only while the outcome is a Success (RECOV-4).
  *
- * @internal
+ * @public
  */
 export type ResponseStep = (response: Response) => Promise<Response>;
 
@@ -17,7 +17,7 @@ export type ResponseStep = (response: Response) => Promise<Response>;
  * A recovery step SHOULD return a `Failure` rather than throw (RECOV-9); both are handled
  * identically, so this is a convention rather than something the chain enforces.
  *
- * @internal
+ * @public
  */
 export type RecoveryStep = (
   outcome: Outcome<Response>,
@@ -33,12 +33,13 @@ export type RecoveryStep = (
  * throws, for any input.
  *
  * A step that *returns* a substitute outcome is never auto-closed (RECOV-13) — only a caught throw
- * reaches {@link toFailureClosingSuccess}. A transforming step owns releasing whatever it drops.
+ * reaches this module's `toFailureClosingSuccess`. A transforming step owns releasing whatever it
+ * drops.
  *
  * Safe under concurrent `apply()` calls (RECOV-14): after construction the instance holds nothing
  * but its two step arrays, and all per-call state lives in the phase methods' locals.
  *
- * @internal
+ * @public
  */
 export class ResponseRecoveryChain {
   readonly #responseSteps: readonly ResponseStep[];

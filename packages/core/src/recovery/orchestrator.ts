@@ -13,7 +13,7 @@ import type {ResponseRecoveryChain} from './response-chain.js';
  * Everything {@link dispatchWithRecovery} needs beyond the request itself, bundled into one
  * trailing object. Five positional parameters would fail ESLint's `max-params: 3`.
  *
- * @internal
+ * @public
  */
 export interface DispatchConfig {
   /** The terminal transport hop. */
@@ -48,7 +48,7 @@ export interface DispatchConfig {
  * @throws Whatever the terminal Failure carries, by identity — any value, not necessarily an
  * `Error`.
  *
- * @internal
+ * @public
  */
 export async function dispatchWithRecovery(
   request: Request,

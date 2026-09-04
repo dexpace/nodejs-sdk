@@ -1,34 +1,42 @@
-# Open Items
+# Open items — the register, dissolved 2026-09-04
 
-Running register of everything known to be unmet, unverified, misreported, or surprising across the
-implemented portion of this project. **This is the only such register**; a second one at the repository root
-was merged in as Section P on 2026-08-31 and deleted.
+**This file is an archive of record. Nothing is appended to it.**
 
-It is one of three files at the `docs/` root, and the boundary between them is *when* an item was created:
+`docs/open-items.md` was the running register of everything known to be unmet, unverified, misreported
+or surprising across the implemented portion of this project. On 2026-09-04 a maintainer pass decided
+every open question in it rather than re-triaging them, and what remained no longer earned a register
+at the `docs/` root. The file was moved here, whole, on that day.
 
-| Register | Holds | Item is |
-|---|---|---|
-| `open-items.md` (this file) | Everything unmet, unverified, misreported, or surprising | A gap found **after** the work, between what is claimed and what is built |
-| [`first-release.md`](./first-release.md) | Release readiness and the blockers before a first publish | Live, maintainer-owned; was the `NFR-16` deferral |
-| [`deviations.md`](./deviations.md) | The as-built audit of the deviation ledger | A place this port deliberately differs from the reference contract |
+It is the third and last register to be dissolved. `deferred-items.md` went on the same date
+([the purge note](./2026-09-04-register-retirement-purge.md)), its `NFR-16` row becoming
+[`first-release.md`](../../first-release.md). Two registers remain and neither is a successor to this
+one:
 
-**There were three registers until 2026-09-04.** `deferred-items.md` held work a phase decided not to do
-yet; it was dissolved that day, its `NFR-16` row becoming `first-release.md` and its five still-live rows
-archived under *Live deferrals* in
-[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md),
-an archive of record that is never appended to. **A new deferral is now an open item here**, carrying the
-trigger that would discharge it. `AUTH-37` shows the shape a requirement used to take across the two files:
-deferred to Phase 7b there, recorded here as a live silent swallow until its log half landed on 2026-09-02.
-Both halves are discharged; a requirement in that position today carries one item stating both.
+| Register | Holds |
+|---|---|
+| [`deviations.md`](../../deviations.md) | Where this port deliberately differs from the reference contract, including deviations found outside a phase |
+| [`first-release.md`](../../first-release.md) | Release readiness, the blockers before a first publish, and the decisions owed before the first version bump |
 
-A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
-of the file is that nothing is unmet *silently* — every gap below is scheduled against a named phase, awaiting a
-decision, or `UNSCHEDULED` with a stated trigger in place of an owner.
+**Where a finding goes now.** A deviation goes to `deviations.md`. A release blocker or a
+before-the-bump decision goes to `first-release.md`. Everything else goes where it is enforced: a
+gate, a test, or a TSDoc comment on the thing it concerns. That is the change this dissolution makes
+— a concern that only a register remembered was a concern nothing acted on, which is how twenty items
+came to name a phase that had shipped without doing the work.
 
-Only live items are here: the 102 IDs retired before 2026-09-04 are reproduced in
-[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md),
-which the citation check reads alongside the live `### <ID>` headings, so every citation of one still
-resolves.
+**Item IDs stay reserved and still resolve.** They are cited from source comments (`docs/open-items.md
+K16` in `packages/core/src/index.ts`, `K18` in `config/build-info.ts`, and so on), and those citations
+were rewritten to name this file on 2026-09-04. No ID is ever renumbered or reused, here or anywhere.
+The 102 IDs retired before that date are in [the purge note](./2026-09-04-register-retirement-purge.md).
+
+**What was decided on the day this closed**, beyond the items already marked below: `K1`, `K12`,
+`H19`, `N3`, `V11`, `W1`, `V2`, `H9`, `H10`, `H15`, `N4`, `G13`, `O2`, `F4`, `X1`, `X2` and `X3` were
+fixed in code, gates or notes; `K11`, `K19`, `H11` and `K13` were closed on a reading; `G1`'s erratum
+was drafted into `deviations.md` for the specification owner to apply. The `WATCH` and `RECORDED`
+rows below were neither: a `WATCH` is not a defect and a `RECORDED` row is a note about a decision
+already taken, so both survive as reasoning rather than as work. Their triggers live on the code they
+concern.
+
+---
 
 ## Section index
 
@@ -57,9 +65,9 @@ table below is spent, not free: its items are all closed, and it is never reused
 | D | Scheduled deferrals, Phase 1 onward | **none.** A bare table; its rows are cited by the anchors on them, or by row title, not by an item ID |
 | F | Phase 4b — recovery-chain primitives | `F1`, `F2`, `F4`, `F7`, `F9` |
 | G | Phase 5b — redirect | `G1`, `G5`, `G6`, `G8`, `G9`, `G13` |
-| H | Phase 6a — serde | `H4`, `H7`–`H11`, `H15`–`H20` |
+| H | Phase 6a — serde | `H4`, `H7`–`H11`, `H15`–`H20`. `H10` and `H15` are **MOVED**: the headings are held here, the bodies are in [`first-release.md`](../../first-release.md) |
 | I | Phase 6b — Server-Sent Events | `I2`, `I3`, `I4` |
-| K | Phase 7a — configuration and platform primitives | `K1`, `K3`, `K6`–`K8`, `K11`–`K13`, `K16`, `K18`–`K20` |
+| K | Phase 7a — configuration and platform primitives | `K1`, `K3`, `K6`–`K8`, `K11`–`K13`, `K16`, `K18`–`K20`. Closed 2026-09-04: `K1` and `K12` **FIXED**, `K11` and `K19` **CLOSED**. Their headings are held here — `K11` is cited from `packages/core/src/config/build-info.ts:37` and from `CLAUDE.md` |
 | L | Phase 7b — instrumentation and observability | `L1`, `L4`. `L1` is a SPLIT: its `OBS-19` and `OBS-28` halves are closed, `OBS-29` is live as `V2` |
 | M | Phase 8b — async-runtime bridge | `M1` |
 | N | Phase 9 — cross-cutting invariants and conformance | `N3`, `N4` |
@@ -69,6 +77,7 @@ table below is spent, not free: its items are all closed, and it is never reused
 | U | Documentation restructure | `U4`, `U5` |
 | V | Register audit, 2026-09-02 | `V2`, `V11` |
 | W | Register dispositions taken 2026-09-04 | `W1` |
+| X | Holes found while closing the 2026-09-04 decision pass | `X1`–`X4` |
 
 **Reviewed state.** Scaffold milestone (`0ebdc79`); Phase 1 (branch `2-phase-1-core-http-domain-model`,
 uncommitted at time of review); Phases 3a/3b; Phase 4a (`7-phase-4a-execution-context`, three passes);
@@ -94,6 +103,7 @@ shipped code. Phase 5a's gap closed on 2026-08-31 with Section P.
 | **BLOCKED** | Real, understood, and stopped on a decision that is the owner's to make — not merely unowned. Distinct from `DECIDE` in that the analysis is finished and the blocking reason is named. |
 | **FIXED** | Closed by work done for this register, with `file:line` evidence in the item's own dated note. |
 | **CLOSED** | Closed by a reading rather than by work: the premise was false, the requirement is satisfied by delegation, or the decision is won't-fix. The reasoning is in the item. |
+| **MOVED** | Still live, but its body now lives in another `docs/` register and is maintained there. The heading and the ID stay here, reserved and resolving, with a pointer in place of the body. Added 2026-09-04, when the two items whose only trigger was the first release went to [`first-release.md`](../../first-release.md). |
 
 ---
 
@@ -180,7 +190,7 @@ Split the banner per sub-phase, and add an `XCUT-14` row pointing at 4a Task 4 (
 > **Historical, as of 2026-09-02, and doubly so now.** `docs/deferred-items.md` was the authoritative
 > deferral register when this section was written; it was dissolved on 2026-09-04 (Section W), so this
 > section's rows are the surviving long-form reasoning rather than a pointer to a shorter aggregate. The
-> `NFR-16` provenance row's live half is [`first-release.md`](./first-release.md). The rows that stay do so
+> `NFR-16` provenance row's live half is [`first-release.md`](../../first-release.md). The rows that stay do so
 > because other documents link to them — the
 > `await using` row and the `NFR-16` provenance row each carry an HTML anchor — and because a row's
 > reasoning is often longer here than in the aggregate. Cite a row by that anchor or by its title,
@@ -301,8 +311,16 @@ Ledger and asserted with the reasoning inline in `redirect-step.test.ts`.
 **2026-09-02: Phase 10 shipped and did not write it, so the owner is spent.** No phase is invented to
 replace it. `docs/product-spec/` is a frozen tree, so the erratum is a deliberate hand edit by
 whoever owns the specification, not a maintenance action. Nothing in the code waits on it.
-**Trigger: the next deliberate amendment of `docs/product-spec/08-execution-pipelines.md` or
-`docs/product-spec/10-redirect-handling.md`** — the erratum rides along with it.
+~~**Trigger: the next deliberate amendment of `docs/product-spec/08-execution-pipelines.md` or
+`docs/product-spec/10-redirect-handling.md`** — the erratum rides along with it.~~
+
+**2026-09-04: the erratum is drafted, so what is left is applying it rather than deciding it.**
+[`deviations.md`](../../deviations.md) now carries both the deviation row and a *Proposed erratum for
+`PIPE-40`* section with the replacement sentence written out. It edits `PIPE-40` only: that
+requirement is the general rule and needs to stop naming a trigger `REDIR-22` has already claimed,
+while `REDIR-22` is correct as written. **UNSCHEDULED — trigger: the specification owner applying
+it.** A hand edit to a frozen tree is theirs; nothing in the code waits on it, and the behaviour is
+unaffected either way.
 
 ### G5 — The marker-stripping guard is not the last step before `SEND` — **WATCH**
 
@@ -457,7 +475,7 @@ section now marks `bun test` build-dependent instead.
 
 **Trigger:** none.
 
-### H8 — `SERDE-12`'s discrimination: one bug fixed, one residual limit — **PARTLY RESOLVED / OPEN**
+### H8 — `SERDE-12`'s discrimination: one bug fixed, one residual limit — **PARTLY RESOLVED / OPEN** (promotions FIXED 2026-09-04; the foreign-stream residual is what stays open)
 
 *Rewritten after the Phase 6a adversarial review (G1/G2). The previous text asserted "`decodeResponse`
 implements `SERDE-12` correctly" and framed the whole gap as nominal-vs-structural. That was wrong on the
@@ -525,9 +543,36 @@ changes.
    `instanceof SuppressedError` is **not** a valid test because the class is absent on the declared
    `engines.node >=20.3` floor. Exporting a *type* for it is the narrowest possible fix.
 
-**Trigger:** Phase 9 or Phase 10, whichever next audits the public barrel, for both promotion questions. The
-foreign-stream-error residual triggers on the phase that builds the transport adapter, which is the only layer
-that can tag a stream error at its source.
+~~**Trigger:** Phase 9 or Phase 10, whichever next audits the public barrel, for both promotion questions.~~
+The foreign-stream-error residual triggers on the phase that builds the transport adapter, which is the only
+layer that can tag a stream error at its source.
+
+**Both promotion questions FIXED 2026-09-04; the residual stays open.**
+
+Sub-item 1 cost more than "export the guard", and that is why it had not been taken: `isIoError`
+narrows to five classes and only two of them — `IoError` and `EndOfStreamError` — were public, so
+exporting the guard alone named three forgotten exports and api-extractor would have rejected it.
+All four are promoted together: `SourceContractViolationError`, `ClosedResourceError` and
+`AllocationLimitError` are now `@public` alongside `isIoError`
+(`packages/core/src/io/errors.ts:49,65,80,103`), all five exported from
+`packages/core/src/index.ts`.
+
+**What decided it, beyond symmetry.** These are not hypothetical classes a caller might one day
+meet. This item's own *Fixed* note above changed `decodeResponse`'s guard to a single
+`e instanceof DexpaceError` pass-through, which means a caller genuinely receives a
+`ClosedResourceError` or an `AllocationLimitError` today, with its identity preserved — and until
+now had no name to catch it by. The three fields that landed `(undocumented)` in the first
+regeneration carry TSDoc now.
+
+Sub-item 2 is the narrowest fix it named: `SuppressedErrorLike` is exported as a **type**
+(`packages/core/src/suppress.ts:8`, `export type` at the barrel). The class stays unexported —
+`FallbackSuppressedError` is an implementation detail and `instanceof SuppressedError` is invalid on
+the `>=20.3` floor either way, which is precisely why a structural type is the right shape.
+
+The precedent this followed is one day old: `3675b55` flattened `DomainModelError` and replaced it
+with a `@public isDomainModelError` guard, making "flat tree plus an exported guard" the settled
+taxonomy. `CLAUDE.md` was already listing `isIoError` beside `isBodyError` and `isDomainModelError`
+as though it were exported; it now is.
 
 ### H9 — every decode target is treated as non-null — **UNSCHEDULED** (2026-09-02)
 
@@ -555,37 +600,18 @@ Phase 10 and all ten have shipped. Deliberately **no** opt-in flag was invented 
 surface needs design sign-off, not a review pass. The open question is unchanged: whether
 `DecodeTarget` should carry an explicit "this target admits null" opt-in.
 
-### H10 — one concept, two spellings across the seam and the handler layer — **UNSCHEDULED** (2026-09-02; direction decided)
+### H10 — one concept, two spellings across the seam and the handler layer — **MOVED** (2026-09-04)
 
-`Deserializer.deserialize(data, schema, typeName?)` takes the schema and its diagnostic label positionally;
-`decodeResponse`/`decodeSuccessResponse` bundle the identical pair as `DecodeTarget<T>`. Both ship public in
-this phase, in the same api-extractor report.
+The seam spells one concept positionally — `Deserializer.deserialize(data, schema, typeName?)` — while
+`decodeResponse`/`decodeSuccessResponse` bundle the identical pair as `DecodeTarget<T>`; the direction was
+decided on 2026-09-02 (unify on the object form) and only the timing was ever open.
 
-The positional form is what the plan's Task 2 Interfaces block specifies and it is defensible on its own terms
-— three parameters, inside `max-params`, and an SPI a third-party codec *implements*, where a positional shape
-is the smaller burden. The object form exists because positionally the handlers would be four parameters, which
-is a lint error. So each layer's choice is locally right and the pair is globally inconsistent: a codec author
-implements one spelling, a caller uses the other. `docs/knowledge/harvested/api-design.md:14` ("optional parameters
-collected into a single options object rather than a positional list past two parameters") points at the object
-form for both.
+**Moved to [`first-release.md`](../../first-release.md) on 2026-09-04**, under *Decisions owed before the first
+version bump*, because its only stated trigger — the pre-publish breaking-change batch, before the first
+non-`0.0.0` release — is a release decision rather than a discovery made after the work.
 
-Not reshaped here: `Deserializer` is a seam this phase is publishing, and reshaping a seam without design
-sign-off is out of scope for a review pass. The rationale is now stated on `Deserializer`'s TSDoc so the
-inconsistency is deliberate and legible rather than accidental. Raised in the Phase 6a shape review as F5.
-
-**2026-09-02: the direction is decided, the timing is not.** "The phase that next reshapes this seam"
-names nobody — the roadmap ends at Phase 10 and every phase has shipped. Recorded so a later reader
-does not re-derive it:
-
-> **Unify on the `DecodeTarget<T>` object form.** `docs/knowledge/harvested/api-design.md:14` points
-> there, the handler layer already uses it, and a codec author implementing one spelling while a
-> caller uses the other is the cost being paid every day it stays split.
-
-Not done now, because it is a breaking change to a published SPI and this pass is not the place to
-take one alone. **UNSCHEDULED — trigger: the pre-publish breaking-change batch, before the first
-non-`0.0.0` release.** That batch is the last moment the change is free: `@dexpace/core` is `0.0.0`,
-and semver's initial-development carve-out — which Phase 3b's validation review already invoked once,
-for a narrowing of its own — stops applying at 1.0.
+The ID stays reserved and still resolves: the heading above is what
+`docs/work/mvp/phase6/phase6a/2026-07-28-phase6a-serde-checklist.md` cites.
 
 ### H11 — `tristate()`/`tristateObject()` are format-agnostic but ship in a format-specific package — **UNSCHEDULED** (2026-09-02)
 
@@ -635,63 +661,19 @@ maps. Recorded so that "the floor covers everything" is never assumed.
 actively misreporting, and the case needs either a `bun test` counterpart or an explicit note in its phase
 checklist.
 
-### H15 — no `AbortSignal` on any long-running async API in this phase — **DECIDE-recorded, UNSCHEDULED** (2026-09-02)
+### H15 — no `AbortSignal` on any long-running async API in this phase — **MOVED** (2026-09-04)
 
-Raised by the Phase 6a adversarial review as G10. Ledgered rather than fixed: adding `{signal}` to four public
-APIs is a design decision, not a review-pass edit, and some of the sites would breach `max-params`.
+Two stream-driving SPI methods — `Deserializer.deserializeFrom` and `Serializer.serializeTo` — drive a
+stream they did not open and accept no `{signal}`, which the project-wide position decided 2026-09-02 says
+they owe; abort is honored transitively today, so what is owed is the parameter, not the behaviour.
 
-`docs/knowledge/harvested/concurrency-and-async.md:18` ("every long-running async API must accept an options object with
-`{ signal }`"), `:20` (accepting must be paired with honoring), and `:44` (a signal must reach the actual I/O
-primitive) all apply. Four sites accept none: `Serializer.serializeTo`, `Deserializer.deserializeFrom`
-(`packages/core/src/seams/serde.ts`), `decodeResponse` and `decodeSuccessResponse`
-(`packages/core/src/serde/response-handlers.ts`).
+**Moved to [`first-release.md`](../../first-release.md) on 2026-09-04**, under *Decisions owed before the first
+version bump*, because its only stated trigger — the pre-publish breaking-change batch, H10's batch, same
+file and same break — is a release decision rather than a discovery made after the work.
 
-What is true in mitigation, verified rather than assumed: **abort IS honored transitively.** A transport that
-errors the body stream on abort makes `reader.read()` reject and the read loop exits promptly —
-`deserializeFrom` surfaces the `DOMException` cleanly. What is *not* interruptible is the CPU-bound
-`JSON.parse` / `schema.parse` span after the drain completes, which no signal could cancel anyway without a
-streaming parser — and `JSON.parse` has no incremental form to build one on.
-
-The project-wide position appears to be "cancellation rides the transport": `toHttpError` and
-`Response.bytes()` take no signal either. So this is a consistency question about the whole SDK, not a 6a
-defect — but it has never been written down, which is why it is here.
-
-**Trigger:** the phase that next reshapes this seam, which is the only cheap moment to add a parameter to a
-published SPI. The decision is to add `{signal}` across all four sites, or to state "cancellation rides the
-transport" as an explicit project-wide position and cite it from each site's TSDoc.
-
-**2026-09-02: the "no phase" problem applies, and one premise needs the owner's ruling.** The
-candidate reading — "cancellation belongs to the I/O layer that produces the buffer; SSE and
-pagination take signals because they are long-lived I/O *consumers*" — would close this row on the
-reading alone, and it holds for `toHttpError` and `Response.bytes()`, which take buffered bytes.
-
-It does **not** obviously hold for two of the four sites named above.
-`Deserializer.deserializeFrom(source: ReadableStream<Uint8Array>, …)`
-(`packages/core/src/seams/serde.ts:162`) and
-`Serializer.serializeTo(value, sink: WritableStream<Uint8Array>)` (`:96`) take a **stream**, not a
-buffer, and drive it themselves — so they are long-lived I/O consumers by the same test that earned
-SSE and pagination their signals.
-
-**The project-wide position, decided 2026-09-02 and stated here once:**
-
-> **A signal is required where the API drives a stream it did not open. Buffered-bytes APIs take
-> none.**
-
-That answers the consistency question this row was really about. `toHttpError` and `Response.bytes()`
-take buffered bytes and correctly take no signal; SSE and pagination are long-lived I/O consumers and
-correctly do. Two of the four sites named above fall on the *other* side of that line and therefore
-owe a signal:
-
-- `Deserializer.deserializeFrom(source: ReadableStream<Uint8Array>, …)` (`seams/serde.ts:162`)
-- `Serializer.serializeTo(value, sink: WritableStream<Uint8Array>)` (`:96`)
-
-Both now carry a TSDoc `@remarks` citing this item, so the obligation is visible where the method is
-read rather than only here. The mitigation above is unchanged and still true: abort IS honored
-transitively today, and the CPU-bound `JSON.parse` span is not interruptible by any signal.
-
-**UNSCHEDULED — trigger: the pre-publish breaking-change batch (H10's batch: same file, same
-break).** Adding a parameter to a published SPI is breaking, `@dexpace/core` is `0.0.0`, and that
-batch is the last moment it is free. Not taken now, alone, for exactly that reason.
+The ID stays reserved and still resolves: `packages/core/src/seams/serde.ts:99,170` cite this item from
+TSDoc `@remarks`, and so does
+`docs/work/mvp/phase6/phase6a/2026-07-28-phase6a-serde-checklist.md`.
 
 ### H17 — `SERDE-20`'s array-element half is the platform's, not this codec's — **RECORDED**
 
@@ -745,7 +727,7 @@ Verified by deleting every `dist/` and `.tsbuildinfo` and running both CI jobs i
 
 ---
 
-### H19 — `fast-uri` pinned by a root `overrides` entry; two dev-only advisories left open — **PARTLY RESOLVED**
+### H19 — `fast-uri` pinned by a root `overrides` entry; two dev-only advisories left open — **FIXED** (2026-09-04)
 
 `bun run audit` (`--audit-level=high --prod`) failed in CI on `GHSA-7p8r-x3mc-p8w7`: `fast-uri <3.1.5`
 mistakes a backslash for an authority introducer, so a crafted URI resolves to an unintended host. It reaches
@@ -769,7 +751,25 @@ the gate today, because both reach the tree only through **root** dev dependenci
 They are left alone as out of scope for a serde phase — but the filtering asymmetry above is what stands
 between them and a red CI run, so they should be pinned the same way rather than waited on.
 
-**Trigger:** the next phase that touches root tooling, or the first CI run that reports either of them.
+~~**Trigger:** the next phase that touches root tooling, or the first CI run that reports either of them.~~
+
+**FIXED 2026-09-04.** Both are pinned the same way `fast-uri` was, in the same root block:
+
+```json
+"overrides": {"fast-uri": "^3.1.5", "js-yaml": "^4.3.1", "tmp": "^0.2.6"}
+```
+
+`bun audit --audit-level=high` now reports `No vulnerabilities found (checked 365 packages)`, where
+before it reported three across two advisories — `js-yaml` reached the tree on **two** paths at two
+major versions (`eslint > @eslint/eslintrc > js-yaml` at 4.3.0 and
+`@changesets/cli > @manypkg/get-packages > read-yaml-file > js-yaml` at 3.15.0), and the 4.x pin
+resolves both because 3.x's own consumers accept it. `tmp` moved `0.0.33 -> ^0.2.6`, which is a
+major bump for `gts -> inquirer -> external-editor`; `bun run lint` was re-run and passes, which is
+the only path in this repository that reaches it.
+
+The trigger had in fact fired without being noticed: `3675b55` added three `.changeset/` files,
+which is root tooling, and took neither pin. That is the shape this register exists to catch, and it
+is why the fix is taken here rather than deferred to the next such commit.
 
 ---
 
@@ -798,7 +798,7 @@ unconditional `implements AsyncDisposable` when `engines.node` moves past Node 2
 had declared the member unguarded; all four now share `SseStream`'s shape. See §10 ledger item 11. The
 deferred-items row "`await using` support on `Page`, `fetchTransport()`, `undiciTransport()`" this
 paragraph used to name was discharged with the rest of that table; it is reproduced in
-[the purge note](./work/mvp/2026-09-04-register-retirement-purge.md), which `J3` and `R.E1` both cite.
+[the purge note](./2026-09-04-register-retirement-purge.md), which `J3` and `R.E1` both cite.
 
 **Corrected 2026-08-30 (Phase 10): the "becomes unconditional when the floor moves" sentence is struck, not
 merely deferred.** Raising `engines.node` to `>=20.4` to recover the declaration is **decided against** —
@@ -819,7 +819,7 @@ value equality (`hashCode`); value equality is provided via `sseEventsEqual()` (
 
 ## Section K — Phase 7a (Configuration & Platform Primitives)
 
-### K1 — `clientIdentityStep` is not reachable from the public barrel — **UNSCHEDULED** (2026-09-02; the stated blocker is gone)
+### K1 — `clientIdentityStep` is not reachable from the public barrel — **FIXED** (2026-09-04)
 
 `RECOV-33`'s step is implemented and tested (`config/client-identity-step.ts`), but it is **not** exported
 from `packages/core/src/index.ts`. It returns a `StepDescriptor`, and the whole of `pipeline/` —
@@ -841,8 +841,28 @@ below the exports that refute it. Both are corrected.
 
 What is left is a decision, not a blocker: adding `clientIdentityStep` and `ClientIdentitySettings`
 to the barrel widens the public surface, which needs sign-off rather than a maintenance pass.
-**UNSCHEDULED — trigger: the next deliberate public-surface addition**, which should settle this and
-K11's folder question together, as K11 asks.
+~~**UNSCHEDULED — trigger: the next deliberate public-surface addition**, which should settle this and
+K11's folder question together, as K11 asks.~~
+
+**FIXED 2026-09-04.** Both symbols are `@public` and on the barrel:
+`packages/core/src/config/client-identity-step.ts:11,107` carry the tags,
+`packages/core/src/index.ts` exports them in the Phase 7a block, and they land in the report at
+`packages/core/etc/core.api.md:187,194` as `clientIdentityStep(settings?: ClientIdentitySettings):
+StepDescriptor`. The regeneration is ten added lines and no deleted ones — purely additive, so no
+pre-publish batch was needed.
+
+**What decided it.** The step is unreachable *and* uninstalled: `grep -rn clientIdentityStep` over
+`packages/`, `tests/` and `examples/` returns its own definition, its own test and one comment,
+so `standardResilience` does not install it either. Its own TSDoc
+(`packages/core/src/config/client-identity-step.ts:100`) says "a caller adds it to their own
+pipeline" — which no caller could do. Every other step factory was already public: `authStep`,
+`retryStep`, `redirectStep`, `loggingStep`, `stripCrossOriginMarkerStep`. `RECOV-33`'s stamping step
+was the sole exception, and `NFR-15` had no reachable implementation.
+
+**The barrel question was NOT settled with it, and deliberately.** K1 and K11 were paired on the
+premise that one sign-off answers both; the pairing dissolves once the export lands, because a
+`@public` symbol named against its own module path makes its folder invisible. See K11, closed the
+same day, and `X1`/`X2` for the two holes this pass found and did not take.
 
 ### K3 — `CFG-12` is documented, not enforced — **WATCH**
 
@@ -892,7 +912,7 @@ release goes through `prepublishOnly`'s build, so a published artifact cannot ca
 working tree can, and nothing fails if the regenerated file is left uncommitted. **Trigger:** if CI ever
 needs to assert the committed file matches `package.json`, add a `git diff --exit-code` after `prebuild`.
 
-### K11 — `client-identity-step.ts`'s folder placement is provisional — **UNSCHEDULED** (2026-09-02, with K1)
+### K11 — `client-identity-step.ts`'s folder placement is provisional — **CLOSED** (2026-09-04)
 
 `RECOV-33`'s step lives at `packages/core/src/config/client-identity-step.ts` because the phase design doc's
 File Layout names that path. Two arguments say it is not its long-term home, both recorded here rather than
@@ -926,11 +946,40 @@ remains to hand them to.
 
 Nothing has decayed in the meantime: the `config/ → pipeline/` edge is still the only outbound one,
 K12's import-cycle gate still does not exist, and `RECOV-32`'s sibling is still planned for
-`recovery/`. **UNSCHEDULED — trigger: the same one K1 now carries**, the next deliberate
+`recovery/`. ~~**UNSCHEDULED — trigger: the same one K1 now carries**, the next deliberate
 public-surface addition, which is when `clientIdentityStep`'s home and its export are one decision
-rather than two.
+rather than two.~~
 
-### K12 — No import-cycle gate exists in CI — **WATCH** (repo tooling, not this phase)
+**CLOSED 2026-09-04 — won't-fix, and the sentence above is wrong twice.** Re-measured when K1's
+export landed:
+
+1. **"the `config/ → pipeline/` edge is still the only outbound one" is false**, and had been since
+   `d64a107`, the commit before this one. Three further outbound edges leave the folder:
+   `packages/core/src/config/clock.ts:3` → `../cancellation.js`,
+   `packages/core/src/config/configuration.ts:4` and
+   `packages/core/src/config/proxy.ts:9` → `../observability/logger.js`. Only the `→ pipeline/` edge
+   is unique *in kind*; "the sole outbound edge", which is how argument 1 was stated, is not why the
+   file stands out.
+2. **"`RECOV-32`'s sibling … the same kind of object" is false.** It shipped, and it is a different
+   kind of object. `idempotencyKeyStep` returns `RequestStep`
+   (`packages/core/src/recovery/request-chain.ts:11`, `(request: Request) => Promise<Request>` — a
+   bare function in a recovery fold); `clientIdentityStep` returns `StepDescriptor`, a pipeline-stage
+   descriptor carrying a `stage` and a `type` symbol
+   (`packages/core/src/config/client-identity-step.ts:111`). Two adjacent `RECOV-3x` *requirements*,
+   not two instances of one thing that got separated.
+
+With both arguments gone, the move has no case left and a cost: relocating to `recovery/` trades the
+one outbound `→ pipeline/` edge for a new `→ config/` one, because the step reads
+`./build-info.js`. And it buys nothing a consumer can observe — since 2026-09-04 the symbol is
+`@public` and named in the barrel against its own module path, so its folder is invisible outside the
+package. The corpus tension the row also carried
+(`docs/knowledge/harvested/module-organization.md:18` bans internal barrels,
+`docs/knowledge/harvested/api-design.md:8` endorses one per feature folder, nothing in
+`--section conflicts` reconciles them) is unreconciled and stays recorded in the barrel comment; it is
+not a reason to move a file. `packages/core/src/config/build-info.ts:37` still cites this item for the
+outbound-edge concern, which remains accurate — that is K12's subject, not this row's.
+
+### K12 — No import-cycle gate exists in CI — **FIXED** (2026-09-04)
 
 `docs/knowledge/harvested/module-organization.md:20` treats any import cycle as a bug rather than a style nit, and
 `:22` requires it be gated in CI with `madge --circular src` or `eslint-plugin-import/no-cycle` as a required
@@ -938,9 +987,28 @@ check. Neither string appears anywhere in `package.json`, `eslint.config.js`, or
 `.github/workflows/ci.yml` — verified 2026-08-27. Every other rule in that topic is either enforced or
 deliberately deviated from; this one is simply absent, so the repo's twelve-plus source folders rely on
 review alone. Deliberately **not** added by Phase 7a: a new blocking CI step is repo tooling, outside a
-feature phase's scope, and it belongs with whoever owns `.github/workflows/ci.yml`'s gate list. **Trigger:**
-the next phase that touches the CI gate list, or the first observed cycle — K11's `config/ → pipeline/` edge
-being the nearest candidate.
+feature phase's scope, and it belongs with whoever owns `.github/workflows/ci.yml`'s gate list.
+~~**Trigger:** the next phase that touches the CI gate list, or the first observed cycle — K11's
+`config/ → pipeline/` edge being the nearest candidate.~~
+
+**FIXED 2026-09-04.** `scripts/verify-import-cycles.mjs`, wired as `bun run verify:import-cycles`
+and as a blocking CI step ("Import-cycle check") between the test-partition and reproducible-build
+steps. It walks every relative specifier under each package's `src/`, resolves `.js` back to `.ts`
+per NodeNext, and reports the first cycle it closes as the full list of files on it.
+
+**Hand-written rather than `madge` or `eslint-plugin-import/no-cycle`, which is a deviation from
+`docs/knowledge/harvested/module-organization.md:22`'s named tools and is deliberate.** Every other
+`verify:*` gate here is dependency-free `.mjs`, `verify:seam-1` asserts zero runtime dependencies per
+package, and the graph to walk is small enough that the whole traversal is a depth-first search with
+a colour map. The gate's own suite is `scripts/verify-import-cycles.test.mjs`, seven cases run by the
+blocking `test:scripts` step — including the two a naive implementation gets wrong, a self-import and
+a diamond, the latter being re-convergence rather than recursion.
+
+**Type-only edges count**, deliberately: an erased `import type` cannot deadlock module
+initialization, but a type cycle is still the design smell the requirement is about.
+
+**First run: no cycles across 171 source files.** So K11's feared `config/ → pipeline/` loop does not
+exist, and neither does any other. The gate is installed against the next one, not this one.
 
 ### K13 — A `CFG-7`-valid duration can exceed what any timer can honor — **UNSCHEDULED** (2026-09-02; the trigger named a phase that could not fire it)
 
@@ -1013,7 +1081,7 @@ in. Until then the risk is one-way drift — a fix to the `http/` predicate that
 Cheap to bound: both are exercised by tests that assert the same class (`build-info.test.ts`'s header-safety
 cases and `http/`'s own), so a divergence surfaces as a test failure rather than as silent behavior.
 
-### K19 — No `fast-check` property test logs its seed — **UNSCHEDULED** (2026-09-02; both counts in it were wrong)
+### K19 — No `fast-check` property test logs its seed — **CLOSED** (2026-09-04; the premise is false)
 
 `docs/knowledge/harvested/testing.md:44` requires the seed of a failing seeded `fast-check` property test to reach CI
 output, "or the shrunk counterexample that found the bug is lost". ~~No `fc.assert` call anywhere under
@@ -1032,6 +1100,24 @@ That makes the finding *stronger*, not weaker: the repo is in exactly the half-m
 row argues against — five seeded, fifty-nine not — which is the shape
 `docs/knowledge/harvested/styleguide-overview.md:32-33` forbids and which the row's own reasoning
 ("a seeding convention that covers half the suite is worse than none") names as the thing to avoid.
+
+**CLOSED 2026-09-04: the requirement is already met, and was met before the row was written.**
+`docs/knowledge/harvested/testing.md:44` asks that the seed of a failing seeded property test *reach
+CI output*. `fast-check` 3.23.2 puts it there unconditionally, for every `fc.assert` site, seeded or
+not — `node_modules/fast-check/lib/check/runner/utils/RunDetailsFormatter.js:62` formats every
+property failure as `` `Property failed after ${out.numRuns} tests\n{ seed: ${out.seed}, path:
+"${out.counterexamplePath}", endOnFailure: true }` ``, and the two neighbouring formatters at `:45`
+and `:77` do the same for the too-many-preconditions and interrupted cases. A failing property in CI
+therefore already prints the seed and the shrink path needed to reproduce it locally.
+
+That dissolves the row as stated. The counts are unchanged and correct — re-measured 2026-09-04, 64
+`fc.assert` sites and 5 seeded — but "five seeded, fifty-nine not" is not a half-migrated *seeding
+convention*, because there was never a convention to migrate to: the reporting the rule asks for is
+the library's default. The five `{seed: 0x3b}` sites are determinism pins on body-layer property
+tests, which is a different thing from a reproducibility convention and is left alone.
+
+No repo-wide decision is owed and `bunfig.toml` needs no `preload`. The original reasoning below is
+kept because it is what a reader will otherwise re-derive:
 
 Deliberately **not** fixed by Phase 7a, and deliberately not fixed in this phase's tests alone: a seeding
 convention that covers half the suite is worse than none, because the half without it looks deliberate. This
@@ -1151,9 +1237,22 @@ and were confirmed still correct, not re-made.
 resolution there is a hand edit to `notes/`, not a maintenance action — and by the corpus's own rule
 it belongs in `docs/knowledge/notes/`, never in `harvested/`, since a hand edit inside a harvested
 entry changes no `<sub>` sha and the next harvest regenerates or duplicates it. Both markers remain
-resolved *by the implementation* and unmarked *in the corpus*. **UNSCHEDULED — trigger: the next
+resolved *by the implementation* and unmarked *in the corpus*. ~~**UNSCHEDULED — trigger: the next
 deliberate edit to `docs/knowledge/notes/`, or the next re-harvest**, which is the moment the note
-can be written without a lone edit to a frozen tree.
+can be written without a lone edit to a frozen tree.~~
+
+**FIXED 2026-09-04, both markers.** The `#private` marker closed earlier the same day with
+`docs/knowledge/notes/data-modeling.md`, which names `http-domain-model/d26b9192`. The `enum`/`Stage`
+marker closes here with `docs/knowledge/notes/pipeline.md`, naming `pipeline/e66ace13`; both
+harvested entries now print `[overridden by notes/…]` in every query result, and
+`bun run knowledge:drift` reports 12 note citations resolving and 0 not.
+
+**The grep in Phase 9's plan still cannot return empty, and resolving the markers made it worse —
+3 matches where there were 2.** That is structural, not a regression: a note has to quote the marker
+string to name what it resolves. The check that means something is
+`bun run knowledge --topic pipeline --section conflicts`, where the resolution is visible as an
+override. The plan step is the defect; it is a dated record under `docs/work/` and is not
+retro-edited, so this note is the correction.
 
 ### N4 — `rxjs` version restated in three places against `NFR-14` — **UNSCHEDULED** (2026-09-02)
 
@@ -1574,7 +1673,7 @@ only shape that satisfies the 1:1 binding without moving the `LOGGING` step out 
 
 ---
 
-### V11 — the Phase 4b validation review's corpus conflict declines to be a finding, and has sat unsettled since 2026-07-28 — **UNSCHEDULED**
+### V11 — the Phase 4b validation review's corpus conflict declines to be a finding, and has sat unsettled since 2026-07-28 — **FIXED** (2026-09-04)
 
 `docs/knowledge/harvested/function-design.md:22-23` requires an options object at three or more
 parameters; `:40-41` sets `max-params: ['error', 3]`, which errors only at four. The prose is one
@@ -1593,9 +1692,21 @@ that row, filed against the prose, dissolves under the reading the code takes.
 **Not settled *in the corpus* here.** `docs/knowledge/harvested/` is frozen and is never hand-edited;
 the mechanism for recording a reading against a harvested rule is a note under
 `docs/knowledge/notes/`, and writing one is a deliberate edit to a frozen tree rather than a
-maintenance action. **UNSCHEDULED — trigger: the next deliberate edit to `docs/knowledge/notes/`**,
-which should carry this alongside N3's two markers and the two `<sub>` paths the documentation
-restructure left pointing at files it had moved. One visit, three fixes.
+maintenance action. ~~**UNSCHEDULED — trigger: the next deliberate edit to
+`docs/knowledge/notes/`**, which should carry this alongside N3's two markers and the two `<sub>`
+paths the documentation restructure left pointing at files it had moved. One visit, three fixes.~~
+
+**FIXED 2026-09-04.** `docs/knowledge/notes/function-design.md` records the reading: the threshold
+this repository enforces is the lint one — three positional parameters legal, four an error — and it
+bounds `function-design/45a4ddba` (the prose, "3 or more") with `function-design/27da9d1f` (the
+enforcement, `max-params: ['error', 3]`). Both harvested entries print
+`[overridden by notes/function-design.md:8]`. The boolean half of the prose rule is explicitly left
+binding; only the numeric threshold is bounded.
+
+The visit carried N3's remaining marker too (`notes/pipeline.md`), so two of the three fixes it named
+are done. **The two stale `<sub>` paths are not**, and cannot be taken this way: they are inside
+`docs/knowledge/harvested/`, which is frozen and regenerated, so correcting them is a re-harvest of
+those sources rather than an edit. Registered as `X4` rather than left inside this closed row.
 
 ---
 
@@ -1611,14 +1722,14 @@ is `W1`.
 **The pass ended by dissolving the register itself.** With four rows decided, what remained did not
 earn a file: one row with live actionable content, and five unscheduled deferrals each carrying a
 trigger and nothing to act on. So `docs/deferred-items.md` was deleted. The `NFR-16` row became
-[`first-release.md`](./first-release.md); the five others are archived under *Live deferrals* in
-[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md).
+[`first-release.md`](../../first-release.md); the five others are archived under *Live deferrals* in
+[`work/mvp/2026-09-04-register-retirement-purge.md`](./2026-09-04-register-retirement-purge.md).
 **A new deferral is an open item in this file from here on**, stating the trigger that would discharge
 it — there is no second register to send one to.
 
 ---
 
-### W1 — the `operation` `AuthTier` row was closed on a premise the petstore spike had already falsified — **OPEN**
+### W1 — the `operation` `AuthTier` row was closed on a premise the petstore spike had already falsified — **FIXED** (2026-09-04)
 
 The row read `BLOCKED — no source layer exists on this roadmap`, and justified carrying no trigger on
 the grounds that "there is no trigger to state because nothing on the roadmap can fire one." It was
@@ -1628,7 +1739,7 @@ removed from `docs/deferred-items.md` on that basis.
 `examples/petstore/` as the witness for the codegen target surface — which is precisely the
 per-operation configuration layer the row said nothing would ship — and its findings document
 measured the gap rather than merely noting it
-([`examples/petstore/FINDINGS.md`](../examples/petstore/FINDINGS.md), §4):
+([`examples/petstore/FINDINGS.md`](../../../examples/petstore/FINDINGS.md), §4):
 
 1. **`AUTH-4`'s precedence chain is reimplemented outside core.** The spike's executor folds the
    operation's descriptor into the per-call slot — `const auth = call.auth ?? operation?.auth` — so
@@ -1655,8 +1766,118 @@ created: a deferral is a decision taken before the work, an open item a discover
 spike found the consequence. That is a discovery, so it lands here. The closure of the deferral is
 not reversed.
 
-**Owner: whoever lands the codegen surface.** Not scheduled against a phase, because the roadmap's
-phase table ends at Phase 10 and Phase 10 is executed.
+~~**Owner: whoever lands the codegen surface.** Not scheduled against a phase, because the roadmap's
+phase table ends at Phase 10 and Phase 10 is executed.~~
+
+**FIXED 2026-09-04, by the first of the two options the spike named.** `RequestOptions` gains
+`operationAuth?: AuthDescriptor`, a second per-call slot alongside `auth`, and `effectiveTiers()`
+folds it into `AuthTiers.operation`:
+
+- `packages/core/src/http/request-options.ts` — the `#operationAuth` field, the getter, the
+  `RequestOptionsBuilder.operationAuth()` setter, and `newBuilder()` carrying it forward (HTTP-3).
+- `packages/core/src/auth/auth-step.ts` — `effectiveTiers(configured, perCall, operation)` now
+  applies **each slot only when present**, so a configured tier is never overwritten with
+  `undefined`; `{...configured, perCall: undefined}` would have erased a `perCall` the step was
+  constructed with.
+- `packages/core/etc/core.api.md` — additive, 39 inserted lines across this and the same day's other
+  promotions, none deleted.
+
+**Why this option and not the other.** `StepContext.options` already travels from `Runtime.send` to
+every step across every retry attempt and redirect hop, and it is the carrier `authStep` reads today
+(`ctx.options?.auth`). Carrying the operation descriptor as a *separate* `StepContext` field would
+have added a second parallel carrier for the same lifetime and made the pipeline's plumbing wider
+for one consumer. The slot is generator-facing rather than caller-facing, and precedence protects it
+either way: a hand-written caller that fills `operationAuth` is still outranked by `auth`.
+
+**Verified end to end by removing the fold it existed to eliminate.**
+`examples/petstore/src/service-core.ts`'s `requestOptions()` no longer computes
+`call.auth ?? operation?.auth`; it fills `.auth(call.auth)` and `.operationAuth(operation?.auth)` and
+lets core resolve `perCall ?? operation ?? client` itself. The spike's canary passes unchanged, 15
+tests — including the unsatisfiable-`OAUTH2` case that must raise `AuthResolutionError` with
+`transport.calls` still empty. All three tiers are now distinguishable inside core, which was
+consequence 2 of the finding.
+
+New tests: four in `packages/core/src/http/request-options.test.ts` (round-trip, `newBuilder`
+carry-forward, slot independence, `EMPTY`) and two in `packages/core/src/auth/auth-step.test.ts`
+(the operation tier beating the client tier; a per-call descriptor still beating an operation one).
+
+`AuthTiers.operation`'s TSDoc no longer says nothing writes it.
+
+---
+
+## Section X — holes found while closing the 2026-09-04 decision pass
+
+A maintainer pass that decided the register's open questions rather than re-triaging them, closing
+`K1`, `K11`, `K12`, `K19`, `H19`, `N3`, `V11` and `W1`, promoting `H8`'s two barrel questions, and
+drafting `G1`'s erratum into [`deviations.md`](../../deviations.md). Each closure was taken by reading
+the tree rather than the item's own text, and four holes turned up in that reading that belonged to
+no existing row.
+
+They are here rather than inside the rows that found them because an item without an ID cannot be
+cited, cannot be closed, and does not appear in the section index — the same reason Section V exists.
+
+### X1 — `idempotencyKeyStep` is unreachable, and blocked by the forgotten-export rule K1 escaped — **UNSCHEDULED** (2026-09-04)
+
+`RECOV-32`'s step is implemented and tested at `packages/core/src/recovery/idempotency-key.ts:37`,
+is tagged `@internal` (`:35`), is absent from `packages/core/src/index.ts`, and has **zero
+consumers** — `grep -rn idempotencyKeyStep` over `packages/`, `tests/` and `examples/` returns its
+own definition, its own test and one TSDoc reference. Exactly K1's shape, one requirement over.
+
+**It is not K1's fix repeated, because the blocker K1 shed is still live here.** K1 was unblocked
+when Phase 5c promoted `StepDescriptor` (`packages/core/src/index.ts:82-86`, `@public` at
+`packages/core/etc/core.api.md:1314`), so exporting `clientIdentityStep` named no forgotten export.
+`idempotencyKeyStep` returns `RequestStep` (`packages/core/src/recovery/request-chain.ts:11`), which
+is **not** exported — see `X2`. api-extractor rejects a `@public` export whose return type is a
+forgotten export, so this one cannot be promoted on its own.
+
+**Trigger: `X2`.** Promoting the return type is the decision; this row follows it mechanically.
+
+### X2 — the whole of `recovery/` is absent from the public barrel — **UNSCHEDULED** (2026-09-04)
+
+`grep -n "recovery/" packages/core/src/index.ts` returns nothing, and no recovery-chain symbol
+appears in `packages/core/etc/core.api.md`. `RequestStep`, `ResponseStep`,
+`RequestRecoveryChain` and `ResponseRecoveryChain` are all in-package only, so the `RECOV-*` chain
+surface is unreachable from a published entry point in the same way `pipeline/`'s authoring surface
+was before Phase 5c promoted it.
+
+Recorded rather than taken, for the reason K1 sat unclosed for two phases: promoting a seam to
+unblock one step factory is the decision made backwards. `F4` is the same surface's other open
+question — whether the chains stay classes or become plain data plus free functions
+(`docs/knowledge/harvested/data-modeling.md:10`) — and a promotion that ships the class shape
+forecloses it. **Trigger: whichever comes first, a decision on `F4` or a consumer that needs to
+build a recovery chain**; the two should be settled in one pass, and `X1` rides along with it.
+
+### X3 — `examples/petstore/`'s canary runs in no CI step — **UNSCHEDULED** (2026-09-04)
+
+`7b26c1c` added the petstore spike as the witness for the codegen target surface, and its
+`canary.test.ts` and `regen.test.ts` are 15 real assertions over the public API — including the
+`AuthResolutionError`-with-empty-`transport.calls` case that is the sharpest thing anyone has written
+about `AUTH-6`. Nothing runs them. `grep -n "petstore\|examples" package.json .github/workflows/ci.yml`
+returns nothing; the root test script is `bun test ./packages ./tests`, and `examples/` is neither.
+`bun test ./examples/petstore` passes today only because it was run by hand.
+
+`gts lint .` **does** reach `examples/` (the spike's own finding 7), so the tree is type- and
+lint-checked and merely never executed. That is the worse half of the two: a witness that compiles
+and is never run degrades silently, which is exactly what `W1`'s fix would have had no way to detect
+had the canary not been run deliberately.
+
+Not fixed here because it is a change to the CI gate list and to the root test script's scope, and
+the scoping question is real — `examples/` is not a workspace member, its coverage would land in the
+80% floor's denominator, and the honest fix may be a separate `test:examples` step rather than
+widening `bun run test`. **Trigger: the next change to the CI gate list**, which `K12` just made and
+this row deliberately did not ride along with.
+
+### X4 — two harvested `<sub>` paths still point at files the documentation restructure moved — **UNSCHEDULED** (2026-09-04)
+
+Named by `V11` as the third of its "one visit, three fixes", and the one a visit to
+`docs/knowledge/notes/` cannot take: the paths are inside `docs/knowledge/harvested/`, which is
+frozen and regenerated. A hand edit there changes no `<sub>` sha, so the next harvest reproduces the
+stale path — `docs/knowledge/README.md` is the contract. Correcting them means re-harvesting those
+sources with `--corpus docs/knowledge/harvested`, not editing them.
+
+`bun run knowledge:drift` is where they surface, alongside the 3 `DRIFT` rows of 47 sources it
+reports today. **Trigger: the next re-harvest.** Split out of `V11` so that row could close on the
+part that was actually takeable.
 
 ---
 

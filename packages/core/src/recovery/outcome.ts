@@ -11,7 +11,7 @@ import {assertNever} from '../invariant.js';
  * accessors" buys in TypeScript: narrowing on `kind` is compiler-checked, so no `isSuccess()` /
  * `getOrThrow()` pair is shipped.
  *
- * @internal
+ * @public
  */
 export type Outcome<T> =
   | {readonly kind: 'success'; readonly value: T}
@@ -23,7 +23,7 @@ export type Outcome<T> =
  * @param value - the value carried by the outcome.
  * @returns a success outcome holding `value`.
  *
- * @internal
+ * @public
  */
 export function success<T>(value: T): Outcome<T> {
   return {kind: 'success', value};
@@ -35,7 +35,7 @@ export function success<T>(value: T): Outcome<T> {
  * @param error - whatever was thrown; any value, not necessarily an `Error`.
  * @returns a failure outcome holding `error`.
  *
- * @internal
+ * @public
  */
 export function failure<T>(error: unknown): Outcome<T> {
   return {kind: 'failure', error};
@@ -54,7 +54,7 @@ export function failure<T>(error: unknown): Outcome<T> {
  * @param onFailure - applied to the error of a failure outcome.
  * @returns whichever branch ran.
  *
- * @internal
+ * @public
  */
 export function fold<T, R>(
   outcome: Outcome<T>,

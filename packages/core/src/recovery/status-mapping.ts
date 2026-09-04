@@ -21,7 +21,7 @@ import type {Response} from '../http/response.js';
  * @returns the response unchanged when its status is not an error status.
  * @throws HttpStatusError when the status is in 400..599.
  *
- * @internal
+ * @public
  */
 export async function statusMappingStep(response: Response): Promise<Response> {
   const httpError = await toHttpError(response);

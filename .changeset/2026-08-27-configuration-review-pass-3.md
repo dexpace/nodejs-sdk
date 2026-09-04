@@ -27,4 +27,4 @@ documentation fixes worth naming, because each was a comment that had stopped ma
 - Every `Configuration` and `ConfigurationBuilder` `@throws` said "when `x` is absent"; every guard is a
   `typeof` shape check, which is what the module's own comment says they are.
 - The package barrel justified not exporting `deepEqual`/`deepHash` partly on "in-package consumers import
-  the module directly". They have no in-package consumer, which `docs/open-items.md` G16 already recorded.
+  the module directly". They have no in-package consumer, which `docs/work/mvp/2026-09-04-open-items-dissolution.md` G16 already recorded.

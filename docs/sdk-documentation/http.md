@@ -140,7 +140,7 @@ const conditioned = request.newBuilder().headers(conditions.applyTo(request.head
 `QueryParams` is the one URL-manipulation surface. It is not `URLSearchParams`, and the difference is
 deliberate: `URLSearchParams` re-serializes a whole query string, reorders parameters, and re-encodes
 what was already encoded. `QueryParams` preserves insertion order and encodes exactly once
-(`docs/open-items.md` J4), with RFC 3986 component encoding rather than
+(`docs/work/mvp/2026-09-04-open-items-dissolution.md` J4), with RFC 3986 component encoding rather than
 `application/x-www-form-urlencoded`'s — so a space becomes `%20`, not `+`, and a literal `+` becomes
 `%2B`.
 

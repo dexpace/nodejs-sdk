@@ -46,7 +46,7 @@ Design calls worth recording:
   same instrumentation bundle by reference. Promoting straight off the original would pair the response with a
   request that never left the process.
 
-One deferral, recorded in `docs/open-items.md`: `StepContext` carries neither the per-call `options` nor the
+One deferral, recorded in `docs/work/mvp/2026-09-04-open-items-dissolution.md`: `StepContext` carries neither the per-call `options` nor the
 `AbortSignal`. `Cursor` holds both and threads them into the terminal dispatch (`PIPE-17`), but the
 "readable by any step" clause has no reader until Phase 5a's retry engine, which adds both fields as one
 additive amendment.

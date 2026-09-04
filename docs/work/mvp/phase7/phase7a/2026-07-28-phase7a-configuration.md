@@ -9,7 +9,7 @@
 > unparseable), Task 7's `CFG-22` test (asserts a hard-coded literal returned by a fake `toString`, testing
 > nothing) and its omission of `CFG-26` entirely, and Task 8 Step 6 (rewrites `build` to `tsc -b`, replacing
 > the working `tsc -p tsconfig.build.json`). All six were corrected in the shipped code and are itemized in
-> [`docs/open-items.md`](../../../../open-items.md) K6. **The as-built record is
+> [`docs/work/mvp/2026-09-04-open-items-dissolution.md`](../../2026-09-04-open-items-dissolution.md) K6. **The as-built record is
 > [the checklist](./2026-07-28-phase7a-configuration-checklist.md) and the code, not this file.** The
 > sketches are left in place deliberately, as the historical artifact of a completed phase.
 

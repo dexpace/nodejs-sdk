@@ -412,7 +412,7 @@ export function encodeInto(s: Serializer, value: unknown, buf: Uint8Array): numb
   return s.serializeInto(value, buf, 0);
 }
 export function decodeOne<T>(d: Deserializer, data: Uint8Array, schema: Schema<T>): T {
-  return d.deserialize(data, schema, 'T');
+  return d.deserialize(data, {schema, typeName: 'T'});
 }
 export function decodeTarget<T>(schema: Schema<T>): DecodeTarget<T> {
   return {schema, typeName: 'T'};

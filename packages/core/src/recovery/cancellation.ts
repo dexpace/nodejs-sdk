@@ -26,7 +26,7 @@ import {failure, type Outcome} from './outcome.js';
  * @param error - whatever the request chain or the transport raised.
  * @returns a failure outcome carrying `error` unchanged.
  *
- * @internal
+ * @public
  */
 export function wrapCancellation(error: unknown): Outcome<never> {
   return failure(error);

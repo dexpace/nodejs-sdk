@@ -33,9 +33,9 @@ export interface RuntimeHost {
 /**
  * Printable ASCII plus HTAB -- the outbound header value grammar's character class, restated here.
  *
- * Deliberately *not* `hasForbiddenOutboundByte` from `http/ascii-validation.js`. `config/`'s
- * outbound edges are already a live concern (`docs/open-items.md` K11), and adding a second one to
- * reuse a four-line predicate is the wrong trade. `docs/open-items.md` K18 owns the duplication and
+ * Deliberately *not* `hasForbiddenOutboundValueByte` from `http/ascii-validation.js`. `config/`'s
+ * outbound edges are already a live concern (`docs/work/mvp/2026-09-04-open-items-dissolution.md` K11), and adding a second one to
+ * reuse a four-line predicate is the wrong trade. `docs/work/mvp/2026-09-04-open-items-dissolution.md` K18 owns the duplication and
  * names this as one of the call sites a consolidation would fold in.
  */
 function isHeaderSafe(value: string): boolean {

@@ -8,7 +8,7 @@ import {getBuildInfo} from './build-info.js';
 /**
  * How {@link clientIdentityStep} composes its tokens into the target header (RECOV-33).
  *
- * @internal
+ * @public
  */
 export interface ClientIdentitySettings {
   /**
@@ -104,7 +104,7 @@ function composeHeaders(
  * @throws HeaderValidationError -- as a rejected promise -- when the composed value or the header
  *   name is not legal on the outbound path.
  *
- * @internal
+ * @public
  */
 export function clientIdentityStep(
   settings: ClientIdentitySettings = {},

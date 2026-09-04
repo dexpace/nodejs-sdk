@@ -1,6 +1,6 @@
 # Register retirement purge — the audit trail the two registers no longer carry
 
-**2026-09-04.** `docs/open-items.md` and `docs/deferred-items.md` each carried a retirement table: one
+**2026-09-04.** `docs/work/mvp/2026-09-04-open-items-dissolution.md` and `docs/deferred-items.md` each carried a retirement table: one
 compact row per item that had been resolved, or per deferral that had been discharged. Both tables were
 deleted on this date, by decision of the repository owner, together with the prose in each register that
 described them. This note is where their contents went.
@@ -17,20 +17,20 @@ how it closed.
 **What this note is not.** It is not a register. Nothing is appended here as work proceeds; it is a dated
 record of two deletions, both made on 2026-09-04 — first the two retirement tables described above, then,
 later the same day, the whole of `docs/deferred-items.md`. A new finding still goes to
-`docs/open-items.md`. **A new deferral goes there too now**, as an open item stating the trigger that would
-discharge it, because there is no deferral register left to send it to: `docs/open-items.md` and
+`docs/work/mvp/2026-09-04-open-items-dissolution.md`. **A new deferral goes there too now**, as an open item stating the trigger that would
+discharge it, because there is no deferral register left to send it to: `docs/work/mvp/2026-09-04-open-items-dissolution.md` and
 `docs/deviations.md` are the two that remain. The five deferrals that were still live when the register was
 deleted are archived under *Live deferrals* below — an archive of record, not an intake, and not appended to
 either.
 
 **Counts, at the moment of deletion.** 102 retired item IDs, 25 retired rows that never carried an ID, and 67
-discharged deferrals. `docs/open-items.md` went from 1933 lines to 1767, `docs/deferred-items.md` from 199 to
+discharged deferrals. `docs/work/mvp/2026-09-04-open-items-dissolution.md` went from 1933 lines to 1767, `docs/deferred-items.md` from 199 to
 104. Every table below is reproduced verbatim from `git show HEAD:` of the pre-deletion files, commit
 `853c349`; the rows' own `file:line` evidence is unmodified and may itself have drifted since the date each
 row carries.
 
 **The register's own deletion, later the same day.** `docs/deferred-items.md` did not stay at 104 lines. A
-maintainer pass decided four of its ten remaining rows rather than re-deferring them (`docs/open-items.md`
+maintainer pass decided four of its ten remaining rows rather than re-deferring them (`docs/work/mvp/2026-09-04-open-items-dissolution.md`
 Section W), and the file — 99 lines by then — was deleted outright: the `NFR-16` row became
 [`docs/first-release.md`](../../first-release.md), the other five moved to *Live deferrals* below, and every
 live reference to the path across the tree was repointed. `docs/work/` was not, because it is never
@@ -284,7 +284,7 @@ day rather than being archived here.
 
 **This still does not make the note a register.** Nothing is appended to this table as work proceeds. When
 one of these five triggers fires the work is done and the row is simply no longer true; a *new* deferral
-goes to `docs/open-items.md` as an open item carrying its trigger, per the preamble above. Rows are keyed
+goes to `docs/work/mvp/2026-09-04-open-items-dissolution.md` as an open item carrying its trigger, per the preamble above. Rows are keyed
 by requirement ID or topic, never by line number — the convention the register itself used.
 
 Reproduced verbatim from `docs/deferred-items.md`'s `## Still deferred` table as it stood at deletion,
@@ -306,7 +306,7 @@ file's directory, so they still resolve. No word of the rows changed.
 ## Retired review sections
 
 Three of the four reviews the roadmap once carried in its own `## Open Findings` headings were relocated
-into `docs/open-items.md` on 2026-08-31 as Sections Q, S and T: a validation pass over Phase 3b's design and
+into `docs/work/mvp/2026-09-04-open-items-dissolution.md` on 2026-08-31 as Sections Q, S and T: a validation pass over Phase 3b's design and
 plan **before** either was executed, and two more over Phase 4b's and Phase 4c's. Every row of all three
 reached a resolved disposition on 2026-09-02, and on 2026-09-04 the prose that framed them followed the rows
 out of the register — a validation pass over an unexecuted phase is a dated record of what was true that

@@ -30,7 +30,7 @@ try {
 member is installed only when `Symbol.asyncDispose` exists, which it does not on this package's
 declared `engines.node` floor of `>=20.3` (the symbol arrived in 20.4). Declaring `AsyncDisposable`
 in the `.d.ts` regardless would be a type that lies on the supported runtime — `NFR-10` forbids it,
-and the [`await using` support row](https://github.com/dexpace/nodejs-sdk/blob/main/docs/open-items.md#d-nfr-10-await-using) in `docs/open-items.md`
+and the [`await using` support row](https://github.com/dexpace/nodejs-sdk/blob/main/docs/work/mvp/2026-09-04-open-items-dissolution.md#d-nfr-10-await-using) in the dissolved open-items register
 records the decision and the four reasons the floor does not move instead. Unlike `@dexpace/transport-fetch`, closing here is not optional: see below.
 
 ## Dispatcher ownership

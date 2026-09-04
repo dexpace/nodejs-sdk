@@ -29,4 +29,4 @@ the original intent — never a silent clamp — and honors `RETRY-18` exactly.
 **If you implement `Clock` yourself**, honor long durations too — passing `durationMs` straight to
 `setTimeout` reintroduces the silent clamp. The interface's `@remarks` now says so.
 
-Closes `docs/open-items.md` V13.
+Closes `docs/work/mvp/2026-09-04-open-items-dissolution.md` V13.

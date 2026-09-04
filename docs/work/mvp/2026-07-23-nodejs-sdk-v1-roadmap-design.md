@@ -146,7 +146,7 @@ new path.
 they say "the row above" and "the rows above"; every such reference now means a row of
 `docs/deferred-items.md`, and the ones that name a specific row have been
 repointed in place. The four `## Open Findings` review sections that used to follow them are
-[`docs/open-items.md`](../../open-items.md) Sections Q, R, S and T.
+[`docs/work/mvp/2026-09-04-open-items-dissolution.md`](./2026-09-04-open-items-dissolution.md) Sections Q, R, S and T.
 
 **Status note (2026-07-28, Phase 7).** Phase 7 was brainstormed and split into 7a (Configuration & Platform
 Primitives, `§16`) / 7b (Instrumentation & Observability, `§15`) — see the
@@ -273,12 +273,12 @@ have copied the wrong claim forward. Fixing a live correctness defect found *by*
 purpose, and leaving it recorded-but-unfixed would have shipped a `.d.ts` that lies on the declared floor. The
 project-wide **convention sweeps** that also named Phase 10 were held to the original scope and re-deferred
 instead — see the three rows added to `docs/deferred-items.md` and the dated dispositions on 4b's F2/F7 and
-4c's `CONSTANT_CASE` note, now `docs/open-items.md` Sections S and T. Per-item evidence: `docs/deviations.md` (the as-built audit).
+4c's `CONSTANT_CASE` note, now `docs/work/mvp/2026-09-04-open-items-dissolution.md` Sections S and T. Per-item evidence: `docs/deviations.md` (the as-built audit).
 
 ## Open Findings
 
 **Moved out on 2026-08-31.** The four review sections that used to close this document are now
-[`docs/open-items.md`](../../open-items.md):
+[`docs/work/mvp/2026-09-04-open-items-dissolution.md`](./2026-09-04-open-items-dissolution.md):
 
 | Was | Now |
 |---|---|

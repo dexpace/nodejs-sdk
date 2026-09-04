@@ -5,16 +5,58 @@ import {
   createRequestContext,
   promoteToExchange,
   promoteToRequest,
+  type ContextInit,
   type ExecutionContext,
   type RequestContext,
 } from '../context/context.js';
 import {contextStore} from '../context/store.js';
+import {
+  activateSpan,
+  getActiveSpan,
+  NOOP_TRACER,
+  type Span,
+  type Tracer,
+} from '../observability/tracing.js';
 import type {Request} from '../http/request.js';
 import type {RequestOptions} from '../http/request-options.js';
 import type {Response} from '../http/response.js';
 import type {Transport} from '../seams/transport.js';
 import {Cursor} from './cursor.js';
 import type {StepDescriptor} from './step.js';
+
+/** What `Runtime.send()` passes to `createDispatchContext`; `operationName` is not a dispatch-stage concept. */
+type RuntimeContextInit = Omit<ContextInit, 'operationName'>;
+
+/** The advisory span name, matching what the LOGGING pillar step uses for its per-attempt spans. */
+const OPERATION_SPAN_NAME = 'http.client.operation';
+
+/**
+ * Opens the one span that corresponds 1:1 to a logical operation (OBS-29), or returns `undefined`
+ * when there is nothing to open.
+ *
+ * **Why here and not in the LOGGING pillar step.** `PIPE-2` fixes that step *inside* the `RETRY` and
+ * `REDIRECT` pipelines, so its span is opened per transmission attempt and per redirect hop — the
+ * right scope for an attempt, the wrong one for an operation. `OBS-29` asks for "one tracer instance
+ * per logical operation", and `send()` is the only place in this package that runs exactly once per
+ * one. The two spans are complementary rather than duplicative: this is the parent, the LOGGING
+ * step's are the children.
+ *
+ * **Nesting is a real case, not a hypothetical.** `Runtime implements Transport` (PIPE-26), so a
+ * runtime can be another runtime's terminal transport, and a caller can also have activated a span
+ * of their own. Either way the outermost one is the logical operation, so an already-active
+ * recording span means this call is *inside* an operation rather than starting one.
+ */
+function startOperationSpan(context: RequestContext): Span | undefined {
+  if (getActiveSpan().isRecording) return undefined;
+
+  const factory = context.instrumentation.tracerFactory as
+    ((operationName: string) => Tracer | undefined) | undefined;
+  if (typeof factory !== 'function') return undefined;
+
+  const tracer = factory(OPERATION_SPAN_NAME) ?? NOOP_TRACER;
+  const span = tracer.startSpan(OPERATION_SPAN_NAME);
+  return span.isRecording ? span : undefined;
+}
 
 /**
  * The request context to promote from once the drive finishes: the original, unless a step substituted the
@@ -50,7 +92,11 @@ export function exchangeSource(
  * `src/http/` uses (`createHeaders`, `createRequest`, ...). It is surfaced as {@link createRuntime}
  * rather than kept module-local because the sanctioned construction site lives in another file.
  */
-let create: (steps: readonly StepDescriptor[], transport: Transport) => Runtime;
+let create: (
+  steps: readonly StepDescriptor[],
+  transport: Transport,
+  contextInit: RuntimeContextInit,
+) => Runtime;
 
 /**
  * The built, immutable pipeline (PIPE-10, PIPE-25). Implements `Transport` itself (PIPE-26) -- Phase 2's
@@ -69,18 +115,25 @@ let create: (steps: readonly StepDescriptor[], transport: Transport) => Runtime;
 export class Runtime implements Transport {
   readonly #steps: readonly StepDescriptor[];
   readonly #transport: Transport;
+  readonly #contextInit: RuntimeContextInit;
 
-  private constructor(steps: readonly StepDescriptor[], transport: Transport) {
+  private constructor(
+    steps: readonly StepDescriptor[],
+    transport: Transport,
+    contextInit: RuntimeContextInit,
+  ) {
     // PIPE-10/PIPE-25: the built runtime is immutable, and `get steps()` hands out a read-only view. Copying
     // and freezing here rather than trusting the caller makes both structural -- `createRuntime` is reachable
     // from any in-package caller, so an unfrozen array passed in would leave the "immutable after
     // construction" guarantee resting on caller discipline.
     this.#steps = Object.freeze([...steps]);
     this.#transport = transport;
+    this.#contextInit = contextInit;
   }
 
   static {
-    create = (steps, transport) => new Runtime(steps, transport);
+    create = (steps, transport, contextInit) =>
+      new Runtime(steps, transport, contextInit);
   }
 
   /**
@@ -97,6 +150,11 @@ export class Runtime implements Transport {
    * @param signal - the caller's abort signal, threaded to the terminal dispatch. Not observed between
    *   steps in this phase -- see the roadmap's Phase 4c open finding F9.
    * @returns whatever the outermost step returned (PIPE-12).
+   *
+   * @remarks Opens **one** span for the whole call when the context's instrumentation supplies a
+   * tracer and no span is already active — `OBS-29`'s "one tracer instance per logical operation".
+   * It is the parent of whatever per-attempt spans the LOGGING pillar step opens inside the RETRY
+   * and REDIRECT pipelines, which `PIPE-2` fixes there and which are therefore per *transmission*.
    */
   async send(
     request: Request,
@@ -107,10 +165,14 @@ export class Runtime implements Transport {
       // PIPE-9: an empty pipeline dispatches directly to the terminal transport, no cursor allocated.
       return this.#transport.send(request, options, signal);
     }
-    const dispatchContext = createDispatchContext();
+    const dispatchContext = createDispatchContext(this.#contextInit);
     const requestContext = promoteToRequest(dispatchContext, request);
     contextStore.install(requestContext); // CTX-17's positive half: the first store entry, at the first promotion.
     let currentContext: ExecutionContext = requestContext; // tracks the latest install for the finally below.
+    // OBS-29's 1:1 binding. Started before the drive and outside every pillar, so a retry's second
+    // attempt and a redirect's second hop are the same operation as the first.
+    const span = startOperationSpan(requestContext);
+    const scope = span === undefined ? undefined : activateSpan(span);
     try {
       const cursor = new Cursor({
         steps: this.#steps,
@@ -128,8 +190,16 @@ export class Runtime implements Transport {
       );
       contextStore.install(exchangeContext); // install-or-replace under the same key (CTX-8).
       currentContext = exchangeContext;
+      span?.end();
       return response;
+    } catch (error: unknown) {
+      // OBS-29: `operationFailed` and `operationSucceeded` are mutually exclusive and happen once
+      // each. `end()` is reached from exactly one of these two paths, never both.
+      span?.recordException(error);
+      span?.end();
+      throw error;
     } finally {
+      scope?.close();
       contextStore.close(currentContext); // always the most recently installed context for this call.
     }
   }
@@ -183,6 +253,9 @@ export class Runtime implements Transport {
  *
  * @param steps - the flattened, stage-ordered step array. Copied and frozen.
  * @param transport - the terminal transport. Never closed by the pipeline (PIPE-27).
+ * @param contextInit - what each drive's dispatch context is built from: the `instrumentation`
+ *   bundle whose `tracerFactory` supplies `OBS-29`'s per-operation span, and an optional `key`
+ *   pinning two contexts to one store slot (CTX-5). Defaults to the no-op bundle and a fresh key.
  * @returns the built, immutable runtime.
  *
  * @internal
@@ -190,6 +263,7 @@ export class Runtime implements Transport {
 export function createRuntime(
   steps: readonly StepDescriptor[],
   transport: Transport,
+  contextInit: RuntimeContextInit = {},
 ): Runtime {
-  return create(steps, transport);
+  return create(steps, transport, contextInit);
 }

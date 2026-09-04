@@ -9,7 +9,7 @@ against [2026-07-28-phase7a-configuration.md](./2026-07-28-phase7a-configuration
 (named target phase) — N/A Not applicable in this port.
 
 Deviations from the plan's own sketches, and everything left open, are recorded in
-[`docs/open-items.md`](../../../../open-items.md) (entries K1–K12).
+[`docs/work/mvp/2026-09-04-open-items-dissolution.md`](../../2026-09-04-open-items-dissolution.md) (entries K1–K12).
 
 ## 16.1 Layered lookup
 

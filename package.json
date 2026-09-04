@@ -11,6 +11,7 @@
       "@microsoft/api-extractor": "^7",
       "expect-type": "^1.4.0",
       "fast-check": "^3",
+      "rxjs": "^7.8.0",
       "typescript": "^5.8"
     }
   },
@@ -36,12 +37,14 @@
     "gts": "^7",
     "mitata": "^1",
     "publint": "^0.3",
-    "rxjs": "^7.8.0",
+    "rxjs": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "^8"
   },
   "overrides": {
-    "fast-uri": "^3.1.5"
+    "fast-uri": "^3.1.5",
+    "js-yaml": "^4.3.1",
+    "tmp": "^0.2.6"
   },
   "scripts": {
     "lint": "bun run build:deps && gts lint .",
@@ -53,6 +56,7 @@
     "build": "bun run build:deps && tsc -p packages/codec-json/tsconfig.build.json && tsc -p packages/logging-pino/tsconfig.build.json && tsc -p packages/logging-debug/tsconfig.build.json && tsc -p packages/body-file/tsconfig.build.json && tsc -p packages/transport-fetch/tsconfig.build.json && tsc -p packages/transport-undici/tsconfig.build.json && tsc -p packages/rx/tsconfig.build.json",
     "test": "bun test ./packages ./tests",
     "knowledge": "node scripts/knowledge.mjs",
+    "test:examples": "bun test ./examples",
     "test:scripts": "node --test 'scripts/*.test.mjs'",
     "test:node": "node --test tests/node-conformance/*.test.mjs",
     "shrink-test": "bun test ./packages/shrink-test",
@@ -67,6 +71,7 @@
     "verify:sse-37": "node scripts/verify-sse-37.mjs",
     "verify:runtime-floor": "node scripts/verify-runtime-floor.mjs",
     "verify:test-partition": "node scripts/verify-test-partition.mjs",
+    "verify:import-cycles": "node scripts/verify-import-cycles.mjs",
     "verify:knowledge-structure": "node scripts/verify-knowledge-structure.mjs",
     "knowledge:drift": "node scripts/knowledge-drift.mjs",
     "verify:reproducible-build": "node scripts/verify-reproducible-build.mjs"

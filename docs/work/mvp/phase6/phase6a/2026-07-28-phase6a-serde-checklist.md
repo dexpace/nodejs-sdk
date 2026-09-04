@@ -6,7 +6,7 @@ two Phase-0 deferrals this phase closes (`NFR-2`, `NFR-14`), as dispositioned by
 `docs/work/mvp/phase6/phase6a/2026-07-28-phase6a-serde-design.md`.
 
 **Status: EXECUTED (2026-08-27).** Every task below is implemented and tested. Deviations, deferrals, and the
-requirement clauses satisfied by delegation rather than by code are recorded in `docs/open-items.md` §H —
+requirement clauses satisfied by delegation rather than by code are recorded in `docs/work/mvp/2026-09-04-open-items-dissolution.md` §H —
 **read that section alongside this table**; a row here marked ✅ against a delegated clause points at the §H
 entry that says what "satisfied" means for it.
 
@@ -113,7 +113,7 @@ Listed first because §3's seam requirements and §14's serde chapter overlap, a
 
 ## Open items this phase raised
 
-Recorded in full at `docs/open-items.md` §H. Summary, so a Phase 9 sweep does not have to reconstruct it:
+Recorded in full at `docs/work/mvp/2026-09-04-open-items-dissolution.md` §H. Summary, so a Phase 9 sweep does not have to reconstruct it:
 
 | § | Kind | Gist |
 |---|---|---|

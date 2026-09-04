@@ -86,7 +86,7 @@ test('an absolute path is resolved, not treated as relative', () => {
 test('everything the skill is allowed to write stays writable', () => {
   for (const path of [
     'docs/README.md',
-    'docs/open-items.md',
+    'docs/work/mvp/2026-09-04-open-items-dissolution.md',
     'docs/first-release.md',
     'docs/deviations.md',
     'docs/sdk-documentation/architecture.md',

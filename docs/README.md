@@ -13,7 +13,7 @@ is the index; the rule is that nothing in `docs/` is unowned, and nothing is wri
 | [`sdk-documentation/`](./sdk-documentation/) | **As-built.** How the packages compose, which one to install, worked cross-package examples | A human, or the skill on request | Yes |
 | [`work/`](./work/) | Process records: per-phase design, plan and checklist, one directory per phase under a unit of delivery | The phase that produced them; **collected** here by the skill | Yes — `git mv` only |
 | [`superpowers/`](./superpowers/) | Nothing, for long. The **inbox** the Superpowers skills write into | `brainstorming`, `writing-plans` | Yes — it drains it |
-| [`open-items.md`](./open-items.md) | Everything unmet, unverified, misreported, or surprising. Sixteen lettered sections, A through V with the emptied letters dropped; a letter is permanent and never reused | Every review | Yes — appends |
+| [the dissolved open-items register](./work/mvp/2026-09-04-open-items-dissolution.md) | **Archive of record.** Everything the register held when it was dissolved on 2026-09-04, with every open question in it decided. Item IDs stay reserved and still resolve | — | No — nothing is appended |
 | [`first-release.md`](./first-release.md) | Release readiness: what the release path already does, the confirmed mechanics, and the blockers that must clear before a first publish. Was the `NFR-16` row of `deferred-items.md`, which was dissolved on 2026-09-04 — its five still-live rows are archived under *Live deferrals* in [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md) | The maintainer | Yes — edited as blockers clear |
 | [`deviations.md`](./deviations.md) | The as-built audit of §10, and the landing point for a deviation found outside a phase | An audit or review | Yes — appends |
 | [`assets/`](./assets/) | Vendored wordmark SVGs the root `README.md` renders | Copied from `dexpace/morphic` | Yes |
@@ -31,21 +31,22 @@ Each has its own reason:
   category error.
 - **`sdk-design-nodejs/`** carries §10, the normative deviation ledger, whose numbering
   `deviations.md` is keyed to. Amending it is a deliberate act; the audit beside it is where a
-  maintenance pass writes instead (`open-items.md` U4).
+  maintenance pass writes instead (the dissolved register's U4).
 - **`knowledge/harvested/`** cannot absorb a hand edit. Its `<sub>` shas digest the whole source
   file, not the entry, so an edit inside an entry changes no sha and the next harvest regenerates or
   duplicates it silently. Record the finding in `knowledge/notes/` instead.
 - **`knowledge/notes/`** is hand-written and could in principle be edited; it is grouped with
   `harvested/` because the CLI reads the two as one corpus and a note's key citation couples them.
-  Whether that grouping is right is an open question (`open-items.md` U1).
+  Whether that grouping is right is an open question (the dissolved register's U1).
 
 ## The three registers, and which one a thing goes in
 
 The boundary is **when** the item was created, not what it is about.
 
 - An **open item** is a discovery made *after* the work: "this is not what the checklist says it
-  is." → `open-items.md`
-- A **deferral** is a decision made *before* the work: "not this phase, that one." → `open-items.md`
+  is." → wherever it is enforced: a gate, a test, or a TSDoc comment on the thing it concerns
+- A **deferral** is a decision made *before* the work: "not this phase, that one." → the same place, or
+  `first-release.md` when the deadline is the first version bump
   too, from 2026-09-04, as an open item stating the trigger that would discharge it. The separate
   `deferred-items.md` register was dissolved that day; the five deferrals still live at the time are
   archived under *Live deferrals* in
@@ -56,17 +57,17 @@ The boundary is **when** the item was created, not what it is about.
   catches what has no owning phase.
 
 The same requirement ID could legitimately appear in two, back when there were three files. `AUTH-37`
-was deferred to Phase 7b in the deferral register and recorded at `open-items.md` G12 as a live silent
+was deferred to Phase 7b in the deferral register and recorded at the dissolved register's G12 as a live silent
 swallow; both rows are discharged now, the log half having landed on 2026-09-02, which is the shape a
 requirement took as it moved between them. With the deferral register gone, a requirement in that
 position now carries one open item that states both halves.
 
-Register letters and item numbers in `open-items.md` are **permanent**: they are cited across the
+Register letters and item numbers in the dissolved register's are **permanent**: they are cited across the
 repository from source comments, tests, changesets and this tree. A new review appends the next
 letter; nothing is ever renumbered or reused. `node .claude/skills/housekeeping/probe.mjs
 --only=citations` both counts them and checks that every one still resolves — the count lives in that
 command, not in a sentence here, because three documents once carried three different wrong ones
-(`open-items.md` U10).
+(the dissolved register's U10).
 
 ## `work/` and the inbox
 

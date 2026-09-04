@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/media-type-safety.ts
-import {hasForbiddenOutboundByte} from '../http/ascii-validation.js';
+import {hasForbiddenOutboundValueByte} from '../http/ascii-validation.js';
 import {MediaTypeParseError} from '../http/errors.js';
 
 /**
@@ -15,7 +15,7 @@ import {MediaTypeParseError} from '../http/errors.js';
  */
 export function assertHeaderSafeMediaType(mediaType: string | undefined): void {
   if (mediaType === undefined) return;
-  if (hasForbiddenOutboundByte(mediaType)) {
+  if (hasForbiddenOutboundValueByte(mediaType)) {
     throw new MediaTypeParseError(
       `media type must not contain a control character or non-ASCII byte: ${JSON.stringify(mediaType)}`,
     );
@@ -34,5 +34,5 @@ export function headerSafeMediaType(
   mediaType: string | undefined,
 ): string | undefined {
   if (mediaType === undefined) return undefined;
-  return hasForbiddenOutboundByte(mediaType) ? undefined : mediaType;
+  return hasForbiddenOutboundValueByte(mediaType) ? undefined : mediaType;
 }

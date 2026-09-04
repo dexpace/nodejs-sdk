@@ -93,12 +93,56 @@ export interface Serializer {
    * The writer lock is released on that path too; the sink itself is left errored and unclosed,
    * because the caller owns it (SERDE-3).
    *
-   * @remarks Takes no `AbortSignal`. The project-wide position is that a signal is required where an
-   * API drives a stream it did not open, and this method does — so it is one of the two SPI methods
-   * queued to gain `{signal}` in the pre-publish breaking-change batch. Tracked at
-   * `docs/open-items.md` H15.
+   * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
+   * `'AbortError'` when none was given. Checked before the writer lock is taken, so an aborted call
+   * never leaves the caller's sink locked and never closes it (SERDE-3).
+   *
+   * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
+   * project-wide test for whether an API owes one. Buffered-bytes APIs — `serialize`,
+   * `serializeToString`, `toHttpError`, `Response.bytes()` — correctly take none.
    */
-  serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>;
+  serializeTo(
+    value: unknown,
+    sink: WritableStream<Uint8Array>,
+    options?: {readonly signal?: AbortSignal | undefined},
+  ): Promise<void>;
+}
+
+/**
+ * What to decode into: the runtime witness, the optional label that names it in an error message,
+ * and whether the target admits a top-level wire `null`.
+ *
+ * These describe one thing and travel together, at every layer that decodes — the SPI's
+ * `deserialize`/`deserializeFrom` and the `decodeResponse`/`decodeSuccessResponse` handlers above
+ * them. Bundling is also what keeps both inside `max-params: 3`:
+ * `(response, deserializer, schema, typeName?)` is four parameters, and the optional one counts.
+ *
+ * @public
+ */
+export interface DecodeTarget<T> {
+  /** The runtime type witness; also the source of the decode's static return type (SERDE-5). */
+  readonly schema: Schema<T>;
+  /** An optional label naming the target in error messages; falls back to `'the target type'`. */
+  readonly typeName?: string | undefined;
+  /**
+   * Whether a top-level wire `null` is a legal value for this target. Defaults to `false`.
+   *
+   * `SERDE-13` requires that a wire `null` decoded into a **non-null** target fail, and an
+   * implementation cannot tell from a schema *value* whether the target is nullable — a schema
+   * carries no nullability a codec could read. So the rejection is unconditional by default, and
+   * runs *before* the schema: moving it after would let a permissive schema such as
+   * `{parse: (i) => i}` launder a wire `null` into a non-null `T`, which is the heap pollution
+   * `SERDE-5` and `SERDE-13` exist to prevent.
+   *
+   * Setting this to `true` is the caller stating what the schema cannot: that `T` includes `null`.
+   * The check is then skipped and the `null` reaches the schema, which is free to reject it. Use it
+   * for an operation whose success body is legitimately the literal `null`, and for the one place
+   * `tristate(inner)` can serve as a top-level target rather than a field combinator.
+   *
+   * A codec MUST honor this flag. Every implementor faces the same limitation, which is why the
+   * opt-in lives on the target rather than in any one codec's options.
+   */
+  readonly admitsNull?: boolean | undefined;
 }
 
 /**
@@ -126,13 +170,11 @@ export interface Serializer {
  * deliberate — the alternative lets a permissive schema such as `{parse: (i) => i}` launder a wire
  * `null` into a non-null `T`, which is the heap pollution SERDE-5 and SERDE-13 exist to prevent.
  *
- * **Why the decode entry points are positional while the response handlers are not.** `deserialize`
- * and `deserializeFrom` sit at three parameters, inside the project's `max-params` ceiling, and are
- * an SPI a third-party codec *implements* — a positional shape keeps that implementation burden
- * minimal. `decodeResponse`/`decodeSuccessResponse` carry the same `schema`/`typeName` pair bundled
- * as a `DecodeTarget`, because positionally they would be four parameters, which is not. One concept
- * therefore has two spellings across the two layers; unifying them is an open question for the phase
- * that next reshapes this seam.
+ * **One spelling, both layers.** Every decode entry point takes the schema and its diagnostic label
+ * bundled as a {@link DecodeTarget}: the SPI here, and `decodeResponse` / `decodeSuccessResponse`
+ * above it. The two used to differ — positional on the SPI, bundled at the handler layer — so a codec
+ * author implemented one shape while a caller used the other. Unified 2026-09-04, before the first
+ * published version, on the object form (`docs/knowledge/harvested/api-design.md:14`).
  *
  * @public
  */
@@ -141,13 +183,13 @@ export interface Deserializer {
    * Decode from a complete in-memory payload.
    *
    * @param data - the encoded bytes.
-   * @param schema - the runtime type witness; also the source of the static return type.
-   * @param typeName - an optional diagnostic label naming the target in error messages.
+   * @param target - the schema witness, its optional diagnostic label, and whether it admits a
+   * top-level wire `null`.
    * @returns the decoded value.
    * @throws DeserializationError on malformed input, a schema rejection, or a wire `null` decoded
-   * into a non-null target.
+   * into a target that does not admit one.
    */
-  deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T;
+  deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T;
 
   /**
    * Decode from a caller-owned source, reading to EOF.
@@ -155,8 +197,9 @@ export interface Deserializer {
    * Does **not** cancel or otherwise take ownership of `source` — the caller closes it (SERDE-3).
    *
    * @param source - the caller-owned byte stream; read to EOF, never cancelled.
-   * @param schema - the runtime type witness; also the source of the static return type.
-   * @param typeName - an optional diagnostic label naming the target in error messages.
+   * @param target - the schema witness, its optional diagnostic label, and whether it admits a
+   * top-level wire `null`.
+   * @param options - `{signal}` to abort the drain.
    * @returns a promise of the decoded value.
    * @throws DeserializationError on malformed input, a schema rejection, or a wire `null` decoded
    * into a non-null target. A genuine stream failure propagates unwrapped (SERDE-12), with the
@@ -164,15 +207,19 @@ export interface Deserializer {
    * @throws TypeError when `source` is already locked by another reader — the plain platform error,
    * not re-typed, because a contended source is a programmer error rather than a decode failure.
    *
-   * @remarks Takes no `AbortSignal`. The project-wide position is that a signal is required where an
-   * API drives a stream it did not open, and this method does — so it is one of the two SPI methods
-   * queued to gain `{signal}` in the pre-publish breaking-change batch. Tracked at
-   * `docs/open-items.md` H15.
+   * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
+   * `'AbortError'` when none was given. Checked before the reader lock is taken and between reads,
+   * so an aborted call never leaves the caller's source locked and never cancels it (SERDE-3).
+   *
+   * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
+   * project-wide test for whether an API owes one. The abort reaches the drain loop; the CPU-bound
+   * parse that follows is not interruptible by any signal, and `JSON.parse` has no incremental form
+   * on which a streaming parser could be built.
    */
   deserializeFrom<T>(
     source: ReadableStream<Uint8Array>,
-    schema: Schema<T>,
-    typeName?: string,
+    target: DecodeTarget<T>,
+    options?: {readonly signal?: AbortSignal | undefined},
   ): Promise<T>;
 }
 

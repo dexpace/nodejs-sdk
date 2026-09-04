@@ -44,6 +44,15 @@ jobs:
       - name: Test (with coverage)
         run: bun run test --coverage
 
+      # `examples/` is not a workspace member and is not in the root test script's two trees, so
+      # until 2026-09-04 the petstore canary -- the witness for the codegen target surface, and the
+      # only assertion anywhere that an unsatisfiable AUTH requirement raises before the transport is
+      # touched -- compiled and lint-checked but never ran. Its own step rather than a widening of
+      # `bun run test`: examples are not workspace packages and their coverage does not belong in the
+      # 80% floor's denominator.
+      - name: Example canaries
+        run: bun run test:examples
+
       # The gates' own tests (`scripts/*.test.mjs`), on `node --test`. Deliberately outside
       # `bun run test`: bunfig scopes discovery and the 80% coverage floor to `packages`, and that
       # floor is a statement about `packages/core`, not about repo tooling. What this protects is a
@@ -86,6 +95,13 @@ jobs:
       # that every way it breaks is silent, so nothing else in this workflow would catch it.
       - name: Test-partition check (tests/ vs tests/node-conformance/)
         run: bun run verify:test-partition
+
+      # docs/knowledge/harvested/module-organization.md:20 treats an import cycle as a bug rather
+      # than a style nit, and :22 requires it be gated here. Hand-written and dependency-free like
+      # every other verify:* gate, so it cannot be skipped by a missing install (docs/open-items.md
+      # K12). Type-only edges count, deliberately.
+      - name: Import-cycle check
+        run: bun run verify:import-cycles
 
       # NFR-12. Deliberately last in this job: it sweeps every dist/ and rebuilds
       # the workspace twice, so it would otherwise pull the rug from under any

@@ -118,7 +118,7 @@ return pageInfo(items, next);
 **3. A page is closed before its items are yielded** (`PAGE-11`). The engine does this for you. It is
 worth knowing because it means your `extract` is the **only** place the response body is readable, and
 because `sdk-design-nodejs/07` §7.1's illustrative snippet has it backwards — closing after yielding —
-which is an erratum recorded in `docs/knowledge/notes/pagination.md` and `docs/open-items.md` J1.
+which is an erratum recorded in `docs/knowledge/notes/pagination.md` and `docs/work/mvp/2026-09-04-open-items-dissolution.md` J1.
 
 **4. Terminate.** Returning a `nextRequest` equal to the one just fetched is an infinite walk.
 `maxPages` on `PaginatorInit` is the backstop, not the design. Loop detection is not the paginator's
@@ -160,7 +160,7 @@ pagination is already a pair of methods.
 20.4 and this project's floor is 20.3, so the disposal member is installed only when the symbol
 exists and is never declared in the `.d.ts`. Declaring it anyway would be a type that lies on the
 supported runtime, which `NFR-10` forbids. `close()` is the teardown on every runtime, and
-`open-items.md`'s Section D row [`await using` support](../open-items.md#d-nfr-10-await-using)
+`open-items.md`'s Section D row [`await using` support](../work/mvp/2026-09-04-open-items-dissolution.md#d-nfr-10-await-using)
 records the decision with the four reasons the floor does not move instead.
 
 Within a `Paginator` walk the engine closes each page for you; `close()` matters when you hold a

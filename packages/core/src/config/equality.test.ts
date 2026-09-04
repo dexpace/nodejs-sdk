@@ -37,7 +37,7 @@ describe('deepEqual (CFG-33)', () => {
 
   test('overflows the stack on a self-referential array rather than terminating', () => {
     // Pinned, not fixed. Both helpers recurse without a cycle guard or a depth cap, and neither is
-    // exported from the package barrel or called by anything yet. `docs/open-items.md` K16 records
+    // exported from the package barrel or called by anything yet. `docs/work/mvp/2026-09-04-open-items-dissolution.md` K16 records
     // the acyclic, bounded-depth precondition the first consumer inherits.
     const cyclic: unknown[] = [];
     cyclic.push(cyclic);

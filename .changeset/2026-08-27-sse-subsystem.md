@@ -28,7 +28,7 @@ Four design calls worth recording:
   treats `\n` and `\r\n` as terminators but keeps a lone `\r` as line *content* (`IO-14`); `SSE-2`
   requires the opposite, where a lone CR terminates a line by itself. Both contracts are normative for
   their own subsystem, so reshaping the frozen Phase 3a surface for one consumer was the wrong trade. The
-  duplication is deliberate and recorded at `docs/open-items.md` §I2 so Phase 10's deviation review does
+  duplication is deliberate and recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` §I2 so Phase 10's deviation review does
   not read it as accidental. The awkward case it exists to get right is a `\r` ending one chunk whose `\n`
   begins the next: the pending CR is held until the following byte — or EOF — is known, so the pair
   resolves to a single terminator.

@@ -16,5 +16,5 @@ uses (RECOV-12):
 - a **successful** read returns the `HttpStatusError` even when the release failed, carrying that
   failure as the error's `cause` rather than dropping it.
 
-Fixing it at `toHttpError` covers all four callers at once. Recorded at `docs/open-items.md` H14 (of
+Fixing it at `toHttpError` covers all four callers at once. Recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` H14 (of
 which `P1` is the same defect under a second letter).

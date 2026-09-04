@@ -10,7 +10,7 @@ bridge is `packages/rx/src/from-async-iterable.ts`, not RxJS's own `from()`, bec
 the source when a subscription is torn down while a pull is suspended — the `ASYNC-6` clause an idle SSE stream
 depends on. Every row citing that module below is citing the reason it exists. The `🚫` rows that name Phase 8a
 are **not satisfied yet**: they collapse onto `TRANSPORT-*` requirements no shipped package implements — see
-`docs/open-items.md` §M2.
+`docs/work/mvp/2026-09-04-open-items-dissolution.md` §M2.
 
 **Legend:** ✅ Implemented and tested — 🚫 Not built (permanent simplification / collapse, named reason) — ⏳ Deferred
 (named target phase) — N/A Not applicable in this port.

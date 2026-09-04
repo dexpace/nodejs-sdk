@@ -248,12 +248,20 @@ function validateMarginMs(label: string, value: number | undefined): void {
   );
 }
 
-/** AUTH-4: a per-call descriptor (`RequestOptions.auth`, via `StepContext.options`) fills the perCall slot. */
+/**
+ * AUTH-4: the two per-call slots (`RequestOptions.auth` and `RequestOptions.operationAuth`, both via
+ * `StepContext.options`) fill the `perCall` and `operation` tiers. Each is applied only when present,
+ * so a configured tier is never overwritten with `undefined` — `{...configured, perCall: undefined}`
+ * would erase a `perCall` the step was constructed with (docs/work/mvp/2026-09-04-open-items-dissolution.md W1).
+ */
 function effectiveTiers(
   configured: AuthTiers,
   perCall: AuthDescriptor | undefined,
+  operation: AuthDescriptor | undefined,
 ): AuthTiers {
-  return perCall === undefined ? configured : {...configured, perCall};
+  const withPerCall =
+    perCall === undefined ? configured : {...configured, perCall};
+  return operation === undefined ? withPerCall : {...withPerCall, operation};
 }
 
 /** Stable identity for pillar-slot occupancy and anchor matching (PIPE-6/PIPE-18). @internal */
@@ -742,7 +750,11 @@ export function authStep(settings: AuthStepSettings): StepDescriptor {
       );
 
       const {scheme} = resolveAuthRequirement(
-        effectiveTiers(settings.tiers, ctx.options?.auth),
+        effectiveTiers(
+          settings.tiers,
+          ctx.options?.auth,
+          ctx.options?.operationAuth,
+        ),
         availableSchemes,
       );
       // One clock read per hop, threaded into every expiry evaluation this hop performs, so the

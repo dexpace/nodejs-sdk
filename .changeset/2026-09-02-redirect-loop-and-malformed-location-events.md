@@ -16,5 +16,5 @@ The malformed-Location event logs the header **raw**, unredacted. That is `REDIR
 the value failed to parse into a URL, so there is nothing for the redactor to key off. A deployment
 whose upstreams may send credential-bearing malformed `Location` values should account for it.
 
-Closes `docs/open-items.md` G3, and the "Redirect's loop-detected and malformed-Location events"
+Closes `docs/work/mvp/2026-09-04-open-items-dissolution.md` G3, and the "Redirect's loop-detected and malformed-Location events"
 row in Section D.

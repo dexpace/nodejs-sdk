@@ -4,7 +4,7 @@ Verification of [2026-07-28-phase6b-sse.md](./2026-07-28-phase6b-sse.md) against
 `docs/product-spec/13-server-sent-events-and-streaming.md` (`SSE-1`–`SSE-41`), as dispositioned by
 `docs/work/mvp/phase6/phase6b/2026-07-28-phase6b-sse-design.md`.
 
-**Status: EXECUTED (2026-08-27).** Every task below is implemented and tested across 1,497 repository tests, 40 script tests, and 79 Node conformance tests. Deviations, deferrals, and design rationales are recorded in `docs/open-items.md` §I and the roadmap design.
+**Status: EXECUTED (2026-08-27).** Every task below is implemented and tested across 1,497 repository tests, 40 script tests, and 79 Node conformance tests. Deviations, deferrals, and design rationales are recorded in `docs/work/mvp/2026-09-04-open-items-dissolution.md` §I and the roadmap design.
 
 **Legend:** ✅ Implemented and tested — ✅(t) Satisfied by construction, with a test as the only possible evidence — ⏳ Deferred (named target phase) — N/A Not applicable in this port.
 

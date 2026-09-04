@@ -21,6 +21,11 @@ import {RequestOptions} from '../http/request-options.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
 import {invariant} from '../invariant.js';
+import {
+  createInstrumentationBundle,
+  type Span,
+  type Tracer,
+} from '../observability/tracing.js';
 import type {Transport} from '../seams/transport.js';
 import {createRuntime, exchangeSource} from './runtime.js';
 import type {Step, StepDescriptor} from './step.js';
@@ -308,5 +313,150 @@ describe('Runtime.close (PIPE-27)', () => {
     await runtime.close();
 
     expect(transport.closeCalls).toBe(0);
+  });
+});
+/** A tracer recording the whole lifecycle of every span it opens. */
+function recordingTracer(): {
+  tracer: Tracer;
+  spans: {name: string; ended: number; exceptions: unknown[]}[];
+} {
+  const spans: {name: string; ended: number; exceptions: unknown[]}[] = [];
+  const tracer: Tracer = {
+    startSpan(name: string): Span {
+      const record = {name, ended: 0, exceptions: [] as unknown[]};
+      spans.push(record);
+      const span: Span = {
+        isRecording: true,
+        setAttribute(): Span {
+          return span;
+        },
+        recordException(error: unknown): Span {
+          record.exceptions.push(error);
+          return span;
+        },
+        end(): void {
+          record.ended += 1;
+        },
+      };
+      return span;
+    },
+  };
+  return {tracer, spans};
+}
+
+/** A step that does nothing but advance, so the pipeline is non-empty (PIPE-9's other branch). */
+function passthroughStep(): StepDescriptor {
+  return {
+    type: Symbol('passthrough'),
+    stage: 'PRE_REDIRECT',
+    fn: (request, ctx) => ctx.next(request),
+  };
+}
+
+function runtimeWith(
+  tracer: Tracer,
+  transport: Transport,
+  steps: readonly StepDescriptor[] = [passthroughStep()],
+): ReturnType<typeof createRuntime> {
+  return createRuntime(steps, transport, {
+    instrumentation: createInstrumentationBundle(() => tracer),
+  });
+}
+
+describe('the per-operation span: opened once, ended once (OBS-29)', () => {
+  test('one span is opened per send() and ended exactly once on success', async () => {
+    const {tracer, spans} = recordingTracer();
+    const transport = new RecordingTransport(aResponse(200));
+
+    await runtimeWith(tracer, transport).send(aRequest('https://example.com'));
+
+    expect(spans.length).toBe(1);
+    expect(spans[0]?.ended).toBe(1);
+    expect(spans[0]?.exceptions).toEqual([]);
+  });
+
+  test('a failing drive records the exception and still ends the span exactly once', async () => {
+    const {tracer, spans} = recordingTracer();
+    const boom = new Error('boom');
+    const failing: StepDescriptor = {
+      type: Symbol('failing'),
+      stage: 'PRE_REDIRECT',
+      fn: () => Promise.reject(boom),
+    };
+
+    const thrown = await runtimeWith(
+      tracer,
+      new RecordingTransport(aResponse(200)),
+      [failing],
+    )
+      .send(aRequest('https://example.com'))
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(thrown).toBe(boom);
+
+    expect(spans.length).toBe(1);
+    expect(spans[0]?.ended).toBe(1);
+    expect(spans[0]?.exceptions).toEqual([boom]);
+  });
+});
+
+describe('the per-operation span: 1:1 with a logical operation (OBS-29)', () => {
+  test('a re-drive inside the pillars does NOT open a second operation span (PIPE-2)', async () => {
+    const {tracer, spans} = recordingTracer();
+    const transport = new RecordingTransport(aResponse(200));
+    // Forks twice, the way RETRY and REDIRECT do. OBS-29's 1:1 binding is exactly what this asserts:
+    // two transmissions, one logical operation, one span.
+    const forking: StepDescriptor = {
+      type: Symbol('forking'),
+      stage: 'RETRY',
+      fn: async (request, ctx) => {
+        invariant(ctx.fork !== undefined, 'pillar stage expected');
+        await ctx.fork()(request);
+        return ctx.fork()(request);
+      },
+    };
+
+    await runtimeWith(tracer, transport, [forking]).send(
+      aRequest('https://example.com'),
+    );
+
+    expect(transport.calls.length).toBe(2);
+    expect(spans.length).toBe(1);
+    expect(spans[0]?.ended).toBe(1);
+  });
+
+  test('a nested Runtime used as a transport opens no second span (PIPE-26)', async () => {
+    const {tracer, spans} = recordingTracer();
+    const inner = runtimeWith(tracer, new RecordingTransport(aResponse(200)));
+
+    await runtimeWith(tracer, inner).send(aRequest('https://example.com'));
+
+    expect(spans.length).toBe(1);
+    expect(spans[0]?.ended).toBe(1);
+  });
+
+  test('an empty pipeline opens no span at all (PIPE-9)', async () => {
+    const {tracer, spans} = recordingTracer();
+    await runtimeWith(tracer, new RecordingTransport(aResponse(200)), []).send(
+      aRequest('https://example.com'),
+    );
+    expect(spans).toEqual([]);
+  });
+
+  test('no instrumentation override means no tracer and no throw', async () => {
+    const transport = new RecordingTransport(aResponse(200));
+    const response = await createRuntime(
+      [
+        {
+          type: Symbol('plain'),
+          stage: 'PRE_REDIRECT',
+          fn: (request, ctx) => ctx.next(request),
+        },
+      ],
+      transport,
+    ).send(aRequest('https://example.com'));
+    expect(response.status.code).toBe(200);
   });
 });

@@ -81,7 +81,7 @@ floor), `api`, `lint:publish`, `verify:dual-consumption`, `verify:consumer-types
 | `NFR-8`'s shrinker keep-configuration ships nothing | The reference ships ProGuard/R8 keep rules for its reflective/SPI surface | No reflection-driven discovery surface exists here. The risk that *does* carry over is the dual-package hazard, and `@dexpace/shrink-test` targets it — now with measured proof the hazard is real |
 | `XCUT-6`'s "retryability capability" is subtyping, not a duck-typed flag | The reference queries a capability interface | `classify.ts`'s allow-list returns true for any `IoError`, so extending it opts a new failure in with no classifier edit. Already ledgered as item 17 |
 
-## Findings filed — `docs/open-items.md` Section N
+## Findings filed — `docs/work/mvp/2026-09-04-open-items-dissolution.md` Section N
 
 | # | Summary | Owner |
 |---|---|---|

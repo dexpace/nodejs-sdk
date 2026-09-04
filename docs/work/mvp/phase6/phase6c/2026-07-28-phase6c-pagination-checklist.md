@@ -2,7 +2,7 @@
 
 Verification of pagination requirements (`PAGE-1`–`PAGE-36`) from `docs/product-spec/16-pagination.md` and `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md`, as dispositioned by `docs/work/mvp/2026-07-23-nodejs-sdk-v1-roadmap-design.md`.
 
-**Status: EXECUTED (2026-08-27).** All tasks implemented, tested, and reviewed. Deviations and design ledger rows are recorded in `docs/open-items.md` §I.
+**Status: EXECUTED (2026-08-27).** All tasks implemented, tested, and reviewed. Deviations and design ledger rows are recorded in `docs/work/mvp/2026-09-04-open-items-dissolution.md` §I.
 
 **Legend:** ✅ Implemented and tested — ✅(t) Satisfied by construction or type test — 🚫 Not built — ⏳ Deferred — N/A Not applicable.
 

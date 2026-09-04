@@ -7,7 +7,7 @@
 // build artifact" — true while the repository was docs-only, and false from Phase 1 on. The check is
 // mechanical: build the workspace twice from a swept tree and compare a SHA-256 of every emitted
 // file. Asserting reproducibility without running it is exactly the kind of claimed-but-unverified
-// conformance `docs/open-items.md` exists to catch.
+// conformance the open-items register existed to catch.
 //
 // Both builds sweep `dist/` and every `*.tsbuildinfo` first. Without the sweep the second `tsc` is
 // incremental and rewrites nothing, so the comparison passes by not having run — the failure mode

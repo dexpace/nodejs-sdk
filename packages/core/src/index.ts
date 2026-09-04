@@ -32,7 +32,23 @@ export {
   isTimeoutSignal,
   CancellationError,
 } from './seams/transport.js';
-export {EndOfStreamError, IoError, TransportFailureError} from './io/errors.js';
+// The four flat leaves plus `isIoError`. `decodeResponse`'s guard passes anything already in this
+// SDK's typed tree through untouched, so a caller genuinely receives `ClosedResourceError` and its
+// siblings today and until 2026-09-04 had no name to catch them by. The guard is the category catch
+// that a flat tree cannot offer through `instanceof` (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
+export {
+  AllocationLimitError,
+  ClosedResourceError,
+  EndOfStreamError,
+  IoError,
+  isIoError,
+  SourceContractViolationError,
+  TransportFailureError,
+} from './io/errors.js';
+// The shape of a suppressed-error pair, type-only. `instanceof SuppressedError` is NOT a valid test
+// on the declared `engines.node >=20.3` floor, where the global is absent, so a caller that wants to
+// narrow one needs this interface rather than the class (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
+export type {SuppressedErrorLike} from './suppress.js';
 export type {OperationDescriptor} from './seams/operation.js';
 export {buildRequest, OperationAssemblyError} from './seams/operation.js';
 
@@ -265,6 +281,28 @@ export type {
 } from './pagination/fetchers.js';
 export {PaginationError} from './pagination/errors.js';
 
+// Phase 4b — the recovery-chain execution model (RECOV-*). Published 2026-09-04: `DispatchConfig`
+// requires a `requestChain` and a `responseChain`, nothing in this package constructs one, and the
+// whole folder was internal-only — so the execution model the RECOV requirements describe had no
+// entry point at all. The chains stay CLASSES rather than plain data plus free functions
+// (docs/knowledge/harvested/data-modeling.md:10 would prefer the latter): RECOV-14's text is written
+// about chain and step *instances*, and the defensive copy wants a construction boundary.
+export type {RequestStep} from './recovery/request-chain.js';
+export {RequestRecoveryChain} from './recovery/request-chain.js';
+export type {RecoveryStep, ResponseStep} from './recovery/response-chain.js';
+export {ResponseRecoveryChain} from './recovery/response-chain.js';
+export type {Outcome} from './recovery/outcome.js';
+export {failure, fold, success} from './recovery/outcome.js';
+export type {DispatchConfig} from './recovery/orchestrator.js';
+export {dispatchWithRecovery} from './recovery/orchestrator.js';
+export {statusMappingStep} from './recovery/status-mapping.js';
+export {wrapCancellation} from './recovery/cancellation.js';
+// RECOV-32's idempotency-key step. A `RequestStep`, not a `StepDescriptor` — it composes into a
+// `RequestRecoveryChain` rather than into a pipeline stage, which is why it is here and
+// `clientIdentityStep` is with the Phase 7a block below.
+export type {IdempotencyKeyOptions} from './recovery/idempotency-key.js';
+export {idempotencyKeyStep} from './recovery/idempotency-key.js';
+
 // Phase 7a — configuration and platform primitives. There is no `./config/index.js`, because 7a's
 // design doc rules one out by name. Not because the question is settled: this repo carries both
 // patterns — `http/`, `body/`, `io/`, and `seams/` each have an internal barrel, while `pipeline/`,
@@ -272,19 +310,23 @@ export {PaginationError} from './pagination/errors.js';
 // docs/knowledge/harvested/module-organization.md:18 bans internal barrels outright and
 // docs/knowledge/harvested/api-design.md:8 endorses one per feature folder, with no entry in the corpus's
 // `--section conflicts` reconciling them. 7a followed its design doc and names each symbol here
-// against its own file; see docs/open-items.md K11 for the standing note.
+// against its own file. That stays the shape, and `client-identity-step.ts` stays in `config/`:
+// once a symbol is `@public` and named here against its own module path, its folder is invisible to
+// every consumer, and moving it to `recovery/` would only trade its one outbound `→ pipeline/` edge
+// for a new `→ config/` one for `./build-info.js` (docs/work/mvp/2026-09-04-open-items-dissolution.md K11, closed 2026-09-04).
 // Deliberately NOT exported: `config/equality.js`'s deepEqual/deepHash — no requirement gives a
 // caller direct access to them, and they have no in-package caller either as of 2026-08-27, so the
-// module is reachable only from its own test (docs/open-items.md K16 owns the first real consumer);
-// and `config/client-identity-step.js`'s clientIdentityStep. Its absence is now a DECISION, not a
-// blocker: this comment used to say its `StepDescriptor` return type was "part of the still-internal
-// pipeline authoring surface", which stopped being true when Phase 5c promoted `StepDescriptor`,
-// `Stage`, `Step`, `StepContext` and `PipelineBuilder` 168 lines above. Publishing the step is a
-// deliberate surface widening and wants sign-off (docs/open-items.md K1, corrected 2026-09-02).
+// module is reachable only from its own test (docs/work/mvp/2026-09-04-open-items-dissolution.md K16 owns the first real consumer).
 export type {Clock} from './config/clock.js';
 export {defaultClock} from './config/clock.js';
 export type {BuildInfo} from './config/build-info.js';
 export {getBuildInfo} from './config/build-info.js';
+// RECOV-33's identity-stamping step. Public because a caller installs it in their own pipeline —
+// `standardResilience` does not install it — so an unexported factory satisfies nothing. Promoted
+// 2026-09-04; every other step factory (`authStep`, `retryStep`, `redirectStep`, `loggingStep`,
+// `stripCrossOriginMarkerStep`) was already here (docs/work/mvp/2026-09-04-open-items-dissolution.md K1).
+export type {ClientIdentitySettings} from './config/client-identity-step.js';
+export {clientIdentityStep} from './config/client-identity-step.js';
 export type {Configuration, SourceFn} from './config/configuration.js';
 export {
   CFG_KEY_HTTPS_PROXY,

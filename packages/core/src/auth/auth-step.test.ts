@@ -1076,6 +1076,51 @@ describe('authStep: per-call configuration and injected seams (AUTH-4/AUTH-11)',
   });
 });
 
+describe('authStep: the operation tier (AUTH-4, docs/work/mvp/2026-09-04-open-items-dissolution.md W1)', () => {
+  test('RequestOptions.operationAuth fills the operation tier and beats the client tier (AUTH-4, docs/work/mvp/2026-09-04-open-items-dissolution.md W1)', async () => {
+    const transport = new FakeTransport([countingResponse(200).response]);
+    const credentials: AuthCredentialSet = {
+      apiKey: {
+        credential: new ApiKeyCredential('secret'),
+        headerName: 'X-Api-Key',
+      },
+    };
+    // The client tier resolves to API_KEY; the operation tier demands NO_AUTH and must win, so no
+    // API-key header is stamped.
+    const descriptor = authStep({credentials, tiers: tiersFor('API_KEY')});
+    const options = RequestOptions.newBuilder()
+      .operationAuth(createAuthDescriptor([createAuthRequirement('NO_AUTH')]))
+      .build();
+
+    await runThrough(descriptor, transport, {options});
+
+    expect(
+      transport.calls[0]?.request.headers.get('X-Api-Key'),
+    ).toBeUndefined();
+  });
+
+  test('a per-call descriptor still beats an operation descriptor (AUTH-4 precedence)', async () => {
+    const transport = new FakeTransport([countingResponse(200).response]);
+    const credentials: AuthCredentialSet = {
+      apiKey: {
+        credential: new ApiKeyCredential('secret'),
+        headerName: 'X-Api-Key',
+      },
+    };
+    // perCall ?? operation ?? client, with the operation tier unsatisfiable: if it were consulted
+    // the call would raise AuthResolutionError instead of stamping.
+    const descriptor = authStep({credentials, tiers: {}});
+    const options = RequestOptions.newBuilder()
+      .auth(createAuthDescriptor([createAuthRequirement('API_KEY')]))
+      .operationAuth(createAuthDescriptor([createAuthRequirement('BASIC')]))
+      .build();
+
+    await runThrough(descriptor, transport, {options});
+
+    expect(transport.calls[0]?.request.headers.get('X-Api-Key')).toBe('secret');
+  });
+});
+
 describe('authStep: answering an unrecognized scheme through challengeHook', () => {
   // There is deliberately no `AuthStepSettings.handlers`: `challengeHook` is the ONE caller-facing
   // extension point, and it covers the case a handler list was reaching for -- a scheme none of the

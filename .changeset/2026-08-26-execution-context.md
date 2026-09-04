@@ -34,7 +34,7 @@ Three design calls worth recording:
   store into the promotions would invert the layering and make every promotion a global side effect. The
   positive half — the first store entry, installed by the first promotion — is Phase 4c's `Runtime.send()`.
 
-Two known deviations, both already in the deferral register (`docs/open-items.md`):
+Two known deviations, both already in the deferral register (`docs/work/mvp/2026-09-04-open-items-dissolution.md`):
 
 - `contextStore` is a module-level mutable singleton, which
   `docs/knowledge/harvested/variables-and-declarations.md:22` bans. Accepted because threading a store handle through

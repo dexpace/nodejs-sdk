@@ -8,4 +8,4 @@ explaining why the public barrel deliberately did not re-export it.
 
 No published surface changes: `packages/core/package.json`'s `exports` names `.` only, so the file
 was never reachable by a consumer, and every symbol it re-exported is already named directly on the
-public barrel. Closes `docs/open-items.md` H12.
+public barrel. Closes `docs/work/mvp/2026-09-04-open-items-dissolution.md` H12.

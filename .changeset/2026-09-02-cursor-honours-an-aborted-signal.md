@@ -16,8 +16,8 @@ no wire send happens and no response is produced. It previously dispatched and, 
 handed the first hop back open. An abort raised *during* a hop is unchanged: the redirect step's own
 guard runs before it forks again, so the in-flight response is still returned unclosed (`PIPE-40`).
 
-The abort is mapped through the same helper `docs/open-items.md` N1 added, so it surfaces as
+The abort is mapped through the same helper `docs/work/mvp/2026-09-04-open-items-dissolution.md` N1 added, so it surfaces as
 `CancellationError` with the caller's own reason as `cause` — never a bare `DOMException` — and a
 timeout-aborted signal still surfaces `TransportFailureError`, keeping `XCUT-3`'s distinction.
 
-Closes `docs/open-items.md` V15 and Section T's `F9`.
+Closes `docs/work/mvp/2026-09-04-open-items-dissolution.md` V15 and Section T's `F9`.

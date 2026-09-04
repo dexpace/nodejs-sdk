@@ -5,7 +5,11 @@ import {DexpaceError} from '../http/errors.js';
 import type {Response} from '../http/response.js';
 import {invariant} from '../invariant.js';
 import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
-import type {Deserializer, Schema} from '../seams/serde.js';
+import type {DecodeTarget, Deserializer} from '../seams/serde.js';
+
+// Re-exported so the handler layer and the seam name one type, not two. It is DECLARED on the seam
+// because the seam is what a third-party codec implements against.
+export type {DecodeTarget};
 import {DeserializationError} from './errors.js';
 
 const UNNAMED_TARGET = 'the target type';
@@ -39,23 +43,6 @@ async function closingAfter<T>(
   }
   await response.close();
   return result;
-}
-
-/**
- * What to decode into: the runtime witness, plus the optional label that names it in an error
- * message.
- *
- * The schema and its diagnostic label describe one thing, and travel together rather than as two
- * trailing positional parameters — `(response, deserializer, schema, typeName?)` is four parameters,
- * and `max-params: 3` counts the optional one.
- *
- * @public
- */
-export interface DecodeTarget<T> {
-  /** The runtime type witness; also the source of the decode's static return type (SERDE-5). */
-  readonly schema: Schema<T>;
-  /** An optional label naming the target in error messages; falls back to `'the target type'`. */
-  readonly typeName?: string | undefined;
 }
 
 /**
@@ -137,11 +124,7 @@ export async function decodeResponse<T>(
       );
     }
     try {
-      return await deserializer.deserializeFrom(
-        body,
-        target.schema,
-        target.typeName,
-      );
+      return await deserializer.deserializeFrom(body, target);
     } catch (e: unknown) {
       // SERDE-12: anything already in the SDK's typed error tree passes through untouched. That
       // covers every I/O leaf (`IoError`, `EndOfStreamError`, `ClosedResourceError`,

@@ -238,7 +238,7 @@ bun run test:node      # the built artifact under node --test
 bun run api            # every committed etc/*.api.md matches
 ```
 
-Twenty named CI steps across two jobs, every one blocking
+Twenty-two named CI steps across two jobs, every one blocking
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Run all of them locally before claiming
 work is done:
 
@@ -266,7 +266,7 @@ The full contract is in [`CLAUDE.md`](CLAUDE.md); the documentation map is
 - **Lint is type-aware and strict.** 70-line function cap, `max-depth` 3, `max-params` 3, explicit
   return types on exported functions. Formatting is an error, not a warning. Every
   `eslint-disable` must carry a stated reason.
-- **Every gap is recorded.** A finding goes in [`docs/open-items.md`](docs/open-items.md), and so does a
+- **Every gap is recorded.** A finding goes in [`docs/work/mvp/2026-09-04-open-items-dissolution.md`](docs/work/mvp/2026-09-04-open-items-dissolution.md), and so does a
   deferral — as an open item carrying the trigger that would discharge it, since the separate deferral
   register was dissolved on 2026-09-04. A deliberate divergence goes in the deviation ledger. Silent gaps
   are the failure mode this project is structured to prevent.

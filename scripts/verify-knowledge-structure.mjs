@@ -76,7 +76,7 @@ function sourceRoots(text) {
   }
 
   // One row at a root's parent would widen the allowlist to everything beneath
-  // it — a future `docs/open-items.md` row makes `docs` a root, and then every
+  // it — a row naming a file at the `docs/` root makes `docs` a root, and then every
   // `docs/work/...` citation passes. Refuse rather than silently widen.
   const sorted = [...roots].sort();
   for (const root of sorted) {
@@ -188,6 +188,39 @@ function noteViolations(entries) {
     );
 }
 
+/** A backticked `<topic>/<8 hex>` key, the form a note uses to name the rule it overrides. */
+const NOTE_KEY = /`([a-z0-9-]+\/[0-9a-f]{8})`/g;
+
+/**
+ * Every backticked key a note cites that no harvested entry carries.
+ *
+ * A note names the harvested rule it overrides by that rule's stable key, which is digested from the
+ * entry's *text* — so a re-harvest that rewords the rule changes its key and silently orphans every
+ * note citing it. `bun run knowledge:drift` reported that, but nothing blocked on it, which made the
+ * rot invisible until somebody ran a hand tool. Failing here means a re-harvest cannot land until
+ * the notes it invalidates are updated in the same commit, which is the point (docs/work/mvp/2026-09-04-open-items-dissolution.md
+ * O2, mechanism 1 of the two reviewed).
+ */
+function orphanedNoteKeys(entries) {
+  const live = new Set(
+    entries.filter(entry => entry.origin !== 'note').map(entry => entry.key),
+  );
+  const violations = [];
+  for (const entry of entries) {
+    if (entry.origin !== 'note') continue;
+    for (const [, key] of entry.text.matchAll(NOTE_KEY)) {
+      if (live.has(key)) continue;
+      violations.push(
+        `${entryLocation(entry)}: cites \`${key}\`, which no harvested entry ` +
+          'carries. A key is digested from the entry text, so a re-harvest that ' +
+          'rewords the rule changes it — update the note to the new key ' +
+          '(`bun run knowledge --topic <topic> --section <section>` prints it).',
+      );
+    }
+  }
+  return violations;
+}
+
 // The scripts here wrap-and-rethrow with `{cause}`; printing only the outer
 // message throws away the half that says which file.
 function formatCauses(error) {
@@ -203,6 +236,7 @@ function main() {
   const entries = loadCorpus(derivePrefixes(loadCanonicalIds()));
   const violations = [
     ...structuralViolations(entries, roots),
+    ...orphanedNoteKeys(entries),
     ...noteViolations(entries),
     ...strayTopicFiles(),
   ];
@@ -234,12 +268,18 @@ function main() {
     `knowledge structure OK: ${harvested.length} harvested entries, each with ` +
       `a source under one of ${roots.length} roots and a role among ` +
       `${HARVESTED_ROLES.join('/')}, none Superseded; ${notes} notes, all ` +
-      'review-role; nothing stranded at the root.\n',
+      'review-role, every cited key live; nothing stranded at the root.\n',
   );
   return 0;
 }
 
-export {sourceRoots, structuralViolations, noteViolations, strayTopicFiles};
+export {
+  sourceRoots,
+  structuralViolations,
+  noteViolations,
+  orphanedNoteKeys,
+  strayTopicFiles,
+};
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {

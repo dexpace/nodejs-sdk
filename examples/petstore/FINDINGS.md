@@ -121,7 +121,7 @@ compiling.
 The deferral register recorded the `operation` tier as **BLOCKED — no source layer exists on this
 roadmap**. This spike is that layer, and here is exactly what its absence costs. (That row was closed
 on 2026-09-04 — the Phase 5c decision behind it is settled — and the register itself dissolved the
-same day. What this section found was carried over to `docs/open-items.md` W1, which is where the
+same day. What this section found was carried over to `docs/work/mvp/2026-09-04-open-items-dissolution.md` W1, which is where the
 live gap is now tracked.)
 
 `AuthTiers` is `perCall ?? operation ?? client`, resolved inside `authStep`. `RequestOptions.auth`
@@ -151,7 +151,7 @@ right; only the plumbing is missing.
 **Verdict — the smallest useful fix is a second per-call slot.** Either `RequestOptions` gains
 `operationAuth?: AuthDescriptor` (filling `AuthTiers.operation` in `effectiveTiers`), or
 `StepContext.options` carries the operation descriptor separately. Either makes the fold above
-disappear and `AuthTiers.operation` live. This is the fix `docs/open-items.md` W1 carries.
+disappear and `AuthTiers.operation` live. This is the fix `docs/work/mvp/2026-09-04-open-items-dissolution.md` W1 carries.
 
 ### 5. `FakeTransport` and `countingResponse` are unreachable — confirmed
 

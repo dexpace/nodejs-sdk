@@ -21,7 +21,7 @@ import {CancellationError, isTimeoutSignal} from './seams/transport.js';
  * shared one. That package peer-depends on core and could only reach this through core's PUBLIC
  * barrel; publishing an internal mapper to widen a package boundary is the wrong trade for six
  * lines. Both are pinned by tests asserting the same two branches, so a divergence surfaces as a
- * failure rather than as silent drift -- the same disposition `docs/open-items.md` K18 records for
+ * failure rather than as silent drift -- the same disposition `docs/work/mvp/2026-09-04-open-items-dissolution.md` K18 records for
  * `isHeaderSafe`.
  *
  * @param signal - the aborted signal.

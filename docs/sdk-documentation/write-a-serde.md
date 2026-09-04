@@ -15,12 +15,14 @@ interface Serializer {
   serialize(value: unknown): Uint8Array;                        // fresh buffer
   serializeToString(value: unknown): string;                    // fresh string
   serializeInto(value: unknown, target: Uint8Array, offset?: number): number; // caller's buffer
-  serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>; // caller's sink
+  serializeTo(value: unknown, sink: WritableStream<Uint8Array>,
+              options?: {signal?: AbortSignal}): Promise<void>;               // caller's sink
 }
 
 interface Deserializer {
-  deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T;
-  deserializeFrom<T>(source: ReadableStream<Uint8Array>, schema: Schema<T>, typeName?: string): Promise<T>;
+  deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T;
+  deserializeFrom<T>(source: ReadableStream<Uint8Array>, target: DecodeTarget<T>,
+                     options?: {signal?: AbortSignal}): Promise<T>;
 }
 
 interface Schema<T> {
@@ -53,7 +55,7 @@ All six methods, no shortcuts. This is the shape, not a sketch:
 import {
   DeserializationError,
   SerializationError,
-  type Schema,
+  type DecodeTarget,
   type Serde,
 } from '@dexpace/core';
 
@@ -67,12 +69,19 @@ export function csvSerde(): Serde {
     return value.map(row => String(row)).join('\n');
   };
 
-  const decode = <T>(text: string, schema: Schema<T>, typeName?: string): T => {
+  const decode = <T>(text: string, target: DecodeTarget<T>): T => {
+    const rows: unknown = text.split('\n');
+    // SERDE-13: reject a wire null before the schema runs, unless the target says it admits one.
+    if (rows === null && target.admitsNull !== true) {
+      throw new DeserializationError(
+        `wire null cannot be decoded into the non-null target ${target.typeName ?? 'the target type'}`,
+      );
+    }
     try {
-      return schema.parse(text.split('\n'));
+      return target.schema.parse(rows);
     } catch (cause) {
       throw new DeserializationError(
-        `could not decode ${typeName ?? 'the target type'}`,
+        `could not decode ${target.typeName ?? 'the target type'}`,
         {cause},
       );
     }
@@ -93,7 +102,8 @@ export function csvSerde(): Serde {
         target.set(bytes, offset);
         return bytes.length;
       },
-      async serializeTo(value, sink) {
+      async serializeTo(value, sink, options) {
+        options?.signal?.throwIfAborted(); // before the lock: an aborted call leaves the sink free
         const writer = sink.getWriter(); // TypeError if contended — a programmer error, not re-typed
         try {
           await writer.write(TEXT.encode(encode(value)));
@@ -103,15 +113,16 @@ export function csvSerde(): Serde {
       },
     },
     deserializer: {
-      deserialize: (data, schema, typeName) =>
-        decode(new TextDecoder().decode(data), schema, typeName),
-      async deserializeFrom(source, schema, typeName) {
+      deserialize: (data, target) => decode(new TextDecoder().decode(data), target),
+      async deserializeFrom(source, target, options) {
+        options?.signal?.throwIfAborted(); // before the lock, and again after every read below
         const reader = source.getReader();
         const chunks: Uint8Array[] = [];
         try {
           for (;;) {
             const {done, value} = await reader.read();
             if (done) break;
+            options?.signal?.throwIfAborted();
             chunks.push(value);
           }
         } finally {
@@ -123,7 +134,7 @@ export function csvSerde(): Serde {
           joined.set(chunk, at);
           at += chunk.length;
         }
-        return decode(new TextDecoder().decode(joined), schema, typeName);
+        return decode(new TextDecoder().decode(joined), target);
       },
     },
   };

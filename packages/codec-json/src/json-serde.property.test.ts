@@ -17,7 +17,7 @@ test('serialize → deserialize is the identity for any JSON value except null',
         const serde = jsonSerde();
         const decoded = serde.deserializer.deserialize(
           serde.serializer.serialize(value),
-          identity(),
+          {schema: identity()},
         );
         return JSON.stringify(decoded) === JSON.stringify(value);
       },

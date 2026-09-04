@@ -12,6 +12,7 @@ import {test} from 'node:test';
 
 import {
   noteViolations,
+  orphanedNoteKeys,
   sourceRoots,
   strayTopicFiles,
   structuralViolations,
@@ -178,7 +179,7 @@ test('a source root that contains another root is refused, not widened', () => {
       sourceRoots(
         [
           '| `docs/product-spec/04-core.md` | spec | `aaa` | 2026-07-25 |',
-          '| `docs/open-items.md` | design | `bbb` | 2026-07-25 |',
+          '| `docs/README.md` | design | `bbb` | 2026-07-25 |',
         ].join('\n'),
       ),
     /which contains/,
@@ -204,4 +205,62 @@ test('a note that is not review-role is a violation, not a warning', () => {
   assert.equal(rest.length, 0);
   assert.match(violation, /notes\/topic\.md:4/);
   assert.match(violation, /`design`, not `review`/);
+});
+
+test('a note citing a key no harvested entry carries is a violation (O2)', () => {
+  const entries = [
+    {origin: 'harvested', key: 'pipeline/e66ace13', text: 'the rule'},
+    {
+      origin: 'note',
+      topic: 'pipeline',
+      line: 8,
+      key: 'pipeline/dd68351a',
+      text: 'Resolves `pipeline/deadbeef`, which no longer exists.',
+    },
+  ];
+  const found = orphanedNoteKeys(entries);
+  assert.equal(found.length, 1);
+  assert.match(found[0], /pipeline\/deadbeef/);
+});
+
+test('a note citing a live key is not a violation', () => {
+  const entries = [
+    {origin: 'harvested', key: 'pipeline/e66ace13', text: 'the rule'},
+    {
+      origin: 'note',
+      topic: 'pipeline',
+      line: 8,
+      key: 'pipeline/dd68351a',
+      text: 'Resolves `pipeline/e66ace13`.',
+    },
+  ];
+  assert.deepEqual(orphanedNoteKeys(entries), []);
+});
+
+test('a note citing no key at all is not a violation', () => {
+  const entries = [
+    {
+      origin: 'note',
+      topic: 'x',
+      line: 1,
+      key: 'x/00000000',
+      text: 'no keys here',
+    },
+  ];
+  assert.deepEqual(orphanedNoteKeys(entries), []);
+});
+
+test("a note's own key does not count as a citation of itself", () => {
+  // The note's key is derived from its text, not written into it, so a note whose body happens to
+  // contain no backticked key cites nothing — including itself.
+  const entries = [
+    {
+      origin: 'note',
+      topic: 'x',
+      line: 1,
+      key: 'x/abcdef01',
+      text: 'plain prose',
+    },
+  ];
+  assert.deepEqual(orphanedNoteKeys(entries), []);
 });

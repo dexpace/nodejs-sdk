@@ -75,7 +75,7 @@ describe('Retry-After as an HTTP-date (RETRY-15)', () => {
     // `Date.UTC`, whose legacy mapping would turn 0026 into 1926), which makes this a well-formed
     // HTTP-date already in the past -- and RETRY-17 governs that case: a valid past instant MUST
     // yield a zero delay, distinct from RETRY-16's unparseable-value-yields-no-hint. Recorded at
-    // docs/open-items.md K20.
+    // docs/work/mvp/2026-09-04-open-items-dissolution.md K20.
     expect(
       parsePacingHint(
         headersOf({'Retry-After': 'Thu, 01 Jan 0026 00:00:00 GMT'}),

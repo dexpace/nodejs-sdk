@@ -7,7 +7,7 @@
 // null into a non-null target, on every entry point, before the schema), SERDE-20 (a top-level unencodable
 // value throws rather than sharing the Tristate degradation's old fallback), SERDE-25 (fresh instance per
 // call), SEAM-20 (all four allocation profiles).
-import {expect, test} from 'bun:test';
+import {describe, expect, test} from 'bun:test';
 import {
   DeserializationError,
   SerializationError,
@@ -291,7 +291,10 @@ const streamOf = (text: string): ReadableStream<Uint8Array> =>
 
 test('decode runs the schema over the parsed value (SERDE-5)', () => {
   expect(
-    jsonSerde().deserializer.deserialize(bytes('{"id":3}'), dtoSchema, 'Dto'),
+    jsonSerde().deserializer.deserialize(bytes('{"id":3}'), {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    }),
   ).toEqual({id: 3});
 });
 
@@ -302,10 +305,9 @@ test('a parametric target is just a combinator schema — no carrier type exists
   };
 
   expect(
-    jsonSerde().deserializer.deserialize(
-      bytes('[{"id":1},{"id":2}]'),
-      arraySchema,
-    ),
+    jsonSerde().deserializer.deserialize(bytes('[{"id":1},{"id":2}]'), {
+      schema: arraySchema,
+    }),
   ).toEqual([{id: 1}, {id: 2}]);
 });
 
@@ -313,7 +315,10 @@ test('malformed JSON throws DeserializationError with the library error chained 
   let caught: unknown;
 
   try {
-    jsonSerde().deserializer.deserialize(bytes('{not json'), dtoSchema, 'Dto');
+    jsonSerde().deserializer.deserialize(bytes('{not json'), {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    });
   } catch (e: unknown) {
     caught = e;
   }
@@ -326,7 +331,10 @@ test('a schema rejection throws DeserializationError naming the target (SERDE-9)
   let caught: unknown;
 
   try {
-    jsonSerde().deserializer.deserialize(bytes('{"id":"x"}'), dtoSchema, 'Dto');
+    jsonSerde().deserializer.deserialize(bytes('{"id":"x"}'), {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    });
   } catch (e: unknown) {
     caught = e;
   }
@@ -367,14 +375,23 @@ test('a wire null into a non-null target fails naming the target, on every entry
   const second = permissiveSchema();
 
   expect(() =>
-    deserializer.deserialize(bytes('null'), first.schema, 'Dto'),
+    deserializer.deserialize(bytes('null'), {
+      schema: first.schema,
+      typeName: 'Dto',
+    }),
   ).toThrow(DeserializationError);
   expect(() =>
-    deserializer.deserialize(bytes('null'), first.schema, 'Dto'),
+    deserializer.deserialize(bytes('null'), {
+      schema: first.schema,
+      typeName: 'Dto',
+    }),
   ).toThrow(WIRE_NULL_MESSAGE);
 
   const caught = await rejection(
-    deserializer.deserializeFrom(streamOf('null'), second.schema, 'Dto'),
+    deserializer.deserializeFrom(streamOf('null'), {
+      schema: second.schema,
+      typeName: 'Dto',
+    }),
   );
   expect(caught).toBeInstanceOf(DeserializationError);
   expect(caught).toHaveProperty(
@@ -390,11 +407,10 @@ test('the wire-null rejection is raised before the schema runs, so a permissive 
   const permissive = permissiveSchema();
 
   expect(() =>
-    jsonSerde().deserializer.deserialize(
-      bytes('null'),
-      permissive.schema,
-      'Loose',
-    ),
+    jsonSerde().deserializer.deserialize(bytes('null'), {
+      schema: permissive.schema,
+      typeName: 'Loose',
+    }),
   ).toThrow(DeserializationError);
   expect(permissive.ran()).toBe(false);
 });
@@ -403,7 +419,9 @@ test('the null rejection falls back to a documented label when no typeName is gi
   const permissive = permissiveSchema();
 
   expect(() =>
-    jsonSerde().deserializer.deserialize(bytes('null'), permissive.schema),
+    jsonSerde().deserializer.deserialize(bytes('null'), {
+      schema: permissive.schema,
+    }),
   ).toThrow(
     /wire null cannot be decoded into the non-null target the target type/,
   );
@@ -424,7 +442,10 @@ test('deserializeFrom reads to EOF across multiple chunks and never cancels the 
   });
 
   expect(
-    await jsonSerde().deserializer.deserializeFrom(source, dtoSchema, 'Dto'),
+    await jsonSerde().deserializer.deserializeFrom(source, {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    }),
   ).toEqual({id: 42});
   expect(cancelled).toBe(false);
 });
@@ -432,7 +453,10 @@ test('deserializeFrom reads to EOF across multiple chunks and never cancels the 
 test('deserializeFrom releases the reader lock on the success path', async () => {
   const source = streamOf('{"id":1}');
 
-  await jsonSerde().deserializer.deserializeFrom(source, dtoSchema, 'Dto');
+  await jsonSerde().deserializer.deserializeFrom(source, {
+    schema: dtoSchema,
+    typeName: 'Dto',
+  });
 
   expect(source.locked).toBe(false);
 });
@@ -449,7 +473,10 @@ test('a genuine stream failure propagates unwrapped, and the lock is still relea
   });
 
   const caught = await rejection(
-    jsonSerde().deserializer.deserializeFrom(source, dtoSchema, 'Dto'),
+    jsonSerde().deserializer.deserializeFrom(source, {
+      schema: dtoSchema,
+      typeName: 'Dto',
+    }),
   );
 
   expect(caught).toBe(failure);
@@ -465,7 +492,10 @@ test('an empty body is a malformed payload, not a silent undefined (SERDE-9)', a
 
   expect(
     await rejection(
-      jsonSerde().deserializer.deserializeFrom(empty, dtoSchema, 'Dto'),
+      jsonSerde().deserializer.deserializeFrom(empty, {
+        schema: dtoSchema,
+        typeName: 'Dto',
+      }),
     ),
   ).toBeInstanceOf(DeserializationError);
 });
@@ -486,7 +516,9 @@ test('a UTF-8 payload split mid-multi-byte-character across chunks decodes corre
   };
 
   expect(
-    await jsonSerde().deserializer.deserializeFrom(source, looseSchema),
+    await jsonSerde().deserializer.deserializeFrom(source, {
+      schema: looseSchema,
+    }),
   ).toEqual({id: 1, n: 'ü'});
 });
 
@@ -523,4 +555,121 @@ test('the fit check measures the view, not the buffer behind it (SERDE-4)', () =
     RangeError,
   );
   expect(backing.every(b => b === 0xaa)).toBe(true);
+});
+
+describe('DecodeTarget object form, admitsNull, and {signal} (H9/H10/H15 batch, 2026-09-04)', () => {
+  const serde = jsonSerde();
+  const passthrough: Schema<unknown> = {parse: (i: unknown) => i};
+
+  test('deserialize takes a DecodeTarget, not positional schema/typeName', () => {
+    const bytes = new TextEncoder().encode('{"a":1}');
+    expect(
+      serde.deserializer.deserialize(bytes, {schema: passthrough}),
+    ).toEqual({a: 1});
+  });
+
+  test('the typeName still reaches the error message through the target', () => {
+    const bytes = new TextEncoder().encode('null');
+    expect(() =>
+      serde.deserializer.deserialize(bytes, {
+        schema: passthrough,
+        typeName: 'Pet',
+      }),
+    ).toThrow(/non-null target Pet/);
+  });
+
+  test('admitsNull lets a top-level wire null through to the schema (SERDE-13 opt-in)', () => {
+    const bytes = new TextEncoder().encode('null');
+    expect(
+      serde.deserializer.deserialize(bytes, {
+        schema: passthrough,
+        admitsNull: true,
+      }),
+    ).toBeNull();
+  });
+
+  test('admitsNull is off by default, so the unconditional rejection is unchanged', () => {
+    const bytes = new TextEncoder().encode('null');
+    expect(() =>
+      serde.deserializer.deserialize(bytes, {schema: passthrough}),
+    ).toThrow(DeserializationError);
+  });
+});
+
+describe('{signal} on the two stream-driving SPI methods (H15)', () => {
+  const serde = jsonSerde();
+  const passthrough: Schema<unknown> = {parse: (i: unknown) => i};
+
+  test('deserializeFrom honors an already-aborted signal before reading', async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"a":1}'));
+        controller.close();
+      },
+    });
+    expect(
+      await rejection(
+        serde.deserializer.deserializeFrom(
+          source,
+          {schema: passthrough},
+          {signal: AbortSignal.abort()},
+        ),
+      ),
+    ).toBeInstanceOf(Error);
+  });
+
+  test('deserializeFrom leaves the source uncancelled when the signal aborts (SERDE-3)', async () => {
+    let cancelled = false;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"a":1}'));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await serde.deserializer
+      .deserializeFrom(
+        source,
+        {schema: passthrough},
+        {signal: AbortSignal.abort()},
+      )
+      .catch(() => undefined);
+    expect(cancelled).toBe(false);
+  });
+
+  test('serializeTo honors an already-aborted signal and leaves the sink unclosed', async () => {
+    let closed = false;
+    const sink = new WritableStream<Uint8Array>({
+      close() {
+        closed = true;
+      },
+    });
+    expect(
+      await rejection(
+        serde.serializer.serializeTo({a: 1}, sink, {
+          signal: AbortSignal.abort(),
+        }),
+      ),
+    ).toBeInstanceOf(Error);
+    expect(closed).toBe(false);
+  });
+});
+
+describe('the options argument stays optional on both stream methods', () => {
+  const serde = jsonSerde();
+  const passthrough: Schema<unknown> = {parse: (i: unknown) => i};
+
+  test('an absent options argument keeps both stream methods working', async () => {
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"a":1}'));
+        controller.close();
+      },
+    });
+    expect(
+      await serde.deserializer.deserializeFrom(source, {schema: passthrough}),
+    ).toEqual({a: 1});
+  });
 });

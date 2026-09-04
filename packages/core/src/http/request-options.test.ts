@@ -41,6 +41,39 @@ describe('per-call auth descriptor (AUTH-4)', () => {
   });
 });
 
+describe('operation auth descriptor (AUTH-4, docs/work/mvp/2026-09-04-open-items-dissolution.md W1)', () => {
+  test('EMPTY carries no operation descriptor', () => {
+    expect(RequestOptions.EMPTY.operationAuth).toBeUndefined();
+  });
+
+  test('the builder round-trips the descriptor by reference', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('BASIC')]);
+    expect(
+      RequestOptions.newBuilder().operationAuth(descriptor).build()
+        .operationAuth,
+    ).toBe(descriptor);
+  });
+
+  test('a derived builder carries the descriptor forward (HTTP-3)', () => {
+    const descriptor = createAuthDescriptor([createAuthRequirement('BASIC')]);
+    const original = RequestOptions.newBuilder()
+      .operationAuth(descriptor)
+      .build();
+    expect(original.newBuilder().build().operationAuth).toBe(descriptor);
+  });
+
+  test('the two slots are independent — filling one leaves the other unset', () => {
+    const perCall = createAuthDescriptor([createAuthRequirement('BASIC')]);
+    const operation = createAuthDescriptor([createAuthRequirement('API_KEY')]);
+    const options = RequestOptions.newBuilder()
+      .auth(perCall)
+      .operationAuth(operation)
+      .build();
+    expect(options.auth).toBe(perCall);
+    expect(options.operationAuth).toBe(operation);
+  });
+});
+
 describe('timeout validation (HTTP-35)', () => {
   test('rejects zero or negative timeout', () => {
     expect(() => RequestOptions.newBuilder().timeoutMs(0)).toThrow(

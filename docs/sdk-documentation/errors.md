@@ -149,7 +149,7 @@ untouched. The full error body is irrecoverable after the call; that is the docu
 ## Errors raised by the pipeline and the redirect pillar
 
 Eight classes that a `@throws` tag named but no package exported were promoted to the barrel on
-2026-09-02, so `instanceof` now works for all of them (`docs/open-items.md` U9):
+2026-09-02, so `instanceof` now works for all of them (`docs/work/mvp/2026-09-04-open-items-dissolution.md` U9):
 
 | Error | Raised by |
 |---|---|
@@ -192,7 +192,7 @@ Worth stating, because each looks like it should:
   (`REDIR-17`, `decide.ts:205`). `maxHops: 0` is how "do not follow redirects" is spelled, and it is
   the same code path.
 - **A retry budget running out.** The last response is returned live and unread; ownership transfers
-  to you (`docs/open-items.md` P7).
+  to you (`docs/work/mvp/2026-09-04-open-items-dissolution.md` P7).
 - **An unrecognized status code.** `Status.of(599)` is a valid `Status`; see [`http.md`](./http.md).
 - **A malformed ETag.** `ETag.parse` returns `undefined`. `EtagParseError` is for the construction
   paths that cannot degrade.

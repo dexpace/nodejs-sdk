@@ -77,7 +77,7 @@ starts from a fresh `PipelineBuilder`, so no slot can be occupied and no runtime
 `standardResilience()` also installs the redirect pillar through `withRedirect()`, which seats a
 second, `POST_AUTH` step alongside it — the guard that strips the SDK's internal cross-origin marker
 header before dispatch (`REDIR-11(c)`). **Both are public as of 2026-09-02**
-(`docs/open-items.md` U7): call `withRedirect(builder)` to get the pillar and its guard together, or
+(`docs/work/mvp/2026-09-04-open-items-dissolution.md` U7): call `withRedirect(builder)` to get the pillar and its guard together, or
 `stripCrossOriginMarkerStep()` to install the guard yourself. A pipeline that installs bare
 `redirectStep()` and neither of them forwards the marker to the wire.
 
@@ -160,14 +160,14 @@ Retry and redirect are worth two notes each, because both surprise people:
   ceiling that `RETRY-18` mandates — so a server that sends `X-RateLimit-Reset` in milliseconds
   instead of epoch seconds parks the retry for a year, which is indistinguishable from a hang. Set
   `totalTimeoutMs` if that matters to you; it is opt-in and `undefined` by default
-  (`docs/open-items.md` P4).
+  (`docs/work/mvp/2026-09-04-open-items-dissolution.md` P4).
 - **Retry hands back a live response.** Any response the engine *discards* is closed. The response
   that ends the loop — attempt cap reached, budget spent, status not retryable — is returned live and
-  unread. Ownership transfers to you (`docs/open-items.md` P7).
+  unread. Ownership transfers to you (`docs/work/mvp/2026-09-04-open-items-dissolution.md` P7).
 - **Redirects are never followed by the transport.** Both shipped transports pin redirects off, so
   the pipeline is the single redirect authority (`TRANSPORT-1`/`TRANSPORT-2`).
 - **A non-replayable body ends a redirect.** `PIPE-40` and `REDIR-22` disagree about what should
-  happen; this port closes the response and throws (`docs/open-items.md` G1).
+  happen; this port closes the response and throws (`docs/work/mvp/2026-09-04-open-items-dissolution.md` G1).
 
 ## Testing a pipeline
 

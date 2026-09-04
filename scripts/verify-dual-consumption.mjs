@@ -49,8 +49,7 @@ assert.equal(encoded, '{"set":"v"}');
 
 const decoded = serde.deserializer.deserialize(
   serde.serializer.serialize({id: 7}),
-  {parse: input => input},
-  'Probe',
+  {schema: {parse: input => input}, typeName: 'Probe'},
 );
 assert.deepEqual(decoded, {id: 7});
 

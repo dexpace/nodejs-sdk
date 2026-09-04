@@ -4,7 +4,7 @@
 
 Publish ten symbols that the emitted `.d.ts` already told consumers about but no package exported.
 
-**The redirect guard** (`docs/open-items.md` U7). `withRedirect(builder, overrides?)` and
+**The redirect guard** (`docs/work/mvp/2026-09-04-open-items-dissolution.md` U7). `withRedirect(builder, overrides?)` and
 `stripCrossOriginMarkerStep()` are now public. `redirectStep()` marks a cross-origin hop with an
 internal header and relies on a second `POST_AUTH` step to strip it before dispatch (`REDIR-11(c)`);
 that step was `@internal`, so `withRedirect`'s own instruction — "a caller who installs
@@ -12,7 +12,7 @@ that step was `@internal`, so `withRedirect`'s own instruction — "a caller who
 consumer could discharge. `standardResilience()` and `PipelineBuilder.seedFrom()` were the only safe
 routes to a redirect pipeline; `withRedirect(builder)` is now the direct one.
 
-**Eight catchable error classes** (`docs/open-items.md` U9): `PillarCollisionError`,
+**Eight catchable error classes** (`docs/work/mvp/2026-09-04-open-items-dissolution.md` U9): `PillarCollisionError`,
 `ReservedStageError`, `AnchorNotFoundError`, `CrossStageEditError`, `CursorAlreadyAdvancedError`,
 `EndOfStreamError`, `SchemeDowngradeError` and `NonReplayableBodyError`. Each is the subject of a
 `@throws` tag on a public symbol, and each shipped into the `.d.ts` — so a consumer read the tag,
@@ -23,7 +23,7 @@ extends `Error` rather than `DexpaceError`. Its `@throws` tags on public symbols
 "an assertion failure (a caller bug, not a catchable condition)" — instead of naming a class nobody
 can catch. `DuplicateContextKeyError` likewise stays behind the `@internal` `ContextStore`.
 
-**Two new error classes, both from `XCUT-8`** (`docs/open-items.md` N2/V14):
+**Two new error classes, both from `XCUT-8`** (`docs/work/mvp/2026-09-04-open-items-dissolution.md` N2/V14):
 
 - `HttpStatusValidationError` — `HttpStatusError`'s constructor now validates that `status` is an
   integer in HTTP-11's 400–599 band and throws this otherwise. The class documented that invariant

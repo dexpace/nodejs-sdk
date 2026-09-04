@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/media-type.ts
 import {MediaTypeParseError} from './errors.js';
-import {hasForbiddenOutboundByte} from './ascii-validation.js';
+import {hasForbiddenOutboundValueByte} from './ascii-validation.js';
 
 const TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -32,7 +32,7 @@ function splitRespectingQuotes(input: string, separator: string): string[] {
 }
 
 function validateNoForbiddenBytes(value: string): void {
-  if (hasForbiddenOutboundByte(value)) {
+  if (hasForbiddenOutboundValueByte(value)) {
     throw new MediaTypeParseError(
       `media type contains a forbidden character (${String(value.length)} chars)`,
     );

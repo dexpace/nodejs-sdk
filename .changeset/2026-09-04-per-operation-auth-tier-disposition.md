@@ -27,4 +27,4 @@ time.
 The reasoning now lives in the code a consumer reads in the published `.d.ts` and needs no pointer,
 so the row for it was closed. The register that held it, `docs/deferred-items.md`, was dissolved the
 same day; the live gap this leaves — a published tier core gives consumers no way to fill — is
-tracked as `docs/open-items.md` W1.
+tracked as `docs/work/mvp/2026-09-04-open-items-dissolution.md` W1.

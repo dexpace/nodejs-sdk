@@ -11,7 +11,7 @@ with its two views, the `Page<T>` resource, the `PageInfo<T>` / `pageInfo()` pai
 The engine drives a `Transport` directly and stays serde-agnostic: item extraction is a caller-supplied
 callback on every built-in strategy, never a `Serde`. Resilience composes from outside — 4c's `Runtime` is
 itself a `Transport`, so a full retry/redirect/auth pipeline drops in as the `transport` field with no
-pagination-side change, recorded at `docs/open-items.md` §J5. The query splice and the `Link`
+pagination-side change, recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` §J5. The query splice and the `Link`
 tokenizer stay internal; publishing them would stand a second URL-manipulation surface next to Phase 1's
 `QueryParams`, which is the confusion the one-encoder rule exists to avoid.
 
@@ -33,7 +33,7 @@ Five design calls worth recording:
   closes after the yield, which holds the response open for the entire item walk and still passes the
   requirement's stated conformance test. Materialized items survive close (`PAGE-2`), so closing first
   costs nothing and means abandoning iteration mid-page can never strand a connection, however long the
-  consumer takes. An erratum callout was added to §7.1; recorded at `docs/open-items.md` §J1.
+  consumer takes. An erratum callout was added to §7.1; recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` §J1.
 - **`PaginationStrategy.parse` is asynchronous, against `PAGE-5`'s literal wording.** The requirement says
   a strategy reads what it needs "synchronously inside parse"; this runtime has no synchronous body read,
   because the bytes may not have arrived. Every enforceable part of the intent — isolated, non-mutating,

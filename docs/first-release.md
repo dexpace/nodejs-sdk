@@ -3,17 +3,21 @@
 Nothing in this repository has been published. All nine publishable packages sit at `version: "0.0.0"`,
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) is authored and **inert**, and `NFR-16`
 — publish provenance — is the one requirement that cannot be closed without a real registry. This note is
-the release-readiness record: what is already wired, what the release mechanics are confirmed to be, and the
-blockers that must clear before a first publish can succeed. It is edited as those blockers clear.
+the release-readiness record: what is already wired, what the release mechanics are confirmed to be, the
+blockers that must clear before a first publish can succeed, and the changes whose deadline is the first
+version bump rather than the publish itself. It is edited as those blockers clear and those decisions are
+taken.
 
 **Where it came from.** This was the `NFR-16` row of `docs/deferred-items.md` until 2026-09-04, the day that
-register was dissolved. Four of its ten rows were decided that day (`open-items.md` Section W); the five that
+register was dissolved. Four of its ten rows were decided that day (the dissolved register's Section W); the five that
 survived beside this one are unscheduled deferrals with a trigger and nothing to act on, and they were
 archived into
 [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md).
-This material earned a file of its own instead, at the `docs/` root beside [`open-items.md`](./open-items.md)
+This material earned a file of its own instead, at the `docs/` root beside [the dissolved open-items register](./work/mvp/2026-09-04-open-items-dissolution.md)
 and [`deviations.md`](./deviations.md), because it is a live document rather than a dated record — the
-blockers below are things someone will do, and this is where they get struck out.
+blockers below are things someone will do, and this is where they get struck out. It took on a second kind
+of content the same day: two the dissolved register's rows whose only stated trigger was this release moved here, for
+the same reason, and are the last section below.
 
 **Where the requirement is ledgered.** `NFR-16` is a **SHOULD**: published artifacts are cryptographically
 signed for provenance, with signing enforced on the release/CI path and gracefully optional in local builds.
@@ -21,7 +25,7 @@ Item 14 of
 [`sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md`](./sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md)
 is where its intended verification is recorded — run `prepublishOnly` and a real `npm publish --provenance`
 — and where it was split from `NFR-12`, which the two-clean-builds gate closed on evidence on 2026-08-29.
-`open-items.md` Section D carries the same row under its `d-nfr-16-provenance` anchor, and the workflow's own
+the dissolved register's Section D carries the same row under its `d-nfr-16-provenance` anchor, and the workflow's own
 header comment points here.
 
 ## What is wired
@@ -97,3 +101,87 @@ are written down rather than tested for.
    CI/release build fails an unsigned publication, while a local build without keys still publishes unsigned
    — so it needs a real registry and a real OIDC token. Nothing short of a first real publish verifies it,
    which is why a SHOULD-level requirement is open with the workflow already written.
+
+## Decisions owed before the first version bump
+
+The blockers above are what stops a publish from *succeeding*. These two are a different thing and must not
+be confused with them: neither breaks a publish, and a release that ignores both works. They are changes
+that are free today and expensive after the version bump, so the first `changeset version` run is their
+deadline rather than their obstacle.
+
+**Why they live here.** Both were `UNSCHEDULED` items in [the dissolved open-items register](./work/mvp/2026-09-04-open-items-dissolution.md) — `H10` and
+`H15`, Section H, Phase 6a — and both stated the same single trigger: *the pre-publish breaking-change batch,
+before the first non-`0.0.0` release*. That batch is a release decision, so it belongs in the
+release-readiness record rather than in a register of discoveries made after the work. Their IDs stay
+reserved: the `### H10` and `### H15` headings remain in the dissolved register's as `MOVED` stubs pointing here, so
+every citation of them still resolves — `packages/core/src/seams/serde.ts:99,170` cite `H15` from TSDoc
+`@remarks`, and the Phase 6a checklist cites both.
+
+**Why the batch has a deadline at all.** Every publishable package is at `version: "0.0.0"`, and semver's
+initial-development carve-out — which Phase 3b's validation review already invoked once, for a narrowing of
+its own — stops applying at 1.0. "Release mechanics" above is the mechanism: the first `changeset version`
+run sets the initial published version for all nine packages at once, so that run is the last moment either
+change below is free. After it, each is a major-version break taken against consumers who are already there.
+
+### `H10` — one concept, two spellings across the seam and the handler layer
+
+`Deserializer.deserialize(data, schema, typeName?)` takes the schema and its diagnostic label positionally;
+`decodeResponse`/`decodeSuccessResponse` bundle the identical pair as `DecodeTarget<T>`. Both ship public, in
+the same api-extractor report.
+
+Each layer's choice is locally right. The positional form is three parameters, inside `max-params`, and
+`Deserializer` is an SPI a third-party codec *implements*, where a positional shape is the smaller burden on
+the implementer. The object form exists because positionally the handlers would be four parameters, which is
+a lint error. The pair is nonetheless globally inconsistent: a codec author implements one spelling while a
+caller uses the other. `docs/knowledge/harvested/api-design.md:14` ("optional parameters collected into a
+single options object rather than a positional list past two parameters") points at the object form for both.
+
+**The direction is already decided; only the timing is open.** Recorded on 2026-09-02 so a later reader does
+not re-derive it:
+
+> **Unify on the `DecodeTarget<T>` object form.** `docs/knowledge/harvested/api-design.md:14` points there,
+> the handler layer already uses it, and a codec author implementing one spelling while a caller uses the
+> other is the cost being paid every day it stays split.
+
+It was not taken in the Phase 6a review pass because it is a breaking change to a published SPI, and a
+review pass is not the place to take one alone.
+
+### `H15` — no `AbortSignal` on two stream-driving SPI methods
+
+The project-wide position was decided 2026-09-02 and is stated once:
+
+> **A signal is required where the API drives a stream it did not open. Buffered-bytes APIs take none.**
+
+Under that rule `toHttpError` and `Response.bytes()` take buffered bytes and correctly take no signal, and
+SSE and pagination are long-lived I/O consumers and correctly do. Two sites fall on the other side of the
+line and therefore owe one:
+
+- `Deserializer.deserializeFrom(source: ReadableStream<Uint8Array>, …)` — `packages/core/src/seams/serde.ts:162`
+- `Serializer.serializeTo(value, sink: WritableStream<Uint8Array>)` — `:96`
+
+Both already carry a TSDoc `@remarks` citing the item, so the obligation is visible where the method is read
+rather than only in a register. The corpus rules that apply are
+`docs/knowledge/harvested/concurrency-and-async.md:18` ("every long-running async API must accept an options
+object with `{ signal }`"), `:20` (accepting must be paired with honoring), and `:44` (a signal must reach
+the actual I/O primitive).
+
+**The mitigation is verified rather than assumed, and it bounds the cost of declining.** Abort **is** honored
+transitively today: a transport that errors the body stream on abort makes `reader.read()` reject, the read
+loop exits promptly, and `deserializeFrom` surfaces the `DOMException` cleanly. What is *not* interruptible
+is the CPU-bound `JSON.parse` / `schema.parse` span after the drain completes, which no signal could cancel
+without a streaming parser — and `JSON.parse` has no incremental form to build one on. So what is missing is
+the parameter, not the behaviour; and adding a parameter to a published SPI is exactly the break that has a
+deadline.
+
+### The decision
+
+Run the batch before the first `changeset version`, or decline it and carry both as permanent post-1.0
+major-version debt. There is no third option that keeps either change free.
+
+The two are **one break, not two.** They touch the same file — `packages/core/src/seams/serde.ts` — and
+`H15`'s own text says so: *"H10's batch: same file, same break."* Taking either one means the other costs
+nothing extra.
+
+Whatever is taken needs a changeset (`bun run changeset`, not `bunx changeset`) and a regenerated
+[`packages/core/etc/core.api.md`](../packages/core/etc/core.api.md) — both changes are to `@dexpace/core`'s
+public seam, which the committed API report records and `bun run api` blocks on.

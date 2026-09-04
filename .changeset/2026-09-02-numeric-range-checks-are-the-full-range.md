@@ -3,7 +3,7 @@
 ---
 
 Close the public numeric range checks that guarded only their lower bound, completing the sweep
-`docs/open-items.md` P2 asked for.
+`docs/work/mvp/2026-09-04-open-items-dissolution.md` P2 asked for.
 
 - `RequestOptionsBuilder.timeoutMs` now rejects `Infinity` and `NaN`. It previously rejected only
   `<= 0`, so a non-finite deadline degraded silently to "no deadline" instead of failing at the call

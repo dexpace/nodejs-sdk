@@ -46,7 +46,7 @@ export class EndOfStreamError extends DexpaceError {
  * A foreign source violated the read protocol — most commonly by returning zero bytes for a positive
  * requested count, which IO-17 requires be raised rather than tolerated as end-of-stream or spun on.
  *
- * @internal
+ * @public
  */
 export class SourceContractViolationError extends DexpaceError {
   // See IoError's constructor above: keeps this bodiless subclass registered for bun's
@@ -62,9 +62,10 @@ export class SourceContractViolationError extends DexpaceError {
  * it (IO-22). Distinct from `EndOfStreamError` by requirement — IO-24 demands a closed view fail loudly
  * with a state error rather than looking like a normal exhaustion.
  *
- * @internal
+ * @public
  */
 export class ClosedResourceError extends DexpaceError {
+  /** The resource that was already closed, as it appears in the message. */
   readonly resource: string;
 
   constructor(resource: string, options?: ErrorOptions) {
@@ -77,10 +78,12 @@ export class ClosedResourceError extends DexpaceError {
  * A materialization would exceed the maximum single-array allocation (IO-9). The message points at the
  * streaming alternative, as IO-9 requires.
  *
- * @internal
+ * @public
  */
 export class AllocationLimitError extends DexpaceError {
+  /** The byte count the materialization asked for. */
   readonly requested: number;
+  /** The maximum single-array allocation this runtime permits (IO-9). */
   readonly limit: number;
 
   constructor(requested: number, limit: number, options?: ErrorOptions) {
@@ -100,7 +103,7 @@ export class AllocationLimitError extends DexpaceError {
  * identically-shaped tier for longer; `isDomainModelError` is this guard's counterpart there, added
  * when that one was flattened.
  *
- * @internal
+ * @public
  */
 export function isIoError(
   error: unknown,

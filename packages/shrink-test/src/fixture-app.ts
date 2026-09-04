@@ -133,7 +133,9 @@ export async function runFixtureApp(): Promise<FixtureResult> {
 
   const serde = jsonSerde();
   const bytes = serde.serializer.serialize({shrinkTest: true});
-  const decoded = serde.deserializer.deserialize(bytes, shrinkProbeSchema);
+  const decoded = serde.deserializer.deserialize(bytes, {
+    schema: shrinkProbeSchema,
+  });
 
   return {
     caughtViaCoreImport,

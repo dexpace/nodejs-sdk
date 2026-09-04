@@ -6,7 +6,7 @@ import type {Request} from '../http/request.js';
  * One link of the request-preparation chain. Async like every other step type in this layer — Node
  * has a single execution model, so the phase does not mix sync and async step shapes.
  *
- * @internal
+ * @public
  */
 export type RequestStep = (request: Request) => Promise<Request>;
 
@@ -20,7 +20,7 @@ export type RequestStep = (request: Request) => Promise<Request>;
  * but its step array, and every piece of per-call state lives in `apply()`'s locals. A later phase
  * must not move per-call bookkeeping onto a field here.
  *
- * @internal
+ * @public
  */
 export class RequestRecoveryChain {
   readonly #steps: readonly RequestStep[];

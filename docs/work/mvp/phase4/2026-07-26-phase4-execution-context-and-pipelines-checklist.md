@@ -223,7 +223,7 @@ type-level test for the exported generic `Outcome<T>`, an untranscribed `RECOV-1
 step-down-rule violations. Pass 2 (normative-text-driven) found a **`RECOV-8` violation**: `apply()` could
 throw a `TypeError` when a step returned a non-outcome, against "MUST NOT throw under any input" — closed by
 making `toFailureClosingSuccess` total; plus an unguarded `String()` in `assertNever`'s default message. Pass 3
-re-ran every CI step and swept the structure. What survives is in `docs/open-items.md` under Phase 4b.
+re-ran every CI step and swept the structure. What survives is in `docs/work/mvp/2026-09-04-open-items-dissolution.md` under Phase 4b.
 
 ---
 

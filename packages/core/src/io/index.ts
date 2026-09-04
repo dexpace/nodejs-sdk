@@ -13,7 +13,7 @@
 // load-bearing on it, and Phase 9's U9 pass promoted `EndOfStreamError` — it was the subject of four
 // `@throws` tags on public symbols with no class a caller could catch. `isIoError`,
 // `AllocationLimitError`, `ClosedResourceError` and `SourceContractViolationError` remain internal
-// (docs/open-items.md H8).
+// (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
 export {BufferedSink} from './buffered-sink.js';
 export {BufferedSource} from './buffered-source.js';
 export {ByteQueue, copyBytes} from './byte-queue.js';

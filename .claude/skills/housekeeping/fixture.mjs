@@ -111,18 +111,20 @@ export function makeFixture({overrides = {}, untracked = {}} = {}) {
   write(
     root,
     'CLAUDE.md',
-    `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\ndocs/README.md, docs/open-items.md, docs/work, docs/sdk-documentation, docs/superpowers.\n`,
+    `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\ndocs/README.md, docs/work, docs/sdk-documentation, docs/superpowers.\n`,
   );
   write(root, 'README.md', `# fixture\n\n${CLEAN_CLAIMS}\n`);
   write(
     root,
     'docs/README.md',
-    '# docs\n\nEntries: README.md, open-items.md, work, sdk-documentation, superpowers.\n',
+    '# docs\n\nEntries: README.md, work, sdk-documentation, superpowers.\n',
   );
+  // The register was dissolved on 2026-09-04 and archived here; item IDs stay reserved and still
+  // resolve, so this is where the citation check reads them from.
   write(
     root,
-    'docs/open-items.md',
-    '# Open Items\n\n### A1 — a real item — **WATCH**\n\nBody.\n',
+    'docs/work/mvp/2026-09-04-open-items-dissolution.md',
+    '# Open items — dissolved\n\n### A1 — a real item — **WATCH**\n\nBody.\n',
   );
   write(root, 'docs/superpowers/README.md', '# inbox\n');
   write(root, 'docs/work/mvp/phase1/2026-01-01-phase1-thing.md', '# phase 1\n');

@@ -173,14 +173,14 @@ Both are now gates, not claims:
   composability the package does not offer, since `basicHandler`/`digestHandler` stay internal, so supplying
   one handler silently LOST the credential-derived ones. `handlers` was removed and the three types went back
   to internal. `challengeHook` covers the custom-scheme case with a shape a caller can actually satisfy.
-  `DigestChallengeUnsupportedError` was cut for the same reason (`docs/open-items.md` G11).
+  `DigestChallengeUnsupportedError` was cut for the same reason (`docs/work/mvp/2026-09-04-open-items-dissolution.md` G11).
 - **Not in the plan's list, promoted as a forced consequence:** `Step`, and the whole context family
   (`ExecutionContext`, `DispatchContext`, `RequestContext`, `ExchangeContext`, `InstrumentationBundle`).
   `StepDescriptor.fn` names `Step`, and `StepContext.context` names `ExecutionContext`, which is a union
   alias — api-extractor refuses to analyze it while its members are unexported. Promoting `StepContext`
   without them would leave a caller unable to type a custom step's `ctx`. Narrowing `StepContext.context`
   instead was considered and rejected — `CTX-1` exists so a step can read the exchange's request and response.
-  Recorded as an ACCEPTED RISK in `docs/open-items.md` G10, with `InstrumentationBundle`'s two provisional
+  Recorded as an ACCEPTED RISK in `docs/work/mvp/2026-09-04-open-items-dissolution.md` G10, with `InstrumentationBundle`'s two provisional
   `unknown` members documented as provisional in the emitted `.d.ts` itself.
 - **Still internal:** everything else under `src/auth/` — `parseChallenges`, `md5.ts`, `basicHandler`,
   `digestHandler`, `NonceCountStore`, `computeDigestResponse`, `composingHandler`, `BearerTokenCache`,
@@ -226,5 +226,5 @@ Both are now gates, not claims:
 | Re-verification of the "Basic/Digest never preemptively stamp" reading against reference fixtures | Phase 5c | Phase 9 (conformance sweep) | Flagged as an interpretation in the Deviation Ledger, not a certainty |
 | RFC 7616 §4 `username*` (RFC 5987) extended notation for a non-ASCII Digest username | Phase 5c | Unscoped | `digestHandler()` rejects a non-header-safe username at construction today. Implementing `username*` would let it be sent correctly rather than refused, and is the standard's own answer |
 | A per-**operation** `AuthTiers` source | Phase 5c | Unscoped | `perCall` (via `RequestOptions.auth`) and `client` both have real sources as of Task 14; nothing in this roadmap ships a per-operation layer |
-| ~~`DigestChallengeUnsupportedError` consumer confirmation~~ | Phase 5c | **CLOSED in 5c** | Cut before shipping rather than deferred: nothing constructed or caught it, and its stated purpose — a caller driving `digestHandler()` directly — was unreachable, since `digestHandler` is internal. Removing an exported error class is breaking, so cutting it now cost nothing. `docs/open-items.md` G11 |
+| ~~`DigestChallengeUnsupportedError` consumer confirmation~~ | Phase 5c | **CLOSED in 5c** | Cut before shipping rather than deferred: nothing constructed or caught it, and its stated purpose — a caller driving `digestHandler()` directly — was unreachable, since `digestHandler` is internal. Removing an exported error class is breaking, so cutting it now cost nothing. `docs/work/mvp/2026-09-04-open-items-dissolution.md` G11 |
 | A caller-supplied `ChallengeHandler` list on `AuthStepSettings` | Phase 5c | Unscoped | `handlers` was removed at review: it forced three types onto the public barrel and could not compose with the built-in handlers, which stay internal. If a caller ever needs to ADD a handler rather than replace the whole reaction, the shape to ship is an append-semantics field plus public `basicHandler`/`digestHandler` factories — not the replace-semantics field that was cut |

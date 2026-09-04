@@ -70,7 +70,7 @@ test('claims: a count stated as a WORD and wrong is caught', () => {
   const found = onFixture(
     {
       overrides: {
-        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\nSeven packages, actually.\n\ndocs/README.md docs/open-items.md docs/work docs/sdk-documentation docs/superpowers\n`,
+        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\nSeven packages, actually.\n\ndocs/README.md docs/work docs/sdk-documentation docs/superpowers\n`,
       },
     },
     ['claims'],
@@ -106,7 +106,7 @@ test('claims: a DELETED count claim is caught — presence is asserted', () => {
   const found = onFixture(
     {
       overrides: {
-        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS.replace('Three named steps across two jobs.', 'Some steps across two jobs.')}\n\ndocs/README.md docs/open-items.md docs/work docs/sdk-documentation docs/superpowers\n`,
+        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS.replace('Three named steps across two jobs.', 'Some steps across two jobs.')}\n\ndocs/README.md docs/work docs/sdk-documentation docs/superpowers\n`,
       },
     },
     ['claims'],
@@ -124,7 +124,7 @@ test('claims: a quoted historical count is reported speech, not a claim', () => 
   const found = onFixture(
     {
       overrides: {
-        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\nIt used to say "two published packages" and that was wrong.\n\ndocs/README.md docs/open-items.md docs/work docs/sdk-documentation docs/superpowers\n`,
+        'CLAUDE.md': `# CLAUDE.md\n\n${CLEAN_CLAIMS}\n\nIt used to say "two published packages" and that was wrong.\n\ndocs/README.md docs/work docs/sdk-documentation docs/superpowers\n`,
       },
     },
     ['claims'],
@@ -235,7 +235,7 @@ test('claims: docs/README.md omitting an entry is caught', () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/README.md': '# docs\n\nEntries: README.md, open-items.md.\n',
+        'docs/README.md': '# docs\n\nEntries: README.md.\n',
       },
     },
     ['claims'],
@@ -396,16 +396,14 @@ test('links: a broken link at the TOP of docs/ is caught', () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md':
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md':
           '# Open Items\n\n### A1 — x — **WATCH**\n\n[gone](./nowhere.md)\n',
       },
     },
     ['links'],
   );
   assert.ok(
-    found.some(f =>
-      /^docs\/open-items\.md links \.\/nowhere\.md/.test(f.message),
-    ),
+    found.some(f => /links \.\/nowhere\.md/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -502,9 +500,7 @@ test('citations: a dangling register citation is caught', () => {
     ['citations'],
   );
   assert.ok(
-    found.some(f =>
-      /cites docs\/open-items\.md Z9, which has no/.test(f.message),
-    ),
+    found.some(f => /cites open-items\.md Z9, which has no/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -538,7 +534,8 @@ test("citations: a qualified citation resolves against that section's table rows
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': QUALIFIED_REGISTER,
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md':
+          QUALIFIED_REGISTER,
         'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('S', 'F8')}\n`,
       },
     },
@@ -551,7 +548,8 @@ test('citations: a qualifier naming the wrong section is caught', () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': QUALIFIED_REGISTER,
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md':
+          QUALIFIED_REGISTER,
         // F8 is Section S's row, not Section T's. Both sections exist and both carry an `F`
         // namespace, which is exactly the confusion the qualifier is for.
         'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('T', 'F8')}\n`,
@@ -561,7 +559,7 @@ test('citations: a qualifier naming the wrong section is caught', () => {
   );
   assert.ok(
     found.some(f =>
-      /cites docs\/open-items\.md T\.F8, which Section T carries as neither a table row nor a purged row/.test(
+      /cites open-items\.md T\.F8, which Section T carries as neither a table row nor a purged row/.test(
         f.message,
       ),
     ),
@@ -573,7 +571,8 @@ test('citations: a qualified ID is NOT satisfied by a `### <ID>` heading elsewhe
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': QUALIFIED_REGISTER,
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md':
+          QUALIFIED_REGISTER,
         // A1 has a heading, but Section S does not carry it as a row, so `S.A1` must not resolve.
         'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('S', 'A1')}\n`,
       },
@@ -581,7 +580,7 @@ test('citations: a qualified ID is NOT satisfied by a `### <ID>` heading elsewhe
     ['citations'],
   );
   assert.ok(
-    found.some(f => /cites docs\/open-items\.md S\.A1/.test(f.message)),
+    found.some(f => /cites open-items\.md S\.A1/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -590,7 +589,8 @@ test('citations: a bare ID still resolves against `### <ID>` headings only', () 
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': QUALIFIED_REGISTER,
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md':
+          QUALIFIED_REGISTER,
         // F8 exists as a Section S ROW. Unqualified, it must not resolve -- the bare namespace is
         // the `###` headings, and this is what makes the qualifier load bearing rather than optional.
         'docs/sdk-documentation/architecture.md': `# a\n\n${cite('F8')}\n`,
@@ -599,9 +599,7 @@ test('citations: a bare ID still resolves against `### <ID>` headings only', () 
     ['citations'],
   );
   assert.ok(
-    found.some(f =>
-      /cites docs\/open-items\.md F8, which has no/.test(f.message),
-    ),
+    found.some(f => /cites open-items\.md F8, which has no/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -687,7 +685,7 @@ test('citations: an ID in neither the headings nor the note still dangles', () =
   assert.ok(
     found.some(f =>
       new RegExp(
-        String.raw`cites docs/open-items\.md K11, which has no \`### <ID>\` heading and no ` +
+        String.raw`cites open-items\.md K11, which has no \`### <ID>\` heading and no ` +
           String.raw`\`## Purged item IDs\` row in ${PURGE_NOTE}`,
       ).test(f.message),
     ),
@@ -726,9 +724,7 @@ test('citations: a row under `## Purged rows without an item ID` is not an ID', 
     ['citations'],
   );
   assert.ok(
-    found.some(f =>
-      /cites docs\/open-items\.md L1, which has no/.test(f.message),
-    ),
+    found.some(f => /cites open-items\.md L1, which has no/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -746,9 +742,7 @@ test('citations: only the `## Purged item IDs` section is a namespace', () => {
     ['citations'],
   );
   assert.ok(
-    found.some(f =>
-      /cites docs\/open-items\.md Y7, which has no/.test(f.message),
-    ),
+    found.some(f => /cites open-items\.md Y7, which has no/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });
@@ -769,7 +763,7 @@ test('citations: the note being absent degrades rather than throws', () => {
   // this file is a citation the live tree resolves, and asserting on one would couple this suite to
   // whatever the real note happens to hold.
   assert.deepEqual(messages(found), [
-    `docs/sdk-documentation/architecture.md:4 cites docs/${REGISTER} K10, which has no ` +
+    `docs/sdk-documentation/architecture.md:4 cites ${REGISTER} K10, which has no ` +
       `\`### <ID>\` heading and no \`## Purged item IDs\` row in ${PURGE_NOTE}. ` +
       'Item IDs are permanent; a dangling one means the citation, not the register, is wrong.',
   ]);
@@ -779,7 +773,7 @@ test('citations: a note with no `## Purged item IDs` heading degrades too', () =
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': PURGED_REGISTER,
+        'docs/work/mvp/2026-09-04-open-items-dissolution.md': PURGED_REGISTER,
         [PURGE_NOTE]: '# a note that lost its table\n\nProse only.\n',
         'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K10')}\n`,
       },
@@ -787,9 +781,7 @@ test('citations: a note with no `## Purged item IDs` heading degrades too', () =
     ['citations'],
   );
   assert.ok(
-    found.some(f =>
-      /cites docs\/open-items\.md K10, which has no/.test(f.message),
-    ),
+    found.some(f => /cites open-items\.md K10, which has no/.test(f.message)),
     JSON.stringify(messages(found)),
   );
 });

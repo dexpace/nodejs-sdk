@@ -122,7 +122,7 @@ than the preset growing a "skip occupied slots" branch.
 **Install redirects with `withRedirect(builder)`, not with bare `redirectStep()`.** The redirect
 pillar marks a cross-origin hop with an internal header, and a second `POST_AUTH` step strips it
 before dispatch; `withRedirect` seats both, and `stripCrossOriginMarkerStep()` is that guard on its
-own. Both became public on 2026-09-02 (`docs/open-items.md` U7) — before that only
+own. Both became public on 2026-09-02 (`docs/work/mvp/2026-09-04-open-items-dissolution.md` U7) — before that only
 `standardResilience()` and `seedFrom` could produce a safe redirect pipeline. A hand-built pipeline
 that installs `redirectStep()` and neither guard forwards the marker to the wire.
 

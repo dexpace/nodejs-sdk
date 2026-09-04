@@ -3,8 +3,8 @@
 import {
   DeserializationError,
   SerializationError,
+  type DecodeTarget,
   type Deserializer,
-  type Schema,
   type Serde,
   type Serializer,
 } from '@dexpace/core';
@@ -123,10 +123,14 @@ function makeSerializer(wiring: TristateWiring): Serializer {
     async serializeTo(
       value: unknown,
       sink: WritableStream<Uint8Array>,
+      options?: {readonly signal?: AbortSignal | undefined},
     ): Promise<void> {
       // Encoded before the lock is taken: a failed encode then leaves the caller's sink untouched
       // and still usable, rather than locked-and-released around a write that never happened.
       const bytes = encodeToBytes(value, wiring);
+      // Checked after the encode and before the lock, so an aborted call leaves the sink neither
+      // locked nor closed (SERDE-3). One write follows, so there is no loop to check inside.
+      options?.signal?.throwIfAborted();
       const writer = sink.getWriter();
       try {
         await writer.write(bytes);
@@ -140,11 +144,8 @@ function makeSerializer(wiring: TristateWiring): Serializer {
 
 const UNNAMED_TARGET = 'the target type';
 
-function decodeText<T>(
-  text: string,
-  schema: Schema<T>,
-  typeName: string | undefined,
-): T {
+function decodeText<T>(text: string, decodeTarget: DecodeTarget<T>): T {
+  const {schema, typeName, admitsNull} = decodeTarget;
   const target = typeName ?? UNNAMED_TARGET;
 
   let parsed: unknown;
@@ -164,7 +165,9 @@ function decodeText<T>(
   // behaviour uniform across every entry point and every schema library a caller might supply.
   // This is also the single funnel that makes SERDE-13's "across every decode overload" true for
   // this codec — `deserialize` and `deserializeFrom` both route through it.
-  if (parsed === null) {
+  // `admitsNull` is the caller stating what the schema value cannot: that `T` includes `null`. Off
+  // by default, so the rejection stays unconditional for every target that does not opt in.
+  if (parsed === null && admitsNull !== true) {
     throw new DeserializationError(
       `wire null cannot be decoded into the non-null target ${target}`,
     );
@@ -182,14 +185,14 @@ function decodeText<T>(
 
 function makeDeserializer(): Deserializer {
   return Object.freeze({
-    deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T {
-      return decodeText(new TextDecoder().decode(data), schema, typeName);
+    deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T {
+      return decodeText(new TextDecoder().decode(data), target);
     },
 
     async deserializeFrom<T>(
       source: ReadableStream<Uint8Array>,
-      schema: Schema<T>,
-      typeName?: string,
+      target: DecodeTarget<T>,
+      options?: {readonly signal?: AbortSignal | undefined},
     ): Promise<T> {
       // `text` accumulates the WHOLE body before parsing, and is deliberately uncapped.
       //
@@ -205,6 +208,10 @@ function makeDeserializer(): Deserializer {
       //
       // A streaming TextDecoder keeps multi-byte characters intact across chunk boundaries; decoding
       // each chunk independently would corrupt any character split across two reads.
+      // Checked before the lock so an aborted call leaves the source neither locked nor cancelled
+      // (SERDE-3), and again after every read so a long drain stops promptly.
+      const signal = options?.signal;
+      signal?.throwIfAborted();
       const decoder = new TextDecoder('utf-8');
       const reader = source.getReader();
       let text = '';
@@ -213,6 +220,7 @@ function makeDeserializer(): Deserializer {
           // Serial by necessity: each read depends on the previous one advancing the cursor.
           const {done, value} = await reader.read();
           if (done) break;
+          signal?.throwIfAborted();
           text += decoder.decode(value, {stream: true});
         }
         text += decoder.decode();
@@ -221,7 +229,7 @@ function makeDeserializer(): Deserializer {
         // surfaces from `read()` and propagates unwrapped (SERDE-12) — it is not caught here.
         reader.releaseLock();
       }
-      return decodeText(text, schema, typeName);
+      return decodeText(text, target);
     },
   });
 }

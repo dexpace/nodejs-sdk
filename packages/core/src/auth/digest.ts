@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/digest.ts
-import {hasForbiddenOutboundByte} from '../http/ascii-validation.js';
+import {hasForbiddenOutboundValueByte} from '../http/ascii-validation.js';
 import {invariant} from '../invariant.js';
 import type {
   Challenge,
@@ -226,9 +226,9 @@ function isHeaderSafeEcho(info: {
   readonly opaque: string | undefined;
 }): boolean {
   return (
-    !hasForbiddenOutboundByte(info.realm) &&
-    !hasForbiddenOutboundByte(info.nonce) &&
-    (info.opaque === undefined || !hasForbiddenOutboundByte(info.opaque))
+    !hasForbiddenOutboundValueByte(info.realm) &&
+    !hasForbiddenOutboundValueByte(info.nonce) &&
+    (info.opaque === undefined || !hasForbiddenOutboundValueByte(info.opaque))
   );
 }
 
@@ -423,7 +423,7 @@ export function digestHandler(
   // and loudly at construction rather than being declined silently per-request the way an
   // unechoable server realm is. RFC 7616 §4's `username*` encoding would lift this and is deferred.
   invariant(
-    !hasForbiddenOutboundByte(username),
+    !hasForbiddenOutboundValueByte(username),
     'Digest username must be header-safe (printable ASCII); RFC 7616 username* encoding is not yet supported',
   );
   const preference =

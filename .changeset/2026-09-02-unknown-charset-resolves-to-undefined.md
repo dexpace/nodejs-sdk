@@ -17,4 +17,4 @@ The raw parameter is unchanged and still reachable: `parameter('charset')` retur
 `render()` still round-trips it verbatim (`HTTP-25`). Behaviour downstream is unchanged too —
 `resolveCharset` already fell back to UTF-8 for a label `TextDecoder` rejected.
 
-Recorded at `docs/open-items.md` A1.
+Recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` A1.

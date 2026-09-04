@@ -11,4 +11,4 @@ identically, so the message named the *kind* of key and never *which* key — th
 `.key` field carried the identity, but the message did not. The identity is still the `Symbol()`
 itself; only the label changed, so `CTX-4`/`CTX-5`/`CTX-6`'s uniqueness is untouched.
 
-Recorded at `docs/open-items.md` A5.
+Recorded at `docs/work/mvp/2026-09-04-open-items-dissolution.md` A5.

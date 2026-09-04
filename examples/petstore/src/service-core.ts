@@ -107,29 +107,33 @@ export interface ServiceCoreInit {
 }
 
 /**
- * Fold the operation tier into `RequestOptions`.
+ * Carry the two auth tiers into `RequestOptions`, each in its own slot.
  *
- * `call.auth ?? operation?.auth` is AUTH-4's precedence, minus its last step — the `client` tier is
- * the one core still resolves itself, from the `authStep` settings fixed at pipeline construction.
+ * This used to read `const auth = call.auth ?? operation?.auth`, which reimplemented the top
+ * two-thirds of AUTH-4's precedence chain in consumer code and left core unable to tell a genuine
+ * per-call override from an operation's declared requirement. `RequestOptions.operationAuth` landed
+ * 2026-09-04 (`docs/work/mvp/2026-09-04-open-items-dissolution.md` W1) and the fold is gone: core resolves
+ * `perCall ?? operation ?? client` itself, all three tiers distinguishable.
  *
- * Returning `undefined` when there is nothing to say matters: an empty `RequestOptions` would still
- * occupy the `perCall` slot as "no descriptor", and the point of the chain is that an ABSENT tier
- * falls through while a PRESENT one does not.
+ * Returning `undefined` when there is nothing to say still matters: an empty `RequestOptions` would
+ * still occupy the `perCall` slot as "no descriptor", and the point of the chain is that an ABSENT
+ * tier falls through while a PRESENT one does not.
  */
 function requestOptions(
   operation: Operation | undefined,
   call: CallOptions,
 ): RequestOptions | undefined {
-  const auth = call.auth ?? operation?.auth;
   if (
-    auth === undefined &&
+    call.auth === undefined &&
+    operation?.auth === undefined &&
     call.timeoutMs === undefined &&
     call.maxRetries === undefined
   ) {
     return undefined;
   }
   return RequestOptions.newBuilder()
-    .auth(auth)
+    .auth(call.auth)
+    .operationAuth(operation?.auth)
     .timeoutMs(call.timeoutMs)
     .maxRetries(call.maxRetries)
     .build();

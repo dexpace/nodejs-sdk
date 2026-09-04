@@ -133,6 +133,22 @@ const STEPS = [
     fix: 'the assertion names the string that drifted — change all five together, never one alone',
   },
   {
+    // Resolves `@dexpace/core` and `@dexpace/codec-json` by name, so it needs the built dist/.
+    id: 'test:examples',
+    ci: 'Example canaries',
+    cmd: 'bun run test:examples',
+    tier: 'gate',
+  },
+  {
+    // Tier `static` — see `test:scripts` above: it reads source text and resolves no workspace
+    // package, so a swept dist/ cannot make it red.
+    id: 'verify:import-cycles',
+    ci: 'Import-cycle check',
+    cmd: 'bun run verify:import-cycles',
+    tier: 'static',
+    fix: 'the failure names every file on the cycle — break it by moving the shared declaration into a module both sides import, not by making one edge type-only',
+  },
+  {
     // Last among the gates, matching ci.yml: it sweeps every dist/ and rebuilds twice, so running it
     // earlier would pull the tree out from under any step that resolves a workspace package by name.
     id: 'verify:reproducible-build',

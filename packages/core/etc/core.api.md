@@ -14,6 +14,13 @@ export function activateSpan(span: Span): Scope;
 export function activateSpanForCorrelation(span: Span): Scope;
 
 // @public
+export class AllocationLimitError extends DexpaceError {
+    constructor(requested: number, limit: number, options?: ErrorOptions);
+    readonly limit: number;
+    readonly requested: number;
+}
+
+// @public
 export class AnchorNotFoundError extends DexpaceError {
     constructor(anchorType: symbol, operation: string, options?: ErrorOptions);
     readonly anchorType: symbol;
@@ -184,10 +191,26 @@ export type ChallengeHook = (response: Response_2, request: Request_2, options?:
 }) => Promise<Request_2 | undefined>;
 
 // @public
+export interface ClientIdentitySettings {
+    readonly headerName?: string | undefined;
+    readonly mode?: 'append' | 'replace' | undefined;
+    readonly tokens?: readonly string[] | undefined;
+}
+
+// @public
+export function clientIdentityStep(settings?: ClientIdentitySettings): StepDescriptor;
+
+// @public
 export interface Clock {
     monotonic(): number;
     now(): number;
     sleep(durationMs: number, signal?: AbortSignal): Promise<void>;
+}
+
+// @public
+export class ClosedResourceError extends DexpaceError {
+    constructor(resource: string, options?: ErrorOptions);
+    readonly resource: string;
 }
 
 // @public
@@ -279,6 +302,7 @@ export function decodeSuccessResponse<T>(response: Response_2, deserializer: Des
 
 // @public
 export interface DecodeTarget<T> {
+    readonly admitsNull?: boolean | undefined;
     readonly schema: Schema<T>;
     readonly typeName?: string | undefined;
 }
@@ -306,8 +330,10 @@ export interface DeserializationErrorOptions extends SerdeErrorOptions {
 
 // @public
 export interface Deserializer {
-    deserialize<T>(data: Uint8Array, schema: Schema<T>, typeName?: string): T;
-    deserializeFrom<T>(source: ReadableStream<Uint8Array>, schema: Schema<T>, typeName?: string): Promise<T>;
+    deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T;
+    deserializeFrom<T>(source: ReadableStream<Uint8Array>, target: DecodeTarget<T>, options?: {
+        readonly signal?: AbortSignal | undefined;
+    }): Promise<T>;
 }
 
 // @public
@@ -326,11 +352,23 @@ export interface DigestCredential {
 }
 
 // @public
+export interface DispatchConfig {
+    readonly options?: RequestOptions | undefined;
+    readonly requestChain: RequestRecoveryChain;
+    readonly responseChain: ResponseRecoveryChain;
+    readonly signal?: AbortSignal | undefined;
+    readonly transport: Transport;
+}
+
+// @public
 export interface DispatchContext {
     readonly instrumentation: InstrumentationBundle;
     readonly key: symbol;
     readonly kind: 'dispatch';
 }
+
+// @public
+export function dispatchWithRecovery(request: Request_2, config: DispatchConfig): Promise<Response_2>;
 
 // @public
 export type DroppedHeaderPolicy = 'mark' | 'omit';
@@ -371,6 +409,9 @@ export interface ExchangeContext {
 export type ExecutionContext = DispatchContext | RequestContext | ExchangeContext;
 
 // @public
+export function failure<T>(error: unknown): Outcome<T>;
+
+// @public
 export interface FetcherPage<T> {
     readonly continuationToken?: string | undefined;
     readonly nextLink?: string | undefined;
@@ -395,6 +436,9 @@ export interface FileBodyDescriptor extends Body_2 {
     // (undocumented)
     readonly start: number;
 }
+
+// @public
+export function fold<T, R>(outcome: Outcome<T>, onSuccess: (value: T) => R, onFailure: (error: unknown) => R): R;
 
 // @public
 export function foldTristate<T, R>(tristate: Tristate<T>, branches: TristateBranches<T, R>): R;
@@ -517,6 +561,17 @@ export class HttpStatusValidationError extends DexpaceError {
 }
 
 // @public
+export interface IdempotencyKeyOptions {
+    readonly generate: () => string;
+    readonly headerName?: string | undefined;
+    readonly methods?: ReadonlySet<Method> | undefined;
+    readonly respectExisting?: boolean | undefined;
+}
+
+// @public
+export function idempotencyKeyStep(options: IdempotencyKeyOptions): RequestStep;
+
+// @public
 export interface InstrumentationBundle {
     readonly activeSpan: unknown;
     readonly isRemote: boolean;
@@ -545,6 +600,9 @@ export function isBodyError(error: unknown): error is ConsumedBodyError | Multip
 
 // @public
 export function isDomainModelError(error: unknown): error is RequiredFieldError | HeaderValidationError | MediaTypeParseError | ProtocolParseError | UrlConstructionError | RequestOptionsValidationError | EtagParseError | HttpRangeValidationError | RequestConditionsValidationError | RequestBodyNotAllowedError;
+
+// @public
+export function isIoError(error: unknown): error is IoError | EndOfStreamError_2 | SourceContractViolationError | ClosedResourceError | AllocationLimitError;
 
 // @public
 export function isNull<T>(tristate: Tristate<T>): tristate is {
@@ -765,6 +823,15 @@ export interface OperationDescriptor {
 }
 
 // @public
+export type Outcome<T> = {
+    readonly kind: 'success';
+    readonly value: T;
+} | {
+    readonly kind: 'failure';
+    readonly error: unknown;
+};
+
+// @public
 export class Page<T> {
     constructor(response: Response_2, items: readonly T[]);
     close(): Promise<void>;
@@ -936,6 +1003,9 @@ export function randomUuid(): string;
 export type RangeKind = 'bounded' | 'suffix' | 'open';
 
 // @public
+export type RecoveryStep = (outcome: Outcome<Response_2>) => Promise<Outcome<Response_2>>;
+
+// @public
 export interface RedirectCondition {
     readonly redirectsFollowed: number;
     readonly response: Response_2;
@@ -1020,6 +1090,7 @@ export class RequestOptions {
     get maxRetries(): number | undefined;
     static newBuilder(): RequestOptionsBuilder;
     newBuilder(): RequestOptionsBuilder;
+    get operationAuth(): AuthDescriptor | undefined;
     tag(key: string): string | undefined;
     get timeoutMs(): number | undefined;
 }
@@ -1029,6 +1100,7 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
     auth(descriptor: AuthDescriptor | undefined): this;
     build(): RequestOptions;
     maxRetries(value: number | undefined): this;
+    operationAuth(descriptor: AuthDescriptor | undefined): this;
     tags(entries: ReadonlyMap<string, string>): this;
     timeoutMs(value: number | undefined): this;
 }
@@ -1036,6 +1108,15 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
 // @public
 export class RequestOptionsValidationError extends DexpaceError {
 }
+
+// @public
+export class RequestRecoveryChain {
+    constructor(steps: readonly RequestStep[]);
+    apply(request: Request_2): Promise<Request_2>;
+}
+
+// @public
+export type RequestStep = (request: Request_2) => Promise<Request_2>;
 
 // @public
 export class RequiredFieldError extends DexpaceError {
@@ -1078,6 +1159,15 @@ export class ResponseBuilder implements Builder<Response_2> {
     request(request: Request_2): this;
     status(status: Status): this;
 }
+
+// @public
+export class ResponseRecoveryChain {
+    constructor(responseSteps: readonly ResponseStep[], recoverySteps: readonly RecoveryStep[]);
+    apply(outcome: Outcome<Response_2>): Promise<Outcome<Response_2>>;
+}
+
+// @public
+export type ResponseStep = (response: Response_2) => Promise<Response_2>;
 
 // @public
 export const RETRYABLE_STATUSES: ReadonlySet<number>;
@@ -1157,7 +1247,9 @@ export class SerializationError extends DexpaceError {
 export interface Serializer {
     serialize(value: unknown): Uint8Array;
     serializeInto(value: unknown, target: Uint8Array, offset?: number): number;
-    serializeTo(value: unknown, sink: WritableStream<Uint8Array>): Promise<void>;
+    serializeTo(value: unknown, sink: WritableStream<Uint8Array>, options?: {
+        readonly signal?: AbortSignal | undefined;
+    }): Promise<void>;
     serializeToString(value: unknown): string;
 }
 
@@ -1169,6 +1261,11 @@ export function setGlobalLogger(logger: Logger): void;
 
 // @public
 export function shouldBypassProxy(options: Pick<ProxyOptions, 'bypassAll' | 'nonProxyHosts'>, host: string): boolean;
+
+// @public
+export class SourceContractViolationError extends DexpaceError {
+    constructor(message: string, options?: ErrorOptions);
+}
 
 // @public
 export type SourceFn = (key: string) => string | undefined;
@@ -1300,6 +1397,9 @@ export class Status {
 }
 
 // @public
+export function statusMappingStep(response: Response_2): Promise<Response_2>;
+
+// @public
 export type Step = (request: Request_2, ctx: StepContext) => Promise<Response_2>;
 
 // @public
@@ -1347,6 +1447,15 @@ export function stringBody(text: string, mediaType?: string): StringBody;
 
 // @public
 export function stripCrossOriginMarkerStep(): StepDescriptor;
+
+// @public
+export function success<T>(value: T): Outcome<T>;
+
+// @public
+export interface SuppressedErrorLike extends Error {
+    readonly error: unknown;
+    readonly suppressed: unknown;
+}
 
 // @public
 export function toHttpError(response: Response_2): Promise<HttpStatusError | null>;
@@ -1420,5 +1529,8 @@ export function valueOrNull<T>(tristate: Tristate<T>): T | null;
 
 // @public
 export function withRedirect(builder: PipelineBuilder, overrides?: Partial<RedirectSettings>): PipelineBuilder;
+
+// @public
+export function wrapCancellation(error: unknown): Outcome<never>;
 
 ```

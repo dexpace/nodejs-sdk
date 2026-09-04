@@ -4,7 +4,7 @@ import type {Builder} from './builder.js';
 import {HeaderValidationError} from './errors.js';
 import {
   hasForbiddenNameByte,
-  hasForbiddenOutboundByte,
+  hasForbiddenOutboundValueByte,
   hasForbiddenInboundValueByte,
 } from './ascii-validation.js';
 
@@ -17,7 +17,7 @@ function validateName(name: string): string {
 }
 
 function validateOutboundValue(name: string, value: string): void {
-  if (hasForbiddenOutboundByte(value)) {
+  if (hasForbiddenOutboundValueByte(value)) {
     throw new HeaderValidationError('value', name, value);
   }
 }

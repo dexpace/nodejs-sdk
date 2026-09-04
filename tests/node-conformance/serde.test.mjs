@@ -89,11 +89,10 @@ describe("deserializeFrom against Node's ReadableStream (SERDE-3, SERDE-12)", ()
       },
     });
 
-    const value = await jsonSerde().deserializer.deserializeFrom(
-      source,
-      identity,
-      'Dto',
-    );
+    const value = await jsonSerde().deserializer.deserializeFrom(source, {
+      schema: identity,
+      typeName: 'Dto',
+    });
 
     assert.deepEqual(value, {id: 42});
     assert.equal(cancelled, false);
@@ -109,7 +108,10 @@ describe("deserializeFrom against Node's ReadableStream (SERDE-3, SERDE-12)", ()
     });
 
     await assert.rejects(
-      jsonSerde().deserializer.deserializeFrom(source, identity, 'Dto'),
+      jsonSerde().deserializer.deserializeFrom(source, {
+        schema: identity,
+        typeName: 'Dto',
+      }),
       caught => {
         assert.equal(
           caught,
@@ -128,7 +130,7 @@ describe("deserializeFrom against Node's ReadableStream (SERDE-3, SERDE-12)", ()
 
     const value = await jsonSerde().deserializer.deserializeFrom(
       streamOf(full.subarray(0, split + 1), full.subarray(split + 1)),
-      identity,
+      {schema: identity},
     );
 
     assert.deepEqual(value, {id: 1, n: 'ü'});

@@ -119,11 +119,10 @@ const PET_PAGE_SCHEMA: Schema<PetPage> = Object.freeze({
 export const PET_PAGE_STRATEGY: PaginationStrategy<Pet> = cursorStrategy<Pet>({
   parameterName: 'cursor',
   extract: async (response: Response) => {
-    const page = SERDE.deserializer.deserialize(
-      await response.bytes(),
-      PET_PAGE_SCHEMA,
-      'PetPage',
-    );
+    const page = SERDE.deserializer.deserialize(await response.bytes(), {
+      schema: PET_PAGE_SCHEMA,
+      typeName: 'PetPage',
+    });
     return {items: page.items, cursor: page.cursor};
   },
 });
@@ -145,10 +144,9 @@ export const PET_EVENT_MAPPER: SseMapper<PetEvent> = (
 ): MapperOutcome<PetEvent> => {
   if (joinedData === DONE_SENTINEL) return MAPPER_DONE;
   return mapperValue(
-    SERDE.deserializer.deserialize(
-      TEXT_ENCODER.encode(joinedData),
-      PET_EVENT_SCHEMA,
-      'PetEvent',
-    ),
+    SERDE.deserializer.deserialize(TEXT_ENCODER.encode(joinedData), {
+      schema: PET_EVENT_SCHEMA,
+      typeName: 'PetEvent',
+    }),
   );
 };
