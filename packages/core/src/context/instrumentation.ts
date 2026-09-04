@@ -36,13 +36,18 @@ export interface InstrumentationBundle {
    */
   readonly activeSpan: unknown;
   /**
-   * Starts a child span for `operationName`. A no-op returning `undefined` when tracing is disabled.
+   * Returns the tracer to open `operationName`'s span from — a **tracer**, not a started span. Every
+   * consumer in this package narrows the result and calls `startSpan()` on it itself
+   * (`packages/core/src/pipeline/runtime.ts:52-57`, `observability/logging-step.ts:263-269`), and
+   * `createInstrumentationBundle` supplies a `(operationName: string) => Tracer`
+   * (`observability/tracing.ts:212,223`). A no-op returning `undefined` when tracing is disabled;
+   * both consumers substitute `NOOP_TRACER` for that `undefined`.
    *
    * PROVISIONAL: the return type is `unknown` pending Phase 7a's tracing adapter — see this
    * interface's own note.
    *
-   * @param operationName - the operation to name the child span after.
-   * @returns the started span, or `undefined` when tracing is disabled.
+   * @param operationName - the operation whose span the returned tracer will be asked to start.
+   * @returns the tracer for that operation, or `undefined` when tracing is disabled.
    */
   readonly tracerFactory: (operationName: string) => unknown;
 }

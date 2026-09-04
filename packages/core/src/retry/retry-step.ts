@@ -65,12 +65,17 @@ function attemptVia(fork: () => Next): RetryDispatch {
  * RETRY-41/HTTP-35: the per-call `RequestOptions.maxRetries` override wins over the configured budget
  * when present. The option counts retries; `maxAttempts` counts total sends, hence the `+ 1`.
  *
- * The value IS revalidated here. `RequestOptionsBuilder.maxRetries` rejects only a negative value,
- * which is strictly weaker than the `Number.isFinite(...) && >= 1` guard `retrySettings()` applies
- * to the configured budget -- it admits `Infinity`, `NaN`, and fractions. Any of the first two
- * reaching `maxAttempts` makes the engine's `attempt >= maxAttempts` gate permanently false and the
- * retry loop unbounded, so the per-call route must not be the one path into the engine that skips
- * the check the configured route enforces.
+ * The value IS revalidated here, and the two guards now agree. `RequestOptionsBuilder.maxRetries`
+ * rejects a negative, fractional or non-finite value at the call site that supplied it
+ * (`../http/request-options.ts:212-219`, pinned by `request-options.test.ts`'s
+ * `maxRetries validation (HTTP-35)` block), so this `invariant` is the engine asserting its own
+ * precondition rather than the only thing enforcing it -- it should be unreachable, and tripping it
+ * means the builder's guard was weakened. That was not true when this comment was first written: the
+ * builder then rejected only a negative value, which was strictly weaker than the
+ * `Number.isFinite(...) && >= 1` guard `retrySettings()` applies to the configured budget. The
+ * assertion stays either way, because `Infinity` or `NaN` reaching `maxAttempts` makes the engine's
+ * `attempt >= maxAttempts` gate permanently false and the retry loop unbounded, and the per-call
+ * route must not be the one path into the engine that skips the check the configured route enforces.
  *
  * The derived object is frozen: a spread of a frozen source is NOT itself frozen, and RETRY-42
  * requires every policy component to be immutable after construction, not merely typed `readonly`.

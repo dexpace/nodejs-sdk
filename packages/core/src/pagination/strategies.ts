@@ -54,9 +54,13 @@ export function cursorStrategy<T>(init: {
  * An empty items list ends the stream **before** any arithmetic runs — defensive against servers that keep
  * returning an empty page past the end instead of signalling termination, which would otherwise walk forever.
  *
- * The current page comes from the *executed* request's query, not the template's, because the template never
- * changes across the walk. An absent, empty, or non-numeric value falls back to `startPage`; `startPage: 0`
- * supports 0-based servers.
+ * The current page comes from the *executed* request's query (`response.request.url`), not the template's.
+ * The template is not a fixed page-1 request -- it advances with the walk, since this function returns the
+ * next one as `nextRequest` and the engine makes that the following hop's template
+ * (`paginator.ts:165,213`; the contract is on `PaginationStrategy.parse` in `strategy.ts:10-15`). It is the
+ * *pre-flight* request for this hop, so it is the response's own request that reflects a redirect or any
+ * rewrite a step applied on the way out, and that is the page number worth incrementing. An absent, empty,
+ * or non-numeric value falls back to `startPage`; `startPage: 0` supports 0-based servers.
  *
  * @public
  */
