@@ -95,6 +95,16 @@ function route(
       res.writeHead(302, {location: `${crossOrigin}/echo`});
       res.end();
       return;
+    case '/redirect-secret-target': {
+      // A method-preserving 307 whose Location carries a credential-shaped query value, echoed back
+      // from the caller's own `?secret=` so the test owns the string it then greps the log for.
+      // XCUT-19's rejected-redirect row needs the secret in the redirect TARGET specifically: that is
+      // the URL `NonReplayableBodyError` names, and the seed URL alone never reaches that message.
+      const secret = url.searchParams.get('secret') ?? 'secret';
+      res.writeHead(307, {location: `/echo?access_token=${secret}`});
+      res.end();
+      return;
+    }
     case '/fail-500':
       res.writeHead(500, {'content-type': 'text/plain'});
       res.end('server error');

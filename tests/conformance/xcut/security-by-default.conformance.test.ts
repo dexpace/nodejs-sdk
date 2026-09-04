@@ -3,6 +3,8 @@
 // Exercises: XCUT-17 (redirect credential hygiene -- Authorization stripped before EVERY re-issue,
 // origin-scoped credentials additionally stripped cross-origin), XCUT-16 (no credential is ever
 // stamped over a non-HTTPS transport, and the refusal lands BEFORE any token fetch).
+// Exercises: XCUT-19 (default-deny log redaction, clause (a) userinfo and clause (b) query values) on
+// the rejected-redirect path, with OBS-11, OBS-12 and REDIR-28 as the requirements it lands under.
 //
 // These run over a real two-origin socket pair through the composed retry+redirect+auth+logging
 // pipeline. 5b's own tests decide the hop in isolation against constructed inputs; this is the first
@@ -23,10 +25,16 @@ import {
   createAuthDescriptor,
   createAuthRequirement,
   createBearerToken,
+  createLogger,
   Headers,
+  NonReplayableBodyError,
+  NOOP_LOGGER,
   PlaintextCredentialError,
   Request,
+  setGlobalLogger,
+  streamBody,
   type AuthStepSettings,
+  type Method,
 } from '@dexpace/core';
 import {buildComposedPipeline} from './fixtures/composed-pipeline.js';
 import {startFixtureServer, type XcutFixtureServer} from './fixtures/server.js';
@@ -103,6 +111,60 @@ describe('XCUT-17: origin-scoped credentials are additionally stripped cross-ori
     // Judged against the seed origin, not the previous hop -- the two servers are genuinely
     // different origins (different ports), not one origin under two names.
     expect(echoed.cookie).toBeNull();
+  });
+});
+
+describe('XCUT-19: a rejected redirect logs no raw URL (OBS-11, OBS-12, REDIR-28)', () => {
+  const SECRET = 'SUPERSECRETTOKEN';
+
+  test('redacts the redirect target inside the rejection cause', async () => {
+    // A one-shot body makes the 307 unfollowable, so `decide()` fails with the target interpolated
+    // into the error message -- the one field on this path that `redactUrl` did not already cover.
+    const seed = Request.newBuilder()
+      .method('POST')
+      .url(`${server.url}/redirect-secret-target?secret=${SECRET}`)
+      .body(
+        streamBody(
+          new ReadableStream<Uint8Array>({
+            start: c => {
+              c.close();
+            },
+          }),
+          undefined,
+          0,
+        ),
+      )
+      .build();
+    const pipeline = buildComposedPipeline({
+      redirect: {allowedMethods: new Set<Method>(['GET', 'HEAD', 'POST'])},
+    });
+    const records: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        records.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const rejected = await rejectionOf(pipeline.runtime.send(seed));
+
+      expect(rejected).toBeInstanceOf(NonReplayableBodyError);
+      const rejections = records.filter(
+        r => r.get('event') === 'http.redirect.rejected',
+      );
+      expect(rejections).toHaveLength(1);
+      expect(String(rejections[0]?.get('cause'))).toContain('access_token=***');
+      // Nothing the whole composed pipeline emitted -- not the redirect events, not the
+      // request/response pair around them -- carries the secret in clear text.
+      for (const record of records) {
+        for (const field of record.values()) {
+          expect(String(field)).not.toContain(SECRET);
+        }
+      }
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+      await pipeline.close();
+    }
   });
 });
 
