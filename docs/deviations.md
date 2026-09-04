@@ -96,8 +96,9 @@ Items **7**, **11**, and the `NFR-12` half of **14** are absent from this list o
 **Verified.** `Transport.send()` is `Promise`-only, one method satisfying `SEAM-11` and `SEAM-16` at once
 (`packages/core/src/seams/transport.ts:49`). `ContextStore` holds a plain `Map<symbol, ExecutionContext>`
 (`packages/core/src/context/store.ts:24`) with a fresh `Symbol()` per call
-(`packages/core/src/context/context.ts:104,125,149`). `Next` is `(request?) => Promise<Response>` with no sync
-twin (`packages/core/src/pipeline/step.ts:23`). `wrapCancellation` degenerates to `failure(error)` and says so
+(`packages/core/src/context/context.ts:112`, defaulted per flavor at `:128` and `:149`). `Next` is
+`(request?) => Promise<Response>` with no sync twin (`packages/core/src/pipeline/step.ts:23`).
+`wrapCancellation` degenerates to `failure(error)` and says so
 (`packages/core/src/recovery/cancellation.ts:31`). `ASYNC-18` holds: SSE parses `retryMs`
 (`packages/core/src/sse/parser.ts:131`) but never acts on it — reconnection is caller-owned, so no adapter
 schedules a delay outside the retry engine.
@@ -133,8 +134,8 @@ non-bridge clause survives and is enforced as an ordinary obligation on `send()`
 
 ## 3. Two retry stacks collapse into one, with the total-timeout budget explicitly opt-in
 
-**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:354`) — with exactly two thin
-callers: the pillar step (`packages/core/src/retry/retry-step.ts:137`) and the dispatch adapter
+**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:358`) — with exactly two thin
+callers: the pillar step (`packages/core/src/retry/retry-step.ts:142`) and the dispatch adapter
 (`packages/core/src/retry/retry-dispatch.ts:53`). `totalTimeoutMs` is `readonly totalTimeoutMs?: number |
 undefined` and undefined by default (`packages/core/src/retry/settings.ts:27`), pinned by a test named for
 `RETRY-28` (`packages/core/src/retry/settings.test.ts:20`).
@@ -160,9 +161,9 @@ language-level ceiling.
 
 > **Corrected in the ledger 2026-08-29 — the text was wrong, the deviation is not.** Item 4's stated mitigation — "exporting only
 > concrete classes, never bare structural interfaces, from each package's public entry point" — is false as
-> written. `packages/core/etc/core.api.md` exports **61 interfaces** against 58 classes, and at least one is
-> a builder-built, validated, frozen type: `Configuration` is `export interface Configuration`
-> (`packages/core/src/config/configuration.ts:72`) returned from `ConfigurationBuilder.build()`, and
+> written. `packages/core/etc/core.api.md` exports interfaces and classes in comparable numbers, and at least
+> one interface is a builder-built, validated, frozen type: `Configuration` is `export interface Configuration`
+> (`packages/core/src/config/configuration.ts:100`) returned from `ConfigurationBuilder.build()`, and
 > `setGlobalConfiguration()` / `resolveProxyOptions()` accept any hand-rolled object of that shape. Most
 > other exported interfaces are seams (`Transport`, `Serde`, `Logger`) or options records, where structural
 > typing is the point. The *deviation* is real and uncorrectable; the *mitigation sentence* overstated what
@@ -172,11 +173,16 @@ language-level ceiling.
 
 ## 5. Schema-as-witness replaces reflective generic-type capture
 
-**Verified.** `Serde` is not generic in `T` (`packages/core/src/seams/serde.ts:182`); the witness is a
-decode-time parameter, `deserialize<T>(data, schema: Schema<T>, typeName?)`
-(`packages/core/src/seams/serde.ts:145`). The codec-configuration knobs are absent and documented as
-absent — `packages/codec-json/src/json-serde.ts:236,242` explain that `SERDE-21`/`22` have no coercion
-setting because there is no coercing codec, and `SERDE-23`'s unknown-field policy belongs to the schema.
+**Verified.** `Serde` is not generic in `T` (`packages/core/src/seams/serde.ts:241`); the witness is a
+decode-time parameter, `deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T`
+(`packages/core/src/seams/serde.ts:194`, and `deserializeFrom<T>` at `:221` takes the same target),
+where `DecodeTarget<T>` bundles the `Schema<T>` witness with its optional diagnostic label
+(`:122-124`). The witness moved into that object on 2026-09-04 — the SPI took it positionally as
+`(data, schema, typeName?)` until then, which is the signature this row quoted; the deviation is
+unchanged by the reshaping, since a schema *value* is still what stands in for a reflected type token.
+The codec-configuration knobs are absent and documented as absent —
+`packages/codec-json/src/json-serde.ts:244,250` explain that `SERDE-23`'s unknown-field policy belongs
+to the schema and that `SERDE-21`/`22` have no coercion setting because there is no coercing codec.
 `packages/codec-json/src/conformance.test.ts:8` states outright that no code implements `SERDE-21` or
 `SERDE-22`.
 
@@ -253,8 +259,8 @@ configuration file would be empty by construction. The structurally equivalent J
 `Object.defineProperty` statement** — a top-level side effect — in four files across three packages that all
 declare `"sideEffects": false` (`packages/core/src/sse/stream.ts:209`,
 `packages/core/src/pagination/page.ts:114`, `packages/transport-fetch/src/fetch-transport.ts:314`,
-`packages/transport-undici/src/undici-transport.ts:566`; the manifest field at `packages/core/package.json:20`,
-`packages/transport-fetch/package.json:21`, `packages/transport-undici/package.json:21`). That field entitles a
+`packages/transport-undici/src/undici-transport.ts:566`; the manifest field at `packages/core/package.json:25`,
+`packages/transport-fetch/package.json:26`, `packages/transport-undici/package.json:26`). That field entitles a
 bundler to drop a module whose exports go unused, and nothing forbids a future one from also dropping a
 top-level statement it judges inert — which would silently un-install disposal in the shipped artifact while
 every type still checks, the same failure shape this guard already exists for. `fixture-app.ts`'s
@@ -274,10 +280,13 @@ bundle from 16,671 to 17,689 bytes against a 24 KiB budget (`packages/shrink-tes
 ## 12. The redirect/auth cross-origin marker is a real header, not a `WeakSet`
 
 **Verified.** `CROSS_ORIGIN_MARKER_HEADER` is set, cleared, and tested per hop
-(`packages/core/src/redirect/cross-origin.ts:80,93,104,118`). The auth step reads it before deciding whether
-to react to a challenge, not just whether to stamp (`packages/core/src/auth/auth-step.ts:387-390`). An
-independent `POST_AUTH` backstop strips it even in a pipeline with no auth step
-(`packages/core/src/redirect/strip-marker-step.ts`), satisfying `REDIR-11(c)`'s porter caveat.
+(`packages/core/src/redirect/cross-origin.ts:80,93,104,118`). The auth step reads it once on the outbound
+pass (`packages/core/src/auth/auth-step.ts:395`) and gates both branches on the answer — preemptive stamping
+at `:401`, and whether to react to a challenge at all at `:786`, not merely whether to stamp. The answer
+rides across the dispatch on `OutboundPlan.crossOrigin` (`:375`, and `:370-372` for why), because the marker
+itself is cleared from the request before it reaches the wire. An independent `POST_AUTH` backstop strips it
+even in a pipeline with no auth step (`packages/core/src/redirect/strip-marker-step.ts`), satisfying
+`REDIR-11(c)`'s porter caveat.
 
 **Why it cannot be corrected.** The reference's in-process marker was tried and withdrawn during Phase 5b's
 own drafting: retry's attempt-stamping sits between redirect and auth and produces a **fresh `Request`
@@ -379,7 +388,7 @@ produce that evidence; it unblocks at first release and not before.
 ## 15. A server-issued ETag containing obs-text does not round-trip
 
 **Verified.** `RequestConditions.applyTo` writes every entity tag through the outbound `Headers` builder's
-`set` (`packages/core/src/http/request-conditions.ts:129-142`), which enforces `HTTP-18`'s HTAB + printable
+`set` (`packages/core/src/http/request-conditions.ts:133-146`), which enforces `HTTP-18`'s HTAB + printable
 ASCII 0x20–0x7E rule (`packages/core/src/http/ascii-validation.ts:16`). The inbound path is separately laxer
 and permits obs-text, exactly as `HTTP-19` requires
 (`packages/core/src/http/ascii-validation.ts:41`, `packages/core/src/http/headers.ts:246,262`).
@@ -412,21 +421,34 @@ single-subscription behavior is forced by HTTP itself, since a consumed response
 
 **Verified.** `IoError extends DexpaceError` (`packages/core/src/io/errors.ts:13`); the four I/O leaves —
 `EndOfStreamError`, `SourceContractViolationError`, `ClosedResourceError`, `AllocationLimitError` — each
-extend `DexpaceError` **directly** (lines 29, 49, 65, 80) and are grouped by the `isIoError` predicate
-(line 102) rather than by a middle tier. `TransportFailureError extends IoError` (line 126) is the single
+extend `DexpaceError` **directly** (lines 29, 51, 67, 83) and are grouped by the `isIoError` predicate
+(line 108) rather than by a middle tier. `TransportFailureError extends IoError` (line 132) is the single
 three-level branch.
 
 **Why it cannot be corrected.** `TRANSPORT-20` requires `TransportFailureError` to *be* an `IoError` — the
 subtyping is the requirement, not an artifact of modelling. It is also load-bearing: `classify.ts`'s
-cause-walk returns retryable for any `IoError`, so the `extends` is what makes a no-response transport
-failure retryable with zero edits to the retry layer. A flat sibling would have to be enumerated by hand in
-the retry classifier, and again for every transport added later — trading one level of depth for an
-open-ended maintenance obligation that the styleguide's own rule exists to prevent. Held at exactly three;
-a fourth level is not sanctioned by this entry.
+cause-walk tests `current instanceof IoError` (`packages/core/src/retry/classify.ts:73`), so the `extends`
+is what makes a no-response transport failure retryable with zero edits to the retry layer. A flat sibling
+would have to be enumerated by hand in the retry classifier, and again for every transport added later —
+trading one level of depth for an open-ended maintenance obligation that the styleguide's own rule exists
+to prevent. Held at exactly three; a fourth level is not sanctioned by this entry.
+
+> **Anchor correction 2026-09-04 (audit #67 / #68); the rule itself is not decided here.** The line
+> numbers above were stale and are re-derived. The substantive point this paragraph used to make — "the
+> cause-walk returns retryable for any `IoError`" — reads as covering all five I/O classes, and it does
+> not: because the tree is flat, `instanceof IoError` at `classify.ts:73` matches `IoError` itself and
+> `TransportFailureError` only. `EndOfStreamError`, `SourceContractViolationError`,
+> `ClosedResourceError` and `AllocationLimitError` are **not** retryable through that branch. Whether
+> they should be — and therefore whether the classifier tests `instanceof IoError` or the `isIoError`
+> predicate — is decided by audit subtask #78, and this row's rationale is rewritten there. Nothing in
+> the deviation itself (the three-level branch, and why it stays) turns on that answer.
 
 ## Deviations recorded outside a phase
 
-Four rows as of 2026-09-02, all from the `docs/work/mvp/2026-09-04-open-items-dissolution.md` register audit (that file's Section V).
+Every row here was found by a pass over shipped code rather than produced by a phase. The
+`docs/work/mvp/2026-09-04-open-items-dissolution.md` register audit (that file's Section V) opened the
+section on 2026-09-02; later reviews and audits append to it. Deliberately uncounted — a stated total is a
+number that goes wrong on the next append, which is that file's U10.
 
 A row here has no owning phase — it was found by a review, an audit, or a maintenance pass over shipped code.
 It is recorded on the day it is found rather than waiting for `docs/sdk-design-nodejs/10-…`, which is in a
@@ -437,8 +459,8 @@ frozen tree and is amended only deliberately, by hand. When §10 is next amended
 |---|---|---|---|---|
 | **`HTTP-11`'s range classifications are on `Status` only, not mirrored onto `Response`.** The spec places them on both: `docs/product-spec/04-core-http-domain-model.md:23` reads "Status MUST classify by range … **and a response MUST expose these derived from its status**", and appendix C (`appendix-c-consolidated-normative-requirement-index.md:47`) restates it as "Response MUST expose these same classifications derived from its status." The port ships them once, on `Status`, reachable as `response.status.isSuccess`. Six delegating getters on `Response` would duplicate surface that cannot drift, since there would be one implementation behind both — but the letter of the requirement does name the response, so the reading is recorded rather than assumed | the dissolved register's A3, register audit | 2026-09-02 | `packages/core/src/http/status.ts` carries all six; `packages/core/src/http/response.ts` carries `status` and no classification of its own | not yet in §10 |
 | **`REDIR-20`'s "fully override" is read as scoped to code/method eligibility, not to the safety mechanics that follow it.** A configured redirect predicate replaces the built-in follow decision; it does **not** bypass userinfo stripping, credential hygiene, the downgrade guard, body replayability, or loop/cap detection. Those are stated as unconditional MUSTs elsewhere in the same chapter and are not "should this kind of redirect be followed" policy — a caller predicate opting to follow a 307 with a single-use body still cannot make that body re-sendable. Genuinely ambiguous wording, decided one way and now recorded as decided | the dissolved register's G4, register audit | 2026-09-02 | `packages/core/src/redirect/decide.ts` consults `settings.predicate` at the eligibility gate and runs every later guard unconditionally; pinned by "the predicate does NOT bypass the safety mechanics" in `decide.test.ts`. Phase 9's conformance sweep was to re-confirm this and closed without doing so | not yet in §10 |
-| **Span-shaped tracing carries `OBS-29`'s ordered lifecycle, but not its 1:1 tracer-to-operation binding.** `OBS-29` (MUST) requires `operationStarted` once at the start, `operationSucceeded`/`operationFailed` mutually exclusive and once each at the end, and **one tracer instance per logical operation**. The port has no method of those names; it has `Tracer.startSpan(name): Span`. The **ordering half is satisfied** under different names: a span is started once (`observability/logging-step.ts:427`) and ended once on exactly one of two paths — `span.end()` for success (`:398`), or `span.recordException(error)` then `span.end()` for failure (`:414-415`) — mutually exclusive, once each, in order. **The 1:1 binding is NOT met**, and this row says so plainly rather than implying the requirement is covered: `PIPE-2` fixes the `LOGGING` pillar step *inside* the `RETRY` and `REDIRECT` pipelines, so a span is opened per transmission attempt and per redirect hop, not once per logical operation (the dissolved register's L4 records the same). The per-attempt and retries-exhausted events therefore have no operation-scoped tracer to attach to. Appendix C's own entry (`appendix-c-consolidated-normative-requirement-index.md:509`) anticipates the gap: "This is a documented emission contract; pipeline/transport wiring to emit it is a follow-up, so it is not yet runtime-enforced." The wiring stays open as the dissolved register's V2 | the dissolved register's L1/V2, register audit | 2026-09-02 | `packages/core/src/observability/tracing.ts:40-42` (`Tracer`, one method); `observability/logging-step.ts:398,414-415,427` (the lifecycle); `docs/product-spec/15-instrumentation-and-observability.md:54` (the requirement) | not yet in §10 |
-| **`invariant()` density is not a target, project-wide.** `docs/knowledge/harvested/assertions.md:6-7` sets a 2-per-function module average. The port's position: a module gains an `invariant()` when it has an internal precondition worth asserting, and `recovery/`, `http/`, `seams/` and `generated/` have none — measured 2026-09-02, all four at zero. Adding assertions to reach an average would assert nothing. `recovery/` is the sharp case: an `invariant()` inside `ResponseRecoveryChain.apply()` throws, and `RECOV-8` forbids `apply()` from throwing, so a density rule would push that module toward a shape the specification forbids | the dissolved register's F3/H6 and the deferral register's *Assertion-density rule applied project-wide* row (retired to [the purge note](./work/mvp/2026-09-04-register-retirement-purge.md)), register audit | 2026-09-02 | `packages/core/src/recovery/`, `http/`, `seams/`: zero `invariant(` calls. `pipeline/` ships fifteen and `context/` three, so the rule is applied where it earns its place | not yet in §10 |
+| **`OBS-29` is carried by spans rather than by the named tracer callbacks. IN PROGRESS — see [#80](https://github.com/dexpace/nodejs-sdk/issues/80) for the final disposition.** `OBS-29` (MUST) requires `operationStarted` once at the start, `operationSucceeded`/`operationFailed` mutually exclusive and once each at the end, and **one tracer instance per logical operation**. The port has no method of those names; it has `Tracer.startSpan(name): Span`. The **ordering half is satisfied** under different names, at both levels: `Runtime.send` opens one span before the drive and ends it on exactly one of two paths — `span.end()` for success, or `span.recordException(error)` then `span.end()` for failure (`pipeline/runtime.ts:193,198-199`) — and the per-attempt spans the LOGGING pillar step opens follow the same shape (`observability/logging-step.ts:427`, then `:398` or `:414-415`). **The 1:1-binding half was recorded here on 2026-09-02 as NOT met, and that reading is out of date.** `Runtime.send` is the one place that runs exactly once per logical operation, and it is where the operation span is opened, outside every pillar, so a retry's second attempt and a redirect's second hop stay inside the same span (`pipeline/runtime.ts:33-48,171-175`; `send`'s own `@remarks` at `:154-157` states the binding). `PIPE-2` still fixes the LOGGING step *inside* the RETRY and REDIRECT pipelines, so its spans remain per transmission — they are now children of the operation span rather than the only spans there are. What stays open is what a *caller* can reach: appendix C's entry (`appendix-c-consolidated-normative-requirement-index.md:509`) says "pipeline/transport wiring to emit it is a follow-up, so it is not yet runtime-enforced", and the operation span is not reachable from the public API. #80 decides that and rewrites this row; anchors re-derived by audit #67 / #68 | the dissolved register's L1/V2, register audit; anchors re-derived by audit #67 / #68 | 2026-09-02, re-anchored 2026-09-04 | `packages/core/src/observability/tracing.ts:40-42` (`Tracer`, one method); `packages/core/src/pipeline/runtime.ts:33-48,154-157,171-175,193,198-199` (the operation span and its 1:1 binding); `observability/logging-step.ts:398,414-415,427` (the per-attempt span); `docs/product-spec/15-instrumentation-and-observability.md:54` (the requirement) | not yet in §10 |
+| **`invariant()` density is not a target, project-wide.** `docs/knowledge/harvested/assertions.md:6-7` sets a 2-per-function module average. The port's position: a module gains an `invariant()` when it has an internal precondition worth asserting, and `recovery/`, `http/`, `seams/` and `generated/` have none — measured 2026-09-02, all four at zero. Adding assertions to reach an average would assert nothing. `recovery/` is the sharp case: an `invariant()` inside `ResponseRecoveryChain.apply()` throws, and `RECOV-8` forbids `apply()` from throwing, so a density rule would push that module toward a shape the specification forbids | the dissolved register's F3/H6 and the deferral register's *Assertion-density rule applied project-wide* row (retired to [the purge note](./work/mvp/2026-09-04-register-retirement-purge.md)), register audit | 2026-09-02 | `packages/core/src/recovery/`, `http/`, `seams/`: zero `invariant(` calls. `pipeline/` and `context/` both carry them, so the rule is applied where it earns its place. Counted qualitatively on purpose — the two figures this cell used to state were wrong by the time anyone read them; re-derive with `grep -rn 'invariant(' packages/core/src/<dir> --include='*.ts' \| grep -v '\.test\.'` | not yet in §10 |
 | **`PIPE-40` and `REDIR-22` contradict each other on the non-replayable-body path, and the port implements `REDIR-22`.** Two MUSTs name the same trigger and prescribe opposite dispositions. `docs/product-spec/08-execution-pipelines.md:20` (`PIPE-40`): "on paths that abandon a re-drive (redirect cycle, **non-replayable body**, budget exhausted) the in-flight response MUST be returned unclosed." `docs/product-spec/10-redirect-handling.md:22` (`REDIR-22`): "if building the follow-up throws (**non-replayable body**, downgrade rejection) the current response MUST be closed before the error propagates." The port closes, then throws, on three grounds: `REDIR-6` independently fixes the control flow ("the operation MUST fail with a clear error naming replayability"), so the path throws and a response never *returned* cannot be "returned unclosed"; specific governs general, since §10 of the spec owns the redirect step's lifecycle; and closing is the safer reading, because the alternative leaks a body on an error path with no caller holding a reference to close it. `PIPE-40`'s other two named paths do genuinely return, and both return unclosed as it requires. **The erratum this needs is proposed below and is not applied here**, because `docs/product-spec/` is frozen and correcting a normative sentence is the specification owner's act, not a maintenance one | the dissolved register's G1, Phase 5b design's Deviation Ledger | 2026-09-04 | `packages/core/src/redirect/redirect-step.ts` closes before throwing, with the reasoning asserted inline in `redirect-step.test.ts`; nothing in the code waits on the erratum | not yet in §10 |
 
 ### Proposed erratum for `PIPE-40` (drafted 2026-09-04, not applied)

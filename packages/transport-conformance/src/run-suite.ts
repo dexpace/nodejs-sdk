@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
-// drift. Exercises: TRANSPORT-1..9, TRANSPORT-15..17, TRANSPORT-20..27, TRANSPORT-29, SEAM-12,
-// SEAM-16, SEAM-30, NFR-15. TRANSPORT-10..14 are asserted at their source in @dexpace/transport-shared;
-// TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's full flow is
-// transport-undici's challenge-handler.test.ts.
+// drift. Exercises: TRANSPORT-1..9, TRANSPORT-15..17, TRANSPORT-20..21, TRANSPORT-23..27,
+// TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15. TRANSPORT-10..14 are asserted at their source in
+// @dexpace/transport-shared; TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
+// full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
+// forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
+// asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
+// undici-transport.test.ts:503).
 import {afterAll, beforeAll, describe, expect, test} from 'bun:test';
 import {
   getBuildInfo,
@@ -311,7 +314,7 @@ function registerProducerRows(ctx: SuiteContext): void {
 }
 
 function registerFailureRows(ctx: SuiteContext): void {
-  describe('TRANSPORT-4/5/6/20/22: failure classification and socket release', () => {
+  describe('TRANSPORT-4/5/6/20: failure classification and per-call timeouts', () => {
     test('a dead port surfaces the retryable TransportFailureError', async () => {
       await withTransport(ctx.makeTransport, async transport => {
         const request = Request.newBuilder().url('http://127.0.0.1:1').build();

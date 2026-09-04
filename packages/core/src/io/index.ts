@@ -7,13 +7,16 @@
 // api-extractor surface so a later phase can promote them deliberately (styleguide 10.3), or not at
 // all: 3b shaped BODY-1's write-to-sink around the platform's WritableStream rather than BufferedSink.
 //
-// The ERROR leaves are a different case, and this comment claimed otherwise until 2026-09-02. Phase
-// 8a promoted `IoError` and `TransportFailureError` to the public barrel (`index.ts:34`) because
-// TRANSPORT-20 makes the subtyping a requirement and `retry/classify.ts`'s cause-walk is
-// load-bearing on it, and Phase 9's U9 pass promoted `EndOfStreamError` — it was the subject of four
-// `@throws` tags on public symbols with no class a caller could catch. `isIoError`,
-// `AllocationLimitError`, `ClosedResourceError` and `SourceContractViolationError` remain internal
-// (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
+// The ERROR leaves are a different case, and this comment has twice claimed otherwise. Phase 8a
+// promoted `IoError` and `TransportFailureError` to the public barrel because TRANSPORT-20 makes the
+// subtyping a requirement and `retry/classify.ts`'s cause-walk is load-bearing on it, and Phase 9's
+// U9 pass promoted `EndOfStreamError` — it was the subject of four `@throws` tags on public symbols
+// with no class a caller could catch. `1f48926` finished the set: `isIoError`,
+// `AllocationLimitError`, `ClosedResourceError` and `SourceContractViolationError` are exported as
+// well, so every error symbol re-exported below is also on `packages/core/src/index.ts:39-47` and in
+// `packages/core/etc/core.api.md`. Nothing in this file's error block is internal any more
+// (docs/work/mvp/2026-09-04-open-items-dissolution.md H8, whose remaining sub-item was the category
+// catch `isIoError` now provides).
 export {BufferedSink} from './buffered-sink.js';
 export {BufferedSource} from './buffered-source.js';
 export {ByteQueue, copyBytes} from './byte-queue.js';

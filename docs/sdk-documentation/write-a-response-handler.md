@@ -41,9 +41,14 @@ DOM global under a `lib` that includes `"DOM"`, and the two are unrelated types 
 `Response` has `status: Status`, `close()` and `request`, and no `json()`. The mistake typechecks
 until you try to pass one.
 
-`decodeSuccessResponse` delegates to `decodeResponse` on a 2xx and to `toHttpError` otherwise, so a
-`4xx` becomes an `HttpStatusError` carrying the status, the headers and a bounded body preview
-(`SERDE-28`).
+`decodeSuccessResponse` delegates to `decodeResponse` on a 2xx and to `toHttpError` on a **4xx or 5xx**,
+so a `404` becomes an `HttpStatusError` carrying `status`, a replayable `body()` and a non-consuming
+`preview()` — a bounded in-memory copy at the 1 MiB `HTTP-52`/`BODY-30` cap, taken before the response
+was closed. There is no headers accessor on it; read anything else you need off the response before you
+hand it over. Any *other* non-2xx — a `1xx`, or an unfollowed `3xx` such as a `304` — is neither decoded
+nor mapped: the response is closed and a `DeserializationError` is raised whose message leads with the
+status code and which carries `ETag` and `Location` as fields, so conditional and redirect context
+survives the close (`SERDE-28`).
 
 ## What the shipped handlers guarantee, and what you must reproduce
 

@@ -118,8 +118,12 @@ export class RequestConditions {
    * untouched.
    *
    * Emission goes through the strict outbound header path, which rejects obs-text. An ETag whose
-   * opaque tag carries obs-text is legal per HTTP-48 but cannot be emitted here; reconciling that
-   * against HTTP-18 is left to a later phase rather than guessed at now.
+   * opaque tag carries obs-text is legal per HTTP-48 but cannot be emitted here, so a server-issued
+   * one does not round-trip. That is decided, not open: HTTP-18 is MUST-level and reinforced by
+   * XCUT-18's splitting defense, HTTP-48's permission is SHOULD-level, and no relaxed emit path is
+   * added — see item 15 of
+   * `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` and its
+   * as-built audit in `docs/deviations.md`.
    *
    * @param headers - the headers to derive from; not modified.
    * @returns a new {@link Headers} carrying the preconditions.

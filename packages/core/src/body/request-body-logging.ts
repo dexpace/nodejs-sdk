@@ -73,6 +73,10 @@ function tappedSink(state: TapState): WritableStream<Uint8Array> {
  * Mirrors up to tapCapBytes of each writeTo call into an internal tap while forwarding the full,
  * untruncated payload to the primary sink (BODY-17). The tap clears at the start of every write so a
  * retry against a replayable delegate does not accumulate stale bytes (BODY-18). No handle onto the tap's
+ * buffer escapes: `snapshot()` returns a fresh, independent copy of the current contents (BODY-19,
+ * `../io/byte-queue.ts:96`), so a caller holding one cannot observe or disturb a later write. Each
+ * `materialize()` wraps its own `ByteQueue` for the same reason (BODY-21).
+ *
  * @internal Consumed by the LOGGING pillar step (OBS-36).
  */
 export function withRequestLogging(
