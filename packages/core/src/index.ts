@@ -88,7 +88,7 @@ export {PipelineBuilder} from './pipeline/builder.js';
 export {Runtime} from './pipeline/runtime.js';
 // The five errors a hand-built pipeline can actually provoke. Every one is the subject of a
 // `@throws` tag on a symbol above, and until 2026-09-02 none was exported, so a consumer read the
-// tag, reached for `instanceof`, and had nothing to reach for (docs/open-items.md U9).
+// tag, reached for `instanceof`, and had nothing to reach for.
 export {
   AnchorNotFoundError,
   CrossStageEditError,
@@ -98,13 +98,13 @@ export {
 } from './pipeline/errors.js';
 export {retryStep} from './retry/retry-step.js';
 // The trail entry for a response the engine discarded whose status is outside 400-599 — reachable
-// only through a caller-widened `retryableStatuses` (docs/open-items.md N2/V14).
+// only through a caller-widened `retryableStatuses`.
 export {RetryDiscardedResponseError} from './retry/errors.js';
 export {redirectStep} from './redirect/redirect-step.js';
 // `withRedirect` installs `redirectStep` together with the REDIR-11(c) guard that keeps the internal
 // cross-origin marker off the wire. Publishing the pillar without them made `withRedirect`'s own
 // instruction -- "a caller who installs redirectStep() directly is responsible for installing the
-// guard too" -- name an obligation no consumer could discharge (docs/open-items.md U7).
+// guard too" -- name an obligation no consumer could discharge.
 export {
   stripCrossOriginMarkerStep,
   withRedirect,

@@ -590,12 +590,15 @@ function checkRegisterLeakage(ctx) {
 
 // ---------------------------------------------------------------------------------------
 // 8. Every `open-items.md <Letter><N>` citation resolves to a real item.
+//
+// "Real" spans TWO files since 2026-09-04: the live register, and the dated note that holds the
+// contents of the retirement table the register used to end with. See `PURGE_NOTE` below.
 // ---------------------------------------------------------------------------------------
 
 // An optional `[Q-T].` qualifier: Sections Q, R, S and T carry the relocated reviews' OWN row
 // numbering, so three `F` namespaces coexist and a bare `F8` resolves to any of them. The register's
-// Section index states the qualified form; `open-items.md` U3 records why option 2 (renumbering the
-// dated records) was rejected in favour of teaching this check instead.
+// Section index states the qualified form; option 2 (renumbering the dated records) was rejected in
+// favour of teaching this check instead.
 const CITATION = /open-items\.md`?[  ]*(?:§)?\s*(?:([Q-T])\.)?([A-Z]\d+)/g;
 
 // `## Section <Letter> — …`. Sections Q-T hold their rows as `| <ID> | …` table rows rather than as
@@ -604,30 +607,40 @@ const SECTION_HEADING = /^## Section ([A-Z])(?:[^\n]*)$/gm;
 const TABLE_ROW_ID = /^\|\s*([A-Z]\d+)\s*\|/gm;
 const QUALIFIED_SECTIONS = 'QRST';
 
-// `## Retired items` — the register's final section. A resolved item's BODY is removed and replaced
-// by one row there; the ID is never released, so a source comment citing it must still resolve. The
-// table is therefore a second source of resolvable IDs, bare (`| \`K10\` |`) and section-qualified
-// (`| \`T.F9\` |`) alike. Rows whose first cell is neither — `D — …`, `R — residual: …` — name
-// Section D and Section R table rows that never had IDs, and are ignored here.
-const RETIRED_HEADING = /^## Retired items\s*$/m;
-const RETIRED_ROW = /^\|\s*`?(?:([Q-T])\.)?([A-Z]\d+)`?\s*\|/gm;
+// The second namespace of resolvable IDs, and it is NOT in the register any more. A resolved item's
+// BODY was removed and replaced by one row in `## Retired items`; on 2026-09-04 that table — and
+// `deferred-items.md`'s `## Delivered and retired` beside it — was deleted outright, and its 102 rows
+// were reproduced verbatim into the dated note below. The IDs were never released, so a source comment
+// citing `K10` or `T.F9` must still resolve; deleting the table without moving the namespace left 25
+// citations pointing at nothing. The note is therefore read exactly as the table was, bare
+// (`| \`K10\` |`) and section-qualified (`| \`T.F9\` |`) alike.
+//
+// ONLY the `## Purged item IDs` table is parsed. The note's second table, `## Purged rows without an
+// item ID`, holds the Section D / Section R / `L1 —` rows that never carried an ID; the old code
+// ignored them because their first cell is not one (`D — …` fails `[A-Z]\d+` immediately, `L1 — …`
+// fails the closing `|`), and slicing to the one heading keeps that true by construction rather than
+// by luck.
+const PURGE_NOTE = 'docs/work/mvp/2026-09-04-register-retirement-purge.md';
+const PURGED_HEADING = /^## Purged item IDs\s*$/m;
+const PURGED_ROW = /^\|\s*`?(?:([Q-T])\.)?([A-Z]\d+)`?\s*\|/gm;
 
 /**
- * The IDs the `## Retired items` table reserves, as `{bare: Set, qualified: Map}`.
+ * The IDs the note's `## Purged item IDs` table reserves, as `{bare: Set, qualified: Map}`.
  *
- * Empty maps when the register carries no such section, so the check degrades to the pre-retirement
- * behaviour rather than throwing.
+ * Empty maps when the note carries no such section — and the caller passes `''` when the note is
+ * absent entirely — so the check degrades to the pre-retirement behaviour rather than throwing.
+ * `ctx.read` is `readFileSync`: an absent path is an `ENOENT` that takes the whole run down with a
+ * raw stack instead of producing a finding, which is why the call site guards on `ctx.exists`.
  */
-function retiredIds(register) {
-  const heading = RETIRED_HEADING.exec(register);
+function purgedIds(note) {
+  const heading = PURGED_HEADING.exec(note);
   const bare = new Set();
   const qualified = new Map();
   if (heading === null) return {bare, qualified};
   const from = heading.index + heading[0].length;
-  const next = register.slice(from).search(/^## /m);
-  const body =
-    next === -1 ? register.slice(from) : register.slice(from, from + next);
-  for (const [, section, id] of body.matchAll(RETIRED_ROW)) {
+  const next = note.slice(from).search(/^## /m);
+  const body = next === -1 ? note.slice(from) : note.slice(from, from + next);
+  for (const [, section, id] of body.matchAll(PURGED_ROW)) {
     if (section === undefined) bare.add(id);
     else {
       if (!qualified.has(section)) qualified.set(section, new Set());
@@ -687,12 +700,12 @@ export function registerCitations(ctx) {
     [...register.matchAll(/^### ([A-Z]\d+)\b/gm)].map(m => m[1]),
   );
   const rows = qualifiableRows(register);
-  // A retired item has no heading and no section row left, only its row in the retirement table.
-  // Merged in rather than checked separately: a citation does not know, and must not care, whether
-  // the item it names is still live.
-  const retired = retiredIds(register);
-  for (const id of retired.bare) ids.add(id);
-  for (const [section, set] of retired.qualified) {
+  // A purged item has no heading and no section row left anywhere in the register — only its row in
+  // the note. Merged in rather than checked separately: a citation does not know, and must not care,
+  // whether the item it names is still live, and the two namespaces are one to every caller.
+  const purged = purgedIds(ctx.exists(PURGE_NOTE) ? ctx.read(PURGE_NOTE) : '');
+  for (const id of purged.bare) ids.add(id);
+  for (const [section, set] of purged.qualified) {
     if (!rows.has(section)) rows.set(section, new Set());
     for (const id of set) rows.get(section).add(id);
   }
@@ -722,8 +735,8 @@ function checkRegisterCitations(ctx) {
   for (const site of sites.filter(s => !s.resolves)) {
     const where =
       site.qualifier === undefined
-        ? 'which has no `### <ID>` heading and no `## Retired items` row'
-        : `which Section ${site.qualifier} carries as neither a table row nor a retirement`;
+        ? `which has no \`### <ID>\` heading and no \`## Purged item IDs\` row in ${PURGE_NOTE}`
+        : `which Section ${site.qualifier} carries as neither a table row nor a purged row in ${PURGE_NOTE}`;
     ctx.finding(
       'citations',
       'act',

@@ -267,9 +267,9 @@ The full contract is in [`CLAUDE.md`](CLAUDE.md); the documentation map is
   return types on exported functions. Formatting is an error, not a warning. Every
   `eslint-disable` must carry a stated reason.
 - **Every gap is recorded.** A deferral goes in [`docs/deferred-items.md`](docs/deferred-items.md),
-  which retires a row to its *Delivered and retired* table once the work lands. A finding goes in
-  [`docs/open-items.md`](docs/open-items.md), and a deliberate divergence in the deviation ledger.
-  Silent gaps are the failure mode this project is structured to prevent.
+  which drops the row once the work lands, so the table states what is still outstanding and nothing
+  else. A finding goes in [`docs/open-items.md`](docs/open-items.md), and a deliberate divergence in
+  the deviation ledger. Silent gaps are the failure mode this project is structured to prevent.
 
 As-built documentation — how the packages compose, and worked examples across a package boundary —
 is [`docs/sdk-documentation/`](docs/sdk-documentation/).

@@ -40,7 +40,7 @@ export interface Clock {
    * rewrites it to `1`, so the default implementation chains timers in chunks rather than issuing
    * one oversized delay. That matters because `RETRY-18`/`RECOV-26` mandate clamping a server pacing
    * hint to a 365-day ceiling — roughly fourteen times what one timer can carry — so a conformant
-   * retry must be able to wait longer than one timer allows (`docs/open-items.md` V13).
+   * retry must be able to wait longer than one timer allows.
    *
    * `Clock` is a seam a consumer may implement. **A custom implementation must honor long durations
    * too**: passing `durationMs` straight to `setTimeout` reintroduces the silent clamp, which turns
@@ -76,7 +76,7 @@ export interface Clock {
  * the 2026-08-27 adversarial review's actual intent — but it also made a `RETRY-18`-conformant
  * pacing wait impossible, since that requirement clamps a server hint to 365 days, roughly fourteen
  * times this value. Chaining timers keeps the review's intent (never a silent clamp) and drops the
- * premise it rested on (that one timer is all there is). See `docs/open-items.md` V13.
+ * premise it rested on (that one timer is all there is).
  *
  * @internal
  */
@@ -149,8 +149,7 @@ export async function sleepInChunks(
     // A rejection, never a synchronous throw: `sleep` returns a promise on every other path, and a
     // caller awaiting it must not have to also wrap the call site in a try/catch. A RangeError
     // rather than the project's assertion signal -- `InvariantViolation` is `@internal`, so a
-    // `@throws` naming it on this `@public` method promised a class no consumer can catch
-    // (docs/open-items.md U9).
+    // `@throws` naming it on this `@public` method promised a class no consumer can catch.
     return Promise.reject(
       new RangeError(
         `Clock.sleep: durationMs must be a non-negative finite number, got ${String(durationMs)}`,

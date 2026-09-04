@@ -73,7 +73,7 @@ export class FormBodyValidationError extends DexpaceError {
  * fabricate a 'successful exception'". `toHttpError` always satisfied that — it returns `null` for
  * anything outside the band — but the published constructor validated nothing, so
  * `new HttpStatusError(200, …)` built exactly the object the requirement forbids and contradicted
- * the class's own documented invariant. Enforced from 2026-09-02; see `docs/open-items.md` N2.
+ * the class's own documented invariant. Enforced from 2026-09-02.
  *
  * A two-level leaf under {@link DexpaceError} rather than a new `DomainModelError` leaf, matching
  * its siblings in this file: checkpoint §5.2 is queued to flatten that tier

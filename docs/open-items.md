@@ -13,16 +13,17 @@ It is one of three files at the `docs/` root, and the boundary between them is *
 | [`deviations.md`](./deviations.md) | The as-built audit of the deviation ledger | A place this port deliberately differs from the reference contract |
 
 The same requirement ID can legitimately sit in two of them. `AUTH-37` was deferred to Phase 7b in
-`deferred-items.md` and recorded here at G12 as a live silent swallow — G12 is retired now, its log half
-having landed on 2026-09-02, which is the shape a requirement takes as it moves between the two files.
+`deferred-items.md` and recorded here as a live silent swallow until its log half landed on 2026-09-02,
+which is the shape a requirement takes as it moves between the two files.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is scheduled against a named phase, awaiting a
 decision, or `UNSCHEDULED` with a stated trigger in place of an owner.
 
-**A resolved item is retired, never deleted.** Its body is removed and one row takes its place in
-[Retired items](#retired-items) at the foot of this file, carrying the resolution, the date and the evidence.
-The ID stays reserved and stays citable.
+Only live items are here: the 102 IDs retired before 2026-09-04 are reproduced in
+[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md),
+which the citation check reads alongside the live `### <ID>` headings, so every citation of one still
+resolves.
 
 ## Section index
 
@@ -30,38 +31,38 @@ Each section is a review. Its letter is permanent: source comments cite items as
 **A letter is never reused and an item is never renumbered.** A new review appends the next letter.
 
 How many such citations exist is not written here. One command derives it, from the same regex and file
-set the check uses — the lesson U10 records, which this paragraph itself broke until 2026-09-02 (V6):
+set the check uses. Three documents once stated three different, all-wrong counts of it, and this
+paragraph was one of them until 2026-09-02:
 
 ```bash
 node .claude/skills/housekeeping/probe.mjs --only=citations
 ```
 
-**A citation into Sections Q–T is written with a section qualifier** — `open-items.md S.F8`,
-`T.F9`, `Q.D1`, `R.E2` — because those sections' rows are the reviews' own numbering and three `F`
-namespaces coexist. The probe's citation check resolves both forms; see U3.
+**A citation into Section R is written with a section qualifier** — `open-items.md R.E2`, never a bare
+`E2` — because that section's rows carry the 3b execution review's own numbering rather than this register's
+item IDs, and the three sibling reviews relocated beside it number their rows in `D` and `F` namespaces that
+collide with Section F's. The probe's citation check resolves the qualified and the bare form alike.
 
-**Every letter below is permanent, whether or not it still holds a live item.** The "Item IDs" column names
-the whole namespace first, then the IDs that are retired.
+**The "Item IDs" column names what each section still holds, and nothing else.** A letter missing from the
+table below is spent, not free: its items are all closed, and it is never reused.
 
 | Section | Subject | Item IDs |
 |---|---|---|
-| A–C, E | Phase 1, re-verified at every review since | `A1`–`A6`, `B1`–`B4`, `C1`–`C3`, `E1`; `A1`, `A3`, `A5`, `B1`–`B4`, `C2`, `E1` retired — Sections B and E are now empty |
-| D | Scheduled deferrals, Phase 1 onward | **none.** A bare table; its rows are cited by the anchors on them, or by row title, not by an item ID. 19 of its 25 rows retired |
-| F | Phase 4b — recovery-chain primitives | `F1`–`F9`; `F3`, `F5`, `F6`, `F8` retired |
-| G | Phase 5b — redirect | `G1`–`G13`; `G2`–`G4`, `G7`, `G10`–`G12` retired |
-| H | Phase 6a — serde | `H1`–`H20`; `H1`–`H3`, `H5`, `H6`, `H12`–`H14` retired |
-| I | Phase 6b — Server-Sent Events | `I1`–`I4`; `I1` retired |
-| J | Phase 6c — pagination | `J1`–`J8`; all retired — Section J is now empty |
-| K | Phase 7a — configuration and platform primitives | `K1`–`K20`; `K2`, `K4`, `K5`, `K9`, `K10`, `K14`, `K15`, `K17` retired |
-| L | Phase 7b — instrumentation and observability | `L1`–`L4`; `L2` and `L3` retired. `L1` is a SPLIT: its `OBS-19` and `OBS-28` halves are retired without an ID, `OBS-29` is live as `V2` |
-| M | Phase 8b — async-runtime bridge | `M1`–`M3`; `M2`, `M3` retired |
-| N | Phase 9 — cross-cutting invariants and conformance | `N1`–`N4`; `N1`, `N2` retired |
-| O | Knowledge-corpus split | `O1`–`O3`; `O3` retired |
-| P | Phase 5a — retry (merged from the repository-root register, 2026-08-31) | `P1`–`P9`; `P1`, `P2`, `P9` retired |
-| Q–T | Four validation/execution reviews relocated from the roadmap, 2026-08-31 | **table rows, not `###` items:** Q `D1`–`D2`, R `E1`–`E8`, S `F1`–`F10`, T `F1`–`F9`. The reviews' own numbering — see the note on Section S. All of Q, S and T retired; R keeps `E2`–`E4` |
-| U | Documentation restructure | `U1`–`U11`; all but `U4` and `U5` retired |
-| V | Register audit, 2026-09-02 | `V1`–`V15`; all but `V2`, `V3` and `V11` retired |
-| [Retired items](#retired-items) | Every ID marked retired above, one row each | not a review; a resolved item's ID lives on here |
+| A, C | Phase 1, re-verified at every review since | `A2`, `A4`, `A6`; `C1`, `C3` |
+| D | Scheduled deferrals, Phase 1 onward | **none.** A bare table; its rows are cited by the anchors on them, or by row title, not by an item ID |
+| F | Phase 4b — recovery-chain primitives | `F1`, `F2`, `F4`, `F7`, `F9` |
+| G | Phase 5b — redirect | `G1`, `G5`, `G6`, `G8`, `G9`, `G13` |
+| H | Phase 6a — serde | `H4`, `H7`–`H11`, `H15`–`H20` |
+| I | Phase 6b — Server-Sent Events | `I2`, `I3`, `I4` |
+| K | Phase 7a — configuration and platform primitives | `K1`, `K3`, `K6`–`K8`, `K11`–`K13`, `K16`, `K18`–`K20` |
+| L | Phase 7b — instrumentation and observability | `L1`, `L4`. `L1` is a SPLIT: its `OBS-19` and `OBS-28` halves are closed, `OBS-29` is live as `V2` |
+| M | Phase 8b — async-runtime bridge | `M1` |
+| N | Phase 9 — cross-cutting invariants and conformance | `N3`, `N4` |
+| O | Knowledge-corpus split | `O1`, `O2` |
+| P | Phase 5a — retry (merged from the repository-root register, 2026-08-31) | `P3`–`P8` |
+| R | Phase 3b execution, relocated from the roadmap, 2026-08-31 | **table rows, not `###` items:** `E2`–`E4`, the review's own numbering. Cite one qualified — `R.E2` |
+| U | Documentation restructure | `U4`, `U5` |
+| V | Register audit, 2026-09-02 | `V2`, `V3`, `V11` |
 
 **Reviewed state.** Scaffold milestone (`0ebdc79`); Phase 1 (branch `2-phase-1-core-http-domain-model`,
 uncommitted at time of review); Phases 3a/3b; Phase 4a (`7-phase-4a-execution-context`, three passes);
@@ -71,9 +72,9 @@ passes); Phase 5a (three passes, now Section P, re-verified against source 2026-
 reviewed **2026-09-02**.
 
 **Phase 4c is still not registered here.** It is merged and has an executed checklist, but never ran the scan
-this file's maintenance rule asks for, so its absence means "not reviewed", not "nothing found". Section S is
-a *document* validation review of 4b and Section T of 4c; neither is a review of the shipped code. Phase 5a's
-gap closed on 2026-08-31 with Section P.
+this file's maintenance rule asks for, so its absence means "not reviewed", not "nothing found". The 4b and
+4c validation reviews read those phases' *documents* before either was executed; neither is a review of the
+shipped code. Phase 5a's gap closed on 2026-08-31 with Section P.
 
 **Status vocabulary**
 
@@ -87,7 +88,6 @@ gap closed on 2026-08-31 with Section P.
 | **BLOCKED** | Real, understood, and stopped on a decision that is the owner's to make — not merely unowned. Distinct from `DECIDE` in that the analysis is finished and the blocking reason is named. |
 | **FIXED** | Closed by work done for this register, with `file:line` evidence in the item's own dated note. |
 | **CLOSED** | Closed by a reading rather than by work: the premise was false, the requirement is satisfied by delegation, or the decision is won't-fix. The reasoning is in the item. |
-| **RETIRED** | Not a status an item carries — it is what happens to one that reached a resolved disposition — `FIXED`, `RESOLVED`, `CLOSED`, "merged into", or a closed decision such as won't-fix, an accepted deviation or an accepted risk. The body is removed and replaced by a single row in [Retired items](#retired-items) giving the resolution, the date and the evidence. **The ID is never released**: it is not renumbered, not reused, and still resolves from a source comment, because the citation check reads that table alongside the `### <ID>` headings. Introduced 2026-09-02, when 76 items and 49 table rows had accumulated with nothing left to act on. |
 
 ---
 
@@ -140,12 +140,6 @@ observable and owes a real test.
 
 ---
 
-## Section B — Gates and tooling
-
-All items retired 2026-09-02 — see [Retired items](#retired-items). IDs `B1`–`B4` remain reserved.
-
----
-
 ## Section C — Documentation defects
 
 ### C1 — Phase 1's scope statement contradicts its own plan — **ACT**
@@ -185,9 +179,6 @@ Split the banner per sub-phase, and add an `XCUT-14` row pointing at 4a Task 4 (
 > themselves are not re-litigated here.
 
 No action now. Each is already owned by a named phase; this table exists so none can quietly lapse.
-**Nineteen rows were retired 2026-09-02** — every row this table carried as **Done** is now one row in
-[Retired rows without an item ID](#retired-rows-without-an-item-id), cited by section and row title. Six
-rows remain, and they are below.
 
 | Item | Requirement | Owner phase | Note |
 |---|---|---|---|
@@ -195,14 +186,8 @@ rows remain, and they are below.
 | `RequestConditions.applyTo` cannot emit an obs-text ETag | HTTP-18 vs HTTP-48/50 | 10 | Spec text in scope does not resolve the tension; strict outbound path kept rather than guessed. Documented in `applyTo`'s TSDoc |
 | `contextsEqual()`, value equality over `ExecutionContext` | CTX-5 (equality framing) | none | Built only if 4b or 4c needs one. `CTX-5`'s operative half — pinning an explicit shared key — ships via `ContextInit.key` |
 | <a id="d-nfr-16-provenance"></a>Publish + provenance CI job | NFR-16 | release | `prepublishOnly` wired; nothing published yet. **Sharpened 2026-08-29:** there is no release workflow at all and `--provenance` appears in no manifest, workflow, or `.npmrc`. §10's ledger claimed the flag "is scripted"; it never was. Authoring the workflow is actionable **now** — only running it against a real registry is blocked. **2026-09-02:** `.github/workflows/release.yml` is authored (push to `main`, `changesets/action@v1`, `id-token: write`, `NPM_CONFIG_PROVENANCE: 'true'`), so "there is no release workflow at all" is no longer true. Inert until an `NPM_TOKEN` secret exists. Of the two prerequisites that still blocked the first publish, one is now fixed — no manifest carried a `repository` field, and all nine publishable manifests now do — and one is a maintainer call: `.changeset/config.json`'s `"access": "restricted"` conflicts with provenance's public transparency log |
-| <a id="d-nfr-10-await-using"></a>`await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | NFR-10 | **none — decided against 2026-08-30** | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). **This row previously read "raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard." That is now a rejected option, not a pending one — the floor stays `>=20.3` and all four guarded installs stay.** Four reasons, in the order that decides it. (1) `NFR-10` is **MUST**-level and requires that "the emitted-artifact target and the visible-API level must agree" (`docs/product-spec/20-non-functional-requirements-and-quality-bar.md:29`); the unguarded class member violated it directly, and the guarded install *is* the repair — not a workaround waiting to be undone. (2) The same requirement's next clause: "A capability that genuinely requires a newer runtime MUST be isolated into its own unit that declares the higher floor explicitly; that unit MUST NOT be a hard dependency of the general-purpose core." Raising core's floor to recover `await using` is the exact inverse — it drags every consumer onto a higher runtime for one syntactic affordance. (3) **The floor is derived, not chosen.** `scripts/verify-runtime-floor.mjs:33` pairs language level `es2023` with `>=20.3`, and its own banner comment (`:22-29`) says the floor is "set by the runtime built-ins the SDK calls rather than by the syntax it emits" and that "adding or moving a row here is a reviewed choice about what runtimes the SDK supports, never a mechanical bump." `>=20.3` is the *minimum* Node that runs what this project emits — `globalThis.crypto` is absent from ESM on every Node 18, and `AbortSignal.any()` landed in 20.3.0. Moving it to satisfy a type-level convenience inverts what the gate is for. (4) **There is a decided precedent.** `docs/work/mvp/phase4/2026-07-26-phase4-execution-context-and-pipelines-checklist.md:208` rejected raising the floor for `SuppressedError` on the same reasoning and shipped a guarded shim instead — `packages/core/src/suppress.ts`. `close()` remains the supported teardown on every runtime; a consumer who has raised *their own* floor to 20.4+ can still reach the installed member through a cast. See §10 ledger item 11 and I3/J3 below |
+| <a id="d-nfr-10-await-using"></a>`await using` support on `Page`, `fetchTransport()`, `undiciTransport()` | NFR-10 | **none — decided against 2026-08-30** | These three declared `[Symbol.asyncDispose]` as a plain class member; on the `>=20.3` floor the computed key is `undefined`, so the method bound to the string key `"undefined"` — junk on the prototype, no disposal, and a `.d.ts` promising `AsyncDisposable` regardless. Fixed 2026-08-29 to `SseStream`'s guarded install, which costs the type-level `await using` affordance (`close()` is unaffected). **This row previously read "raising the floor to `>=20.4` restores the declaration honestly and lets all four sites drop the guard." That is now a rejected option, not a pending one — the floor stays `>=20.3` and all four guarded installs stay.** Four reasons, in the order that decides it. (1) `NFR-10` is **MUST**-level and requires that "the emitted-artifact target and the visible-API level must agree" (`docs/product-spec/20-non-functional-requirements-and-quality-bar.md:29`); the unguarded class member violated it directly, and the guarded install *is* the repair — not a workaround waiting to be undone. (2) The same requirement's next clause: "A capability that genuinely requires a newer runtime MUST be isolated into its own unit that declares the higher floor explicitly; that unit MUST NOT be a hard dependency of the general-purpose core." Raising core's floor to recover `await using` is the exact inverse — it drags every consumer onto a higher runtime for one syntactic affordance. (3) **The floor is derived, not chosen.** `scripts/verify-runtime-floor.mjs:33` pairs language level `es2023` with `>=20.3`, and its own banner comment (`:22-29`) says the floor is "set by the runtime built-ins the SDK calls rather than by the syntax it emits" and that "adding or moving a row here is a reviewed choice about what runtimes the SDK supports, never a mechanical bump." `>=20.3` is the *minimum* Node that runs what this project emits — `globalThis.crypto` is absent from ESM on every Node 18, and `AbortSignal.any()` landed in 20.3.0. Moving it to satisfy a type-level convenience inverts what the gate is for. (4) **There is a decided precedent.** `docs/work/mvp/phase4/2026-07-26-phase4-execution-context-and-pipelines-checklist.md:208` rejected raising the floor for `SuppressedError` on the same reasoning and shipped a guarded shim instead — `packages/core/src/suppress.ts`. `close()` remains the supported teardown on every runtime; a consumer who has raised *their own* floor to 20.4+ can still reach the installed member through a cast. See §10 ledger item 11 and I3 below; `Page<T>` carries the identical guarded install, decided the same way |
 | Erratum for the `PIPE-40` / `REDIR-22` contradiction | PIPE-40 vs REDIR-22 | 10 | **Still open 2026-09-02, and now unowned:** Phase 10 shipped without writing the erratum, and `docs/product-spec/` is frozen. Behavior is chosen and tested; one of the two spec sentences still needs correcting. See G1 |
-
----
-
-## Section E — Process
-
-All items retired 2026-09-02 — see [Retired items](#retired-items). ID `E1` remains reserved.
 
 ---
 
@@ -222,7 +207,8 @@ What is not guarded is the seed: `apply(garbage)` with at least one response ste
 `current.kind !== 'success'` read at the loop head. Left alone deliberately — `current` is only ever the
 caller's argument at that point, and the sole caller is `dispatchWithRecovery`, which constructs it with
 `success()` or `wrapCancellation()`. Guarding it needs either a cast plus an optional chain (which
-`no-unnecessary-condition` rejects on a typed value) or the postcondition assertions F3 defers.
+`no-unnecessary-condition` rejects on a typed value) or the postcondition assertions `recovery/`
+deliberately does without, assertion density being a won't-fix project-wide.
 
 **Trigger:** `recovery/` gaining a public export, or any JavaScript caller reaching `apply()` directly. Either
 makes the seed a third-party value and this a real defect.
@@ -425,7 +411,7 @@ the `plans/` directory has not existed since the 2026-08-31 restructure):
    same section, removed the `references` entry — `packages/codec-json/tsconfig.json` has no
    `references` key today, and H18 states why: with `dist/` guaranteed present by `build:core`, the
    package typechecks against the **published** declarations rather than being redirected back to
-   core's source. Section H asserted both things at once. Recorded as V12.
+   core's source. Section H asserted both things at once, four items apart.
 5. **`MISSING` is module-private, not a package export, and is a plain `Symbol`.** An earlier implementation
    put it on `@dexpace/codec-json`'s barrel. The plan's Task 12 "Produces" block names only `tristate` and
    `tristateObject`, and its own test declares the sentinel locally — so the promotion was drift, not a
@@ -519,7 +505,8 @@ changes.
    **Half-corrected 2026-09-02.** `IoError` **is** exported — `packages/core/src/index.ts:34`,
    promoted in `a0d734d` alongside `TransportFailureError` — so the nominal discriminator does exist
    and has since Phase 8a. `isIoError` is still unexported (`packages/core/src/io/errors.ts:102`), and
-   `EndOfStreamError` was promoted in this pass under U9. What remains of this sub-item is the guard
+   `EndOfStreamError` was promoted in this pass, one of eight a sweep of the `@throws` tags found
+   naming an unreachable class. What remains of this sub-item is the guard
    function alone, which matters only to a caller who wants to catch the four flat leaves as one
    category without naming them. **UNSCHEDULED — trigger: a consumer that needs the category catch;
    `e instanceof DexpaceError` plus a `name` check covers it today.**
@@ -588,8 +575,8 @@ does not re-derive it:
 Not done now, because it is a breaking change to a published SPI and this pass is not the place to
 take one alone. **UNSCHEDULED — trigger: the pre-publish breaking-change batch, before the first
 non-`0.0.0` release.** That batch is the last moment the change is free: `@dexpace/core` is `0.0.0`,
-and semver's initial-development carve-out (which Section Q's `D1` already invoked for a narrowing)
-stops applying at 1.0.
+and semver's initial-development carve-out — which Phase 3b's validation review already invoked once,
+for a narrowing of its own — stops applying at 1.0.
 
 ### H11 — `tristate()`/`tristateObject()` are format-agnostic but ship in a format-specific package — **UNSCHEDULED** (2026-09-02)
 
@@ -654,7 +641,7 @@ What is true in mitigation, verified rather than assumed: **abort IS honored tra
 errors the body stream on abort makes `reader.read()` reject and the read loop exits promptly —
 `deserializeFrom` surfaces the `DOMException` cleanly. What is *not* interruptible is the CPU-bound
 `JSON.parse` / `schema.parse` span after the drain completes, which no signal could cancel anyway without a
-streaming parser (see H1).
+streaming parser — and `JSON.parse` has no incremental form to build one on.
 
 The project-wide position appears to be "cancellation rides the transport": `toHttpError` and
 `Response.bytes()` take no signal either. So this is a consistency question about the whole SDK, not a 6a
@@ -819,12 +806,6 @@ value equality (`hashCode`); value equality is provided via `sseEventsEqual()` (
 
 ---
 
-## Section J — Phase 6c (Pagination)
-
-All items retired 2026-09-02 — see [Retired items](#retired-items). IDs `J1`–`J8` remain reserved.
-
----
-
 ## Section K — Phase 7a (Configuration & Platform Primitives)
 
 ### K1 — `clientIdentityStep` is not reachable from the public barrel — **UNSCHEDULED** (2026-09-02; the stated blocker is gone)
@@ -841,7 +822,7 @@ publishes `StepDescriptor` lands, add `clientIdentityStep`/`ClientIdentitySettin
 **2026-09-02: "the whole of `pipeline/` is `@internal` and absent from the barrel" is false, and has
 been since Phase 5c.** `packages/core/src/index.ts:82-84` exports `Stage`, `Next`, `Step`,
 `StepContext` and `StepDescriptor`, and the next line exports `PipelineBuilder` — 5c's Task 16
-promotion, which G10 records in detail. So the trigger this row named **has fired**: the phase that
+promotion. So the trigger this row named **has fired**: the phase that
 publishes `StepDescriptor` landed, and `clientIdentityStep` was simply not added alongside it.
 
 The same false statement was duplicated in source at `packages/core/src/index.ts:252-253`, 168 lines
@@ -981,10 +962,10 @@ requirement does not state would be the deviation. **UNSCHEDULED — trigger: th
 of `getDuration`**, which is the layer that knows what it will do with the value.
 
 **What the advice above applied to was found anyway, one layer in** — and then answered from the
-other direction. V4 records the defect: a configured retry delay was validated only from below, so an
+other direction. The defect: a configured retry delay was validated only from below, so an
 unwaitable one failed inside the retry loop rather than at the call that supplied it. The fix is not
-the `RECOV-34`-style bound this row recommends — V13 made `Clock.sleep` honor any finite duration by
-chaining timers, so no unwaitable duration is left to reject. The general lesson stated above (bound
+the `RECOV-34`-style bound this row recommends — `Clock.sleep` was made to chain timers and honor any
+finite duration, so no unwaitable duration is left to reject. The general lesson stated above (bound
 at the configuration boundary, not at the point of use) is sound and simply had no defect left to
 apply to.
 
@@ -1090,13 +1071,12 @@ requirements to two closed phases is the exact unowned-MUST shape this register 
 the row is split and each requirement is dispositioned on its own.
 
 **`OBS-19` — FIXED (2026-09-02).** Phase 8a's `createDropLogger` had three modes and one level; all
-three now emit at the level each requirement names. Retired — see
-[Retired rows without an item ID](#retired-rows-without-an-item-id), row `L1 — OBS-19`, and `V1`,
-which carries the finding and the `TRANSPORT-13` checklist contradiction.
+three now emit at the level each requirement names — `'all'` and `'first-per-name'` warn, `'quiet'`
+stays silent (`packages/transport-shared/src/drop-log.ts`). The same pass settled the `TRANSPORT-13`
+checklist contradiction that sat beside it.
 
 **`OBS-28` — CLOSED (2026-09-02), satisfied-by-level.** A SHOULD whose own text asks only that every
-method default to a no-op so adding an event is non-breaking; the port ships that mechanism. Retired —
-see [Retired rows without an item ID](#retired-rows-without-an-item-id), row `L1 — OBS-28`.
+method default to a no-op so adding an event is non-breaking; the port ships that mechanism.
 
 **`OBS-29` — UNSCHEDULED, and it is a MUST.** See V2, which carries the full finding.
 
@@ -1255,7 +1235,7 @@ Until then `bun run knowledge:drift` is the check, and it is named in the phase-
 > `**Owner:**` line kept intact.
 >
 > **Every item was re-verified against as-built source on 2026-08-31** before being merged, per this file's
-> maintenance rule. Eight still hold. One (`P9`) had been closed by Phase 7b and is marked so.
+> maintenance rule. Eight still held; the ninth had already been closed by Phase 7b.
 >
 > Findings that *were* fixed in 5a are not listed — they are in the code and its tests.
 
@@ -1315,12 +1295,12 @@ clamped hint is **fourteen times** the longest delay the platform can honor, so 
 `sleep`, `sleep` rejects with an `InvariantViolation`, `waitFor` re-throws it (the signal is not
 aborted), and the loop's `catch` returns `failure(InvariantViolation)`. The operator gets an
 assertion failure naming the ceiling, not a hang. Measured 2026-09-02 against
-`packages/core/src/retry/pacing.ts:14,25` and `packages/core/src/config/clock.ts:65,75`. Recorded as
-V13, which is the defect; this row is the documentation obligation.
+`packages/core/src/retry/pacing.ts:14,25` and `packages/core/src/config/clock.ts:65,75`. The clock
+defect itself is fixed; this row is the documentation obligation that outlived it.
 
 **UNSCHEDULED — trigger: the next deliberate edit to `RetrySettings`'s TSDoc.** The owed paragraph
 changed twice in one day. It is not "this can park for a year"; it was briefly "a hint above ~24.8
-days fails the call"; and since V13 made `Clock.sleep` chain timers it is back to the original
+days fails the call"; and since `Clock.sleep` was made to chain timers it is back to the original
 hazard, now real rather than theoretical: **a server-sent pacing hint clamped to `RETRY-18`'s
 365-day ceiling is genuinely waited**, and `totalTimeoutMs` is the only thing that shortens it.
 
@@ -1405,45 +1385,6 @@ already carries the corrected wording. **UNSCHEDULED — trigger: any future rea
 accurate statement.
 
 
-## Section Q — Phase 3b validation review (2026-07-28)
-
-> **Relocated.** A validation pass over Phase 3b's design and plan **before** either was executed. Relocated verbatim on
-2026-08-31 from the roadmap's `## Open Findings — Phase 3b Validation Review (2026-07-28)` section. Its rows
-are labelled `D1`, `D2` — the review's own numbering, not this register's item IDs.
-
-A validation pass over `specs/2026-07-25-phase3b-body-lifecycle-design.md` and
-`plans/2026-07-25-phase3b-body-lifecycle.md` (`docs/validation-prompts/phase3b-body-lifecycle-validation-prompt.md`)
-returned **BLOCKED** on two runtime defects and a cluster of overclaimed disposition rows. **All findings except
-D1 and D2 below are applied** to both documents. Recorded here rather than in `docs/deferred-items.md` because
-these are review findings against an unexecuted phase, not deferrals of work.
-
-The two blockers, both now fixed, are worth naming since they generalize: (1) `ReadableStream.cancel()` rejects
-with `TypeError` on a locked stream and reading to `{done: true}` does **not** release the reader's lock, so
-`Response.bytes()`, `toHttpError()` and the response-logging wrapper each had a `finally`-scoped close that
-replaced a successful read with a `TypeError` — a `reader.releaseLock()`-before-cancel constraint now sits in the
-plan's Global Constraints, and **every later phase that takes a reader and later closes the stream inherits it**;
-(2) `HTTP-39`/`BODY-10`'s exact-length copy was dispositioned as "reuses Phase 3a's `writeAll`" while the plan's
-own global constraint forbids importing `BufferedSink`, leaving a declared `contentLength` unverified and a short
-stream sending a truncated body silently.
-
-All rows retired 2026-09-02 — see [Retired items](#retired-items). Row IDs `Q.D1` and `Q.D2` remain
-reserved and still resolve from a citation written `open-items.md Q.D1`.
-
-**Applied without needing a decision** (recorded so the reasoning survives): `BODY-34`'s "one shared cap"
-contradiction resolved in the plan's favour — the shared preview cap covers the two logging tees, and
-`toHttpError`'s 1 MiB cap is separate because `HTTP-52` *fixes* its value and a spec-fixed value cannot be the
-configurable one; `BODY-26`/`BODY-29` built (`LoggedResponseBody` gained a non-draining `error()` and a
-regime-dependent `contentLength`); `BODY-25` ledgered as structurally inapplicable — `ReadableStreamDefaultReader`
-takes no requested count, so "zero bytes for a positive count" has no analog; `BODY-32`'s negative-cap rejection
-added to both tees, which previously accepted a negative cap and silently mirrored nothing; `HTTP-3`'s
-`MultipartBodyBuilder` added (`HTTP-3` names "the multipart body" explicitly and Phase 1 could not satisfy it);
-`HTTP-2` honored by exporting the concrete body classes from the public barrel as **types only**; the `@internal`
-tags removed from the three errors Task 13 promotes, which would have made `api-extractor` either fail or
-silently omit them; `withResponseLogging` decomposed under the 70-line cap and made pull-driven, since its
-`start()`-loop tail stream eagerly materialized the whole remainder of exactly the oversized bodies the cap
-exists to keep off the heap.
-
-
 ## Section R — Phase 3b execution (2026-08-25, expanded 2026-08-26)
 
 > **Relocated.** What Phase 3b's execution found once the code existed. Relocated verbatim on 2026-08-31 from the roadmap's
@@ -1466,13 +1407,13 @@ the 3b plan's prerequisite claim plausible to whoever wrote it. Measured status 
 | 5.1 | Coverage floor as a *blocking* gate | **Done** — `bunfig.toml` carries `coverage = true`, `coverageThreshold = 0.8` |
 | 5.2 | Flatten the `DomainModelError` tier | **Open** — E2 below |
 | 5.3 | Error leaves carry identifying `readonly` fields | **Partial** — 2 of 10; E3 below |
-| 5.4 | `Symbol.asyncDispose` + floor bump + `lib` entry | **Open** — `R.E1`, retired |
+| 5.4 | `Symbol.asyncDispose` + floor bump + `lib` entry | **Open** |
 | 5.5 | Bounded collections vs `RetentionWindow`/tap | **No action needed** — confirmatory in the checkpoint itself |
 | 5.6 | `AbortSignal.any` composition | **No action needed** — confirmatory |
 | 5.7 | Flat hoisting lets a package resolve an undeclared dependency | **Open** — E4 below |
-| 5.8 | `NFR-14`'s stale "no direct Bun equivalent" reason | **Resolved in Phase 6a (2026-08-27)** — `R.E7`, retired |
-| 5.9 | `bun test` proves nothing about the Node runtime | **Done 2026-08-26** — `R.E5`, retired |
-| 5.10 | Per-class `#private` justification comments | **Open** — `R.E6`, retired |
+| 5.8 | `NFR-14`'s stale "no direct Bun equivalent" reason | **Resolved in Phase 6a (2026-08-27)** |
+| 5.9 | `bun test` proves nothing about the Node runtime | **Done 2026-08-26** |
+| 5.10 | Per-class `#private` justification comments | **Open** |
 | 5.11 | Phase 4 pre-commitment: `Stage` must not be an `enum` | Not yet due (Phase 4) |
 | 5.12 | Tooling conflicts already resolved by the plans | Recorded only |
 
@@ -1486,15 +1427,10 @@ had. **Verify a prerequisite against the artifact it was supposed to produce, no
 | E3 | major — **OPEN, checkpoint §5.3** | §5.3 requires every error subclass to carry its identifying inputs as sanitized `readonly` fields, because `JSON.stringify(error)` and structured-log field enumeration bypass `.message` entirely. It was applied to **two** leaves and stopped: `RequiredFieldError` carries `fieldName`, `HeaderValidationError` carries `kind` + `escapedName`. The other **eight** carry nothing — their identifying data exists only interpolated into the message string, which is precisely the shape the rule forbids. Not raised by any of Phase 3b's three review passes either; found only when the checkpoint was audited item by item | `packages/core/src/http/errors.ts` | **Open.** Same file and same ten classes as E2, so doing §5.2 and §5.3 in one pass is strictly cheaper than two. §5.3 also specifies the sanitization shape per leaf: the offending *name* control-character-escaped, the offending *value* never stored raw (a `valueLength`, a masked minimum fragment, or no field at all), and for `MediaTypeParseError` the failing token/offset rather than the full input. It further asks for a file comment on `errors.ts` recording *why* fields are sanitized at construction — that comment is what stops a later contributor "restoring" the raw value |
 | E4 | major — **OPEN, checkpoint §5.7** | No isolated linker is configured. `bunfig.toml` carries only a `[test]` block and there is no `.npmrc` at all, so the install is flat-hoisted by default. Under flat hoisting `@dexpace/core` can import a package it never declared and still pass every gate — including `verify:seam-1`, which reads the `dependencies` map rather than what the code actually resolves. That is the one phantom-dependency failure mode `SEAM-1`'s gate structurally cannot see | `bunfig.toml` (no linker key); no `.npmrc`; `scripts/verify-seam-1.mjs` | **Open.** §5.7 requires confirming the exact linker option against the pinned Bun version before writing it. Low effort, and it strengthens a `SEAM-1` guarantee the project treats as foundational |
 
-Five rows retired 2026-09-02 — `E1`, `E5`–`E8`; see [Retired items](#retired-items). Their IDs remain
-reserved.
-
 ### Phase-3-owned residuals
 
 Distinct from the checkpoint items above: these belong to Phase 3 itself and are recorded in its ledger and
-checklist rather than being anyone else's to close. **Marks re-derived against the tree 2026-09-02**; the four
-that had shipped are retired to [Retired rows without an item ID](#retired-rows-without-an-item-id) as
-`R — residual: …` rows. Two remain.
+checklist rather than being anyone else's to close. **Marks re-derived against the tree 2026-09-02.**
 
 | Item | Level | Disposition |
 |---|---|---|
@@ -1507,85 +1443,6 @@ silently swallows the delegate's abort — the default abort algorithm is a no-o
 locked and letting a truncated body be committed downstream as a complete one. Likewise `pipeTo`'s default
 `preventCancel: false` cancels the *source* when the destination fails, which takes cancellation ownership away
 from the caller (`BODY-8`). Phase 4c's stage pipeline and Phase 8a's transports both wrap sinks; both inherit this.
-
-
-## Section S — Phase 4b validation review (2026-07-28)
-
-> **Relocated.** A validation pass over Phase 4b's design and plan before execution. Relocated verbatim on 2026-08-31 from
-the roadmap's `## Open Findings — Phase 4b Validation Review (2026-07-28)` section.
-
-**Its rows are `F1`–`F10`, the review's own numbering.** Section F above numbers *its* items `F1`–`F9`, and
-Section T below numbers a different review's rows `F1`–`F9` again. Three `F` namespaces, no overlap in
-meaning. A citation must name the section — "Section S's F2", never a bare "F2". Renumbering was rejected:
-the roadmap's own status notes cite "4b's F2/F7" by these numbers, and a dated record that changes its row
-IDs stops matching the documents that quote it.
-
-A validation pass over `specs/2026-07-25-phase4b-recovery-chain-design.md` and
-`plans/2026-07-25-phase4b-recovery-chain.md` (`docs/validation-prompts/phase4b-recovery-chain-validation-prompt.md`)
-returned **BLOCKED**. The `RECOV-1`–`RECOV-16` mapping itself is sound and every cross-phase reference 4b consumes
-checks out against the earlier phase plans — `toHttpError(): Promise<HttpStatusError | null>` (3b), `RequestOptions.EMPTY`
-(Phase 1), `Transport.send(request, options?, signal?)` + `CancellationError` (Phase 2), and `Response.close()` latching
-`#closed` *before* awaiting `body.cancel()` so it propagates a close rejection exactly once (3b). Nothing below is a
-defect in that mapping. Recorded here rather than in `docs/deferred-items.md` because these are review findings against
-an unexecuted phase, not deferrals of work.
-
-**All ten rows are retired 2026-09-02** — `F1` and `F2` closed, `F3`–`F10` applied to the 4b documents; see
-[Retired items](#retired-items). Row IDs `S.F1`–`S.F10` remain reserved and still resolve from a citation
-written `open-items.md S.F8`. `F1`'s resolution is the runtime-guarded `suppress()` helper
-(`packages/core/src/suppress.ts`); read it before designing against `SuppressedError` anywhere, because
-`esnext.disposable` in `lib` supplies `Symbol.asyncDispose`'s *type* and not `SuppressedError`'s *runtime*.
-
-**Corpus conflict surfaced, not a finding.** `function-design.md:22-23` requires an options object at 3+ parameters
-while `function-design.md:40-41` sets `max-params: ['error', 3]`, which errors only at four — the prose is one
-parameter stricter than its own stated enforcement. F9 is filed against the prose; if the lint threshold is the
-authority, F9 dissolves. Worth settling in the corpus rather than per-phase.
-→ **numbered 2026-09-02 as V11**, and given a disposition. "Worth settling" with no owner and no
-trigger is how a finding sits unsettled for five weeks; V11 states which of the two the repository
-actually follows and what would change it.
-
-A second conflict the 4b documents met and resolved correctly, recorded so a later reader does not re-litigate it:
-`resource-management.md:4-5,72` mandates `using`/`await using` and documents that native disposal builds a
-`SuppressedError` with the *disposal* failure primary, while `RECOV-12` requires the opposite priority. 4b picks
-`RECOV-12` and argues it at SPEC:107-113 / PLAN:55-59. Correct call, already justified in-document.
-
-
-## Section T — Phase 4c validation review (2026-07-29)
-
-> **Relocated.** A validation pass over Phase 4c's design and plan before execution. Relocated verbatim on 2026-08-31 from
-the roadmap's `## Open Findings — Phase 4c Validation Review (2026-07-29)` section. **Its rows are `F1`–`F9`,
-the review's own numbering** — see the namespace note on Section S.
-
-A validation pass over `specs/2026-07-25-phase4c-stage-pipeline-design.md` and
-`plans/2026-07-25-phase4c-stage-pipeline.md`
-(`docs/validation-prompts/phase4c-stage-pipeline-validation-prompt.md`) returned **NEEDS WORK — no blockers.**
-The `PIPE-1`–`PIPE-40` mapping is sound and every cross-phase reference 4c consumes checks out against the earlier
-phase plans: `Transport.send(request, options?, signal?)` + `close()` (Phase 2), `DexpaceError` as the taxonomy
-root under `http/errors.ts` (Phase 2's retrofit), `RequestOptions.EMPTY` (Phase 1), `Status.of`/`Protocol.HTTP_1_1`
-(Phase 1), and 4a's `createRequestContext(request, init?)`, `promoteToRequest`/`promoteToExchange`,
-`ContextStore.install/get/close/clear/size` with the `kind`/`key`/`request`/`instrumentation`/`operationName`
-context shape. Nothing below is a defect in that mapping.
-
-**All nine rows are retired 2026-09-02** — `F1`–`F8` applied to the 4c documents, `F9` fixed to its own
-option (a); see [Retired items](#retired-items) and `V15`. Row IDs `T.F1`–`T.F9` remain reserved and still
-resolve from a citation written `open-items.md T.F9`.
-
-**Not findings, recorded so they are not re-raised.** Assertion density (`assertions.md:6-7`) is already open
-project-wide as 4b's F2 — 4c is the phase that *satisfies* it, not one that violates it. `STAGE_ORDER` and
-`PILLAR_STAGES` in `CONSTANT_CASE` sit against `naming-conventions.md:14`, whose worked example is literally a
-module-level `new Set(...)` staying `lowerCamelCase` because its contents can mutate; a `ReadonlySet` type does
-not make the underlying `Set` deeply immutable and `Object.freeze` cannot fix a `Set`. Left alone because the
-casing question is project-wide (Phase 1's `Protocol`/`Status` statics, 4b's constants) and renaming one phase's
-two constants would fork the convention rather than settle it — Phase 10's reconciliation owns it.
-
-**Re-deferred 2026-08-30 (Phase 10): NOT SCHEDULED.** Phase 10 does not own it and did not settle it. The
-`CONSTANT_CASE`-vs-`lowerCamelCase` question for module-level immutable collections is a naming-convention
-call, not a deviation from the reference contract, so it is outside a reconciliation phase's scope; Phase 10 is
-also the last row of the phase table, so there is no later phase to hand it to and none is invented here. The
-state is unchanged and still consistent within itself — `STAGE_ORDER` and `PILLAR_STAGES` remain `CONSTANT_CASE`
-and remain the pipeline's only such pair (`packages/core/src/pipeline/builder.ts:12`, `:179`, `:248`, `:269`).
-**Trigger:** the next module-level immutable collection added outside `pipeline/`, which would make the fork
-visible in a third place and force the choice — or a naming-convention sweep commissioned as its own phase.
-Logged in `docs/deferred-items.md` so it is tracked rather than silent.
 
 
 ## Section U — Documentation restructure (2026-08-31)
@@ -1620,16 +1477,17 @@ skill's probe stage now does check them (`.claude/skills/housekeeping/probe.mjs`
 a CI step — it is a hand-run tool, like `bun run test:scripts` was before Phase 10 promoted it.
 
 **Trigger:** the same drift recurring after a phase lands. The probe existing is not the same as the probe
-being run; if it recurs, the answer is a blocking CI step, and the precedent for promoting one is `test:scripts`
-(open-items H13).
+being run; if it recurs, the answer is a blocking CI step, and the precedent for promoting one is
+`test:scripts`, made blocking on 2026-08-31 after running in no CI job at all.
 
-**The skill's own tests are not run by any CI step either.** How many is not written here — U10's
-rule, applied: `node --test .claude/skills/housekeeping/*.test.mjs` reports it. It read **78** on
-2026-09-02 before this pass added four, and **82** after; this row said 77 and U11 said 75, so two
-rows of one register carried two different wrong counts of one thing. `package.json`'s `test:scripts`
+**The skill's own tests are not run by any CI step either.** How many is not written here — the rule
+that a count belongs in a command rather than in a sentence, applied:
+`node --test .claude/skills/housekeeping/*.test.mjs` reports it. It read **78** on 2026-09-02 before
+this pass added four, and **82** after; this row said 77 and a second row said 75, so two rows of one
+register carried two different wrong counts of one thing. `package.json`'s `test:scripts`
 globs
 `scripts/*.test.mjs`, and these live in `.claude/skills/housekeeping/`. Promoting them is a one-line glob
-change; the argument for it is H13's, exactly — a gate whose own logic degrades still exits 0, so nothing
+change; the argument for it is `test:scripts`'s, exactly — a gate whose own logic degrades still exits 0, so nothing
 else in the run notices. Not done here because wiring this skill into CI was explicitly out of scope for the
 change that added it. Run them by hand with `node --test .claude/skills/housekeeping/*.test.mjs`.
 
@@ -1643,8 +1501,8 @@ where the register contradicted itself.
 
 **Why a new letter rather than edits in place.** An item ID is permanent and is cited from source, so
 a finding without one cannot be cited, cannot be closed, and does not appear in the section index.
-Six of the fifteen below existed as prose in Sections Q, R, S and T; the prose is left where it is
-with a one-line pointer, and the finding is here.
+Six of the fifteen below existed only as prose in the four relocated reviews, Sections Q, R, S and T,
+carrying no ID of their own; each is numbered here.
 
 The audit's own driving observation, which is not a numbered item because it is a pattern rather than
 a defect: **a phase closes, and the items naming it as owner keep the name.** Twenty items named a
@@ -1730,13 +1588,13 @@ both are breaking; `@dexpace/core` is `0.0.0` and that batch is the last moment 
 
 ---
 
-### V11 — Section S's corpus conflict declines to be a finding, and has sat unsettled since 2026-07-28 — **UNSCHEDULED**
+### V11 — the Phase 4b validation review's corpus conflict declines to be a finding, and has sat unsettled since 2026-07-28 — **UNSCHEDULED**
 
 `docs/knowledge/harvested/function-design.md:22-23` requires an options object at three or more
 parameters; `:40-41` sets `max-params: ['error', 3]`, which errors only at four. The prose is one
-parameter stricter than its own stated enforcement, and Section S's row `F9` is filed against the
-prose. The paragraph says the conflict is "worth settling in the corpus rather than per-phase" and
-stops there — no ID, no owner, no trigger.
+parameter stricter than its own stated enforcement, and the Phase 4b validation review filed its row
+`F9` against the prose. That review says the conflict is "worth settling in the corpus rather than
+per-phase" and stops there — no ID, no owner, no trigger.
 
 **What the repository actually does, measured 2026-09-02: it follows the lint threshold.**
 `eslint.config.js` sets `max-params` to 3 (errors at four), and three-parameter functions ship
@@ -1744,185 +1602,31 @@ throughout — `Transport.send(request, options?, signal?)`, `fold(outcome, onSu
 `Deserializer.deserializeFrom(source, schema, typeName?)`, `redactHeaderValue(name, value, policy?)`.
 Several carry a documented `eslint-disable-next-line max-params` for a fourth, which is the gate
 being enforced rather than evaded. So the conflict is settled in practice and unsettled on paper, and
-`S.F9` — filed against the prose — dissolves under the reading the code takes.
+that row, filed against the prose, dissolves under the reading the code takes.
 
 **Not settled *in the corpus* here.** `docs/knowledge/harvested/` is frozen and is never hand-edited;
 the mechanism for recording a reading against a harvested rule is a note under
 `docs/knowledge/notes/`, and writing one is a deliberate edit to a frozen tree rather than a
 maintenance action. **UNSCHEDULED — trigger: the next deliberate edit to `docs/knowledge/notes/`**,
-which should carry this alongside N3's two markers and U1's two `<sub>` paths. One visit, three fixes.
-
----
-
-## Retired items
-
-An item is retired when it is genuinely resolved: its body is removed and one row below takes its
-place. **The ID is not released.** It stays reserved, it is never renumbered and never reused, and it
-still resolves from a source comment — the citation check reads this table as a second source of
-resolvable IDs alongside the `### <ID>` headings, so a comment citing `K10` or `T.F9` still lands.
-
-Every row's first cell is the ID and nothing else. The rows that never had an ID — Section D's deferral
-table, Section R's Phase-3-owned residuals, and `L1`'s two resolved halves — retire the same way and are
-in [Retired rows without an item ID](#retired-rows-without-an-item-id) directly below.
-
-| ID | Title | Resolution | Date | Evidence |
-|---|---|---|---|---|
-| `A1` | HTTP-24: `charset` did not return null for an unknown encoding | resolved against the runtime's WHATWG encoding registry, returns `undefined` | 2026-09-02 | `packages/core/src/http/media-type.ts` — the `charset` getter and `isKnownEncoding` |
-| `A3` | HTTP-11: `Response` exposes no range classification of its own | closed on the delegation reading — `response.status.isSuccess` is one hop | 2026-09-02 | deviations.md row: "`HTTP-11`'s range classifications are on `Status` only" |
-| `A5` | CTX-8: the duplicate-key error's message did not identify the key | default keys gained a serial description | 2026-09-02 | `packages/core/src/context/context.ts` — `defaultKey()` |
-| `B1` | NFR-10/NFR-17: CI never runs on the declared minimum runtime | closed by the `node-conformance` job, a matrix over the declared floor and current LTS | 2026-08-26 | `.github/workflows/ci.yml`; `tests/node-conformance/` |
-| `B2` | NFR-13: SPDX headers missing on scaffold-era files | all three files carry the line-1 header | 2026-09-02 | `eslint.config.js:1`, added in `d8217af` |
-| `B3` | NFR-12: reproducible builds asserted, never proven | gated — two clean builds agree on every emitted file and every tarball | 2026-08-29, widened 2026-08-30 | `scripts/verify-reproducible-build.mjs`, a blocking CI step |
-| `B4` | NFR-14: `expect-type` breaks the single-source-of-versions convention | premise inverted — nine manifests all read `"catalog:"` | 2026-09-02 | root `package.json:12` |
-| `C2` | The structural-typing bypass deviation is not yet recorded | Phase 10 recorded it as §10 ledger item 4 | 2026-09-02 | `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:64-75` |
-| `E1` | Phase 1 has no commits | decided by what happened — one squashed commit, accepted | 2026-09-02 | commit `8051364` |
-| `F3` | Zero `invariant()` assertions across `recovery/` | won't fix — density is not a target, decided project-wide | 2026-09-02 | deviations.md row: "`invariant()` density is not a target, project-wide"; `docs/deferred-items.md`'s *Assertion-density rule applied project-wide* row (retired) |
-| `F5` | `#private` fields carry no per-use justification | closed — `CLAUDE.md` states the convention once, with the styleguide 6.7 carve-out | 2026-09-02 | `CLAUDE.md`, "Domain model construction pattern"; `docs/deferred-items.md`'s *`#private`-vs-`private`* row, still deferred |
-| `F6` | `RECOV-11` is a no-op in this port | ledgered as promised | 2026-09-02 | `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md:36-37` |
-| `F8` | 4b did not depend on 4a | premise corrected — 4b's only outside imports are `http/`, `body/`, `seams/`, `invariant`, `suppress`; the sequencing half closed when both merged into the 4c branch | 2026-08-26 | `packages/core/src/recovery/` |
-| `G2` | `REDIR-28`/`REDIR-15` observability clause ships unimplemented | all four event families now emit | 2026-09-02 | `packages/core/src/redirect/redirect-step.ts` |
-| `G3` | `Decision` carries no reason on `'return-current'` | `RedirectStopReason` shipped; the two blocked events emit | 2026-09-02 | `packages/core/src/redirect/decide.ts` |
-| `G4` | `REDIR-20`'s "fully override" read as scoped to eligibility | the scoped reading is confirmed and recorded | 2026-09-02 | deviations.md row: "`REDIR-20`'s 'fully override' is read as scoped" |
-| `G7` | `XCUT-17`(b)'s foreign-host half needs an auth layer | delivered by Phase 5c — the auth step is the marker's consumer | 2026-09-02 | `packages/core/src/auth/auth-step.ts`, `planOutbound` |
-| `G10` | Phase 5c publishes `Step`, the context family, and a PROVISIONAL `InstrumentationBundle` | accepted — `activeSpan`/`tracerFactory` are documented as provisional in the emitted `.d.ts`, on the interface and on each member, which is the honest form of the trade | Phase 5c | `packages/core/src/context/instrumentation.ts`; `packages/core/etc/core.api.md` |
-| `G11` | `DigestChallengeUnsupportedError` was speculative | cut during Phase 5c's own shape review, before it shipped | Phase 5c | `packages/core/src/auth/` — no such class |
-| `G12` | `AUTH-37`'s failed background refresh is swallowed silently | emits `http.auth.bearerRefreshFailed` at `warning`, then continues | 2026-09-02 | `packages/core/src/auth/bearer-cache.ts`, `warnRefreshFailed` |
-| `H1` | `@dexpace/codec-json` buffers the whole decoded body before parsing | accepted deviation — `JSON.parse` has no incremental form, so this is a property of the format, not of the seam; `decodeResponse` itself never buffers | Phase 6a | `packages/codec-json/src/json-serde.ts`; `packages/core/src/serde/response-handlers.ts` |
-| `H2` | `SERDE-23` (ignore unknown fields) is satisfied by delegation, not enforcement | accepted deviation — stripping or rejecting an extra wire key is the caller's schema's property, and core cannot override it without defeating caller-supplied schemas | Phase 6a | `jsonSerde`'s TSDoc, `packages/codec-json/src/json-serde.ts` |
-| `H3` | No serde-specific error base class | accepted deviation — two flat leaves under `DexpaceError` plus `isSerdeError`, because checkpoint §5.2 caps the tier at two levels | Phase 6a | `packages/core/src/serde/errors.ts`; `packages/core/etc/core.api.md` |
-| `H5` | `NFR-8`/`NFR-9` shrinker keep-configuration | Phase 9 answered it the other way — `NFR-8` not applicable, `NFR-9` shipped | 2026-09-02 | `packages/shrink-test/`; deviations.md §10 |
-| `H6` | Assertion density in 6a | won't fix — the same decision F3 records | 2026-09-02 | F3, retired; `docs/deferred-items.md`'s *Assertion-density rule applied project-wide* row (retired) |
-| `H12` | `seams/index.ts` is an unimported internal barrel | deleted, after a three-way proof that it was dead | 2026-09-02 | `packages/core/src/seams/` carries no `index.ts` |
-| `H13` | `test:scripts` runs in no CI job | closed by the `Gate self-tests (scripts/*.test.mjs)` step, mirrored in the preflight | 2026-08-31 | `.github/workflows/ci.yml`; `.claude/skills/ci-preflight/run-ci.mjs` |
-| `H14` | `decodeSuccessResponse`'s 4xx/5xx branch is unprotected against a teardown failure | fixed at `toHttpError` with `releaseQuietly`/`withReleaseFailure` | 2026-09-02 | `packages/core/src/body/http-status-error.ts`; three cases in its test |
-| `I1` | `SSE-41` reactive adapter deferred to Phase 8b | delivered by Phase 8b | 2026-09-02 | `packages/rx/src/sse.ts:34,50` |
-| `J1` | `PAGE-11` close-before-yield vs §7.1's illustrative snippet | resolved with an erratum — `PAGE-11` governs; materialized items survive close, so closing first releases the response immediately | Phase 6c | `docs/sdk-design-nodejs/07-pagination-sse-and-serialization.md` §7.1; `docs/knowledge/notes/pagination.md` |
-| `J2` | `PAGE-5`/`PAGE-29` asynchronous `PaginationStrategy.parse` signature | resolved with a spec clarification — bodies arrive as async streams, so `parse` returns `Promise<PageInfo<T>>` with the isolated non-mutating semantics intact | Phase 6c | `packages/core/src/pagination/strategy.ts` |
-| `J3` | `Page<T>` disposal is a runtime-guarded install, not `implements AsyncDisposable` | resolved — guarded `[Symbol.asyncDispose]` install with `close()` as the supported teardown; the `>=20.4` floor bump is decided against | 2026-08-30 | `packages/core/src/pagination/page.ts`; Section D's `await using` row; `I3` |
-| `J4` | WHATWG encode-set boundary and verbatim query splice | resolved by design — hand-rolled tokenization over the raw query substring, so untargeted parameters survive byte-for-byte (`PAGE-21`/`PAGE-22`) | Phase 6c | `packages/core/src/pagination/query-splice.ts` |
-| `J5` | Transport-direct pagination without an internal resilience loop | resolved by design — resilience composes externally at the pipeline layer (`PIPE-9`), keeping the engine transport-agnostic | Phase 6c | `packages/core/src/pagination/paginator.ts` |
-| `J6` | `items()` vs `pages()` single-use asymmetry | resolved by design — `items()` re-walks and closes each page before yielding; `pages()` hands out live connection ownership and so is single-use (`PAGE-8`/`PAGE-14`) | Phase 6c | `packages/core/src/pagination/paginator.ts` |
-| `J7` | Iterative generator drive without a trampoline | resolved by design — `PAGE-31` sanctions native loops; `#walk` and `driveFetchers` are `async function*` loops in constant stack space | Phase 6c | `packages/core/src/pagination/paginator.ts`, `fetchers.ts` |
-| `J8` | Error unwrapping and root-cause propagation | resolved by design — `PaginationError` is reserved for engine misuse; transport, parse and network failures propagate unwrapped with their causes (`PAGE-28`) | Phase 6c | `packages/core/src/pagination/errors.ts` |
-| `K2` | Proxy resolution implements the property tier the design ledgered as collapsed | resolved — the ledger wording was narrowed to say the *production sources* collapse, not the resolution logic; without the tier `CFG-24`/`CFG-26` would have been silent gaps | 2026-08-27 | `packages/core/src/config/proxy.ts`; the 7a design doc's ledger row |
-| `K4` | `CFG-28`'s global-configuration convenience resolver is not built | closed — the clause is a MAY, and practice threads a `Configuration` | 2026-09-02 | `packages/transport-undici/` |
-| `K5` | `CFG-35`'s throwable axis is not in this phase | already delivered by Phase 5a when the row was written | 2026-09-02 | `packages/core/src/retry/classify.ts` |
-| `K9` | `Configuration.default()` ships as a free `defaultConfiguration()` | resolved — `Configuration` is an `interface` in this port and cannot carry a static; the plan's own alternative placement | 2026-08-27 | `packages/core/src/config/configuration.ts:354` |
-| `K10` | `CFG-24`'s warning half is not emitted | emits `http.proxy.configRejected` on every rejection path | 2026-09-02 | `packages/core/src/config/proxy.ts` |
-| `K14` | A configuration seam that fails is silently invisible | `readLayer` emits `config.sourceFailed`, carrying layer and key | 2026-09-02 | `packages/core/src/config/configuration.ts` |
-| `K15` | `HTTP-17`: `hasForbiddenNameByte` permits a space in a header name | decided — the predicate matches the frozen requirement exactly, no deviation filed | 2026-09-02 | `packages/core/src/http/ascii-validation.ts`; `docs/product-spec/04-core-http-domain-model.md:32` |
-| `K17` | `formatProxyOptions` re-brackets an IPv6 host stored bare | resolved — bracketing lives in the formatter, keyed off a colon in the host; `host` stays bare as the stored representation | 2026-08-27 | `packages/core/src/config/proxy.ts:222` |
-| `L2` | G2's deferred emissions | resolved — `REDIR-28` hop and rejection logging and `REDIR-15` downgrade logging are active through `getGlobalLogger()`; see `G2` | 2026-08-28 | `packages/core/src/redirect/redirect-step.ts` |
-| `L3` | G12, K10, K14 config and auth logger retrofit | all three sites emit, taken as one change | 2026-09-02 | `auth/bearer-cache.ts`, `config/proxy.ts`, `config/configuration.ts` |
-| `M2` | `ASYNC-*` IDs marked 🚫 are not satisfied anywhere | Phase 8a landed both transports and the shared conformance suite | 2026-09-02 | `a0d734d`; `packages/transport-conformance/` |
-| `M3` | `ASYNC-18` confirmed a full-port collapse at implementation time | resolved — `@dexpace/rx` contains no timer, scheduler or backoff; already reflected in §10 ledger item 1 | 2026-08-28 | `packages/rx/`; `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` |
-| `N1` | Cancellation surfaces two different types depending on the layer | a core-side `abortToSdkError` maps both core sites, timeout still distinct | 2026-09-02 | `packages/core/src/cancellation.ts` |
-| `N2` | `HttpStatusError`'s constructor fabricates a "successful exception" | constructor enforces 400-599; `retire()` got its own trail-entry leaf | 2026-09-02 | `packages/core/src/body/errors.ts`, `packages/core/src/retry/errors.ts` |
-| `O3` | The phase records still carry pre-split corpus paths | won't fix — `docs/work/` files are dated records of what a phase planned, are never retro-edited, and `CLAUDE.md` states the split so it does not read as an oversight | 2026-09-02 | `CLAUDE.md`; `grep -rhoE "docs/knowledge/[a-z0-9-]+\.md" docs/work \| wc -l` |
-| `P1` | `toHttpError`'s `finally` can mask the drain failure | merged into H14, which is canonical and carries the fix | 2026-09-02 | H14, retired |
-| `P2` | `RequestOptionsBuilder.maxRetries` — the pattern deserves a sweep | sweep run over every public numeric setter; four holes fixed to the full range | 2026-09-02 | `http/request-options.ts`, `retry/settings.ts` |
-| `P9` | Phase 7b still owes `engine.ts` two log events | both ship, plus a third the finding did not anticipate | 2026-08-31 | `packages/core/src/retry/engine.ts` |
-| `U1` | Five citations point at paths the restructure moved | closed as a finding — four corrections handed to the frozen trees, the `.changeset/` one left permanently | 2026-09-02 | `docs/knowledge/notes/`, `docs/sdk-design-nodejs/10-…` (see HANDOFF) |
-| `U2` | Three phase deferrals never reached the aggregate log | recovered into the aggregate | 2026-08-31 | `docs/deferred-items.md` |
-| `U3` | Three `F` namespaces coexist; a bare citation is ambiguous | options 1 and 3 together — a section qualifier, taught to the citation check | 2026-09-02 | `.claude/skills/housekeeping/probe.mjs`; this file's Section index |
-| `U6` | Six citations named the wrong section, four resolved to nothing | five corrected in source; the `.changeset/` one left as frozen history | 2026-08-31 | `packages/core/src/config/` |
-| `U7` | `redirectStep()` is public; the guard that makes it safe is not | option 1 — `withRedirect` and `stripCrossOriginMarkerStep` promoted | 2026-09-02 | `packages/core/etc/core.api.md` |
-| `U8` | Two published READMEs shipped a sample that does not compile | both show `close()` in a `finally`, and say why | 2026-08-31 | `packages/transport-fetch/README.md`, `packages/transport-undici/README.md` |
-| `U9` | A `@throws` named a class that does not exist, ten more unreachable | option 3 — eight promoted, the two bug-signalling tags rewritten | 2026-09-02 | `packages/core/etc/core.api.md`; `docs/sdk-documentation/errors.md` |
-| `U10` | Three documents stated three different, all-wrong citation counts | replaced by one derivation, a command rather than a sentence | 2026-09-01 | `node .claude/skills/housekeeping/probe.mjs --only=citations` |
-| `U11` | The count checker could not read the counts it was written for | `parseNumeral` plus a subject-anchored, required claim table | 2026-09-01 | `.claude/skills/housekeeping/probe.mjs`, `probe.test.mjs` |
-| `V1` | `OBS-19`/`TRANSPORT-13`: three modes, one level | `'all'` and `'first-per-name'` now warn; `'quiet'` stays silent | 2026-09-02 | `packages/transport-shared/src/drop-log.ts` |
-| `V4` | `retrySettings` accepted a delay no timer can honor | closed from the other side — V13's chunked clock waits any finite duration | 2026-09-02 | `packages/core/src/retry/settings.ts`; `packages/core/src/config/clock.ts` |
-| `V5` | One defect, two register letters, two contradicting statuses | resolved by merge — H14 canonical, P1 points at it | 2026-09-02 | H14 and P1, both retired |
-| `V6` | The register hard-coded its own citation count | number replaced by the derivation command U10 prescribes | 2026-09-02 | this file's Section index |
-| `V7` | Section Q's `Response.close()` latch claim is stale | Q's superseded paragraph is removed by this retirement pass | 2026-09-02 | `packages/core/src/http/response.ts:200-207` |
-| `V8` | Section Q's assertion-count correction is wrong about Phase 4a | Q's superseded paragraph is removed by this retirement pass | 2026-09-02 | `packages/core/src/context/store.ts:35,49,67` |
-| `V9` | Section R's "Suggested order" sequences work before Phase 4 | closed as advice; the block is removed by this retirement pass | 2026-09-02 | Section R |
-| `V10` | Section R's Phase-3 residuals show four shipped rows as pending | marks corrected, then the four rows retired with this pass | 2026-09-02 | the four `R — residual` rows below |
-| `V12` | Section H asserts and denies the same fact, four items apart | `H4`'s stale sentence struck and pointed at `H18` | 2026-09-02 | `packages/codec-json/tsconfig.json` carries no `references` key |
-| `V13` | A `RETRY-18`-clamped pacing hint exceeds any timer | `Clock.sleep` chains timers, so a 365-day hint is waitable and no deviation is owed | 2026-09-02 | `packages/core/src/config/clock.ts`, `sleepInChunks` |
-| `V14` | `N2`'s premise is false: core constructs the forbidden exception | `RetryDiscardedResponseError` gave `retire()` an honest trail entry | 2026-09-02 | `packages/core/src/retry/errors.ts` |
-| `V15` | Section T's `F9` deadline passed; `Cursor` never checks the signal | `Cursor.#dispatch` checks at every step boundary, mapping through N1's mapper | 2026-09-02 | `packages/core/src/pipeline/cursor.ts` |
-| `Q.D1` | Changeset level for `Request.body`'s narrowing to `Body \| undefined` | resolved to minor under semver's initial-development carve-out, pointer in the changeset | 3b execution | `.changeset/2026-08-25-body-lifecycle.md` |
-| `Q.D2` | Three Phase-1/3a symbols the 3b plan called could not be verified | verified against the real code; the real names were used, no duplicates added | 3b execution | `packages/core/src/io/limits.ts` (`MAX_BYTE_ARRAY_LENGTH`), `http/status.ts`, `http/protocol.ts` |
-| `R.E1` | `[Symbol.asyncDispose]` declared ahead of the declared floor | 3b reverted to `close()`-only; the §5.4 reopening closed when the `>=20.4` bump was rejected | 2026-09-02 | Section D's `await using` row; `I3` |
-| `R.E5` | `bun test` proves nothing about the Node runtime | §5.9's own prescription implemented — a `node --test` tree plus a two-version CI matrix | 2026-08-26 | `tests/node-conformance/`; `.github/workflows/ci.yml` |
-| `R.E6` | No per-class `#private` justification comment | closed on `F5`'s reading — the convention is stated once, project-wide | 2026-09-02 | `CLAUDE.md`, "Domain model construction pattern" |
-| `R.E7` | `NFR-14`'s stale "no direct Bun equivalent" reason | moot — Phase 6a adopted workspace catalogs | 2026-08-27 | root `package.json`, `workspaces.catalog` |
-| `R.E8` | `crypto` is absent from ESM on every Node 18 | floor raised to `>=20.3`, with `lib`/`target` moved to ES2023 | 2026-08-26 | `scripts/verify-runtime-floor.mjs`; `packages/*/package.json` |
-| `S.F1` | `SuppressedError` does not exist on the declared runtime floor | branch (b) — a runtime-guarded `suppress()` helper, not a `>=24` floor | 2026-08-26 | `packages/core/src/suppress.ts` |
-| `S.F2` | Zero assertions across the whole `recovery/` module | ledgered in 4b, then settled project-wide as won't-fix at `F3` | 2026-09-02 | `F3`, retired; `docs/deferred-items.md`'s *Assertion-density rule applied project-wide* row (retired) |
-| `S.F3` | Stale `wrapCancellation()` `invariant()` sentence in the 4b spec | replaced with `assertNever`'s `InvariantViolation`, matching the plan | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` design doc |
-| `S.F4` | The spec never designs the `assertNever` addition the plan builds | `invariant.ts` added to the spec's File Layout | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` design doc |
-| `S.F5` | `RECOV-14`'s concurrent-invocation clause claimed but untested | one design sentence plus an interleaved-`apply()` test | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` plan |
-| `S.F6` | `RECOV-32`/`RECOV-33` read as silent drops | the Scope sentence now names 5a and 7a by requirement | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` design doc |
-| `S.F7` | `#private` fields with no justifying comment | closed on `F5`'s reading; the cosmetic remainder is logged, not owned | 2026-08-30 | `CLAUDE.md`; `docs/deferred-items.md`'s *`#private`-vs-`private`* row, still deferred |
-| `S.F8` | The chain property test drops half of what the spec promises | generator extended to seed `Failure` and assert `RECOV-4` | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` plan |
-| `S.F9` | `fold()`'s three positional parameters trip the corpus prose | dissolves under the lint threshold the repository actually follows — see `V11` | 2026-09-02 | `eslint.config.js` `max-params`; `V11`, live |
-| `S.F10` | `statusMappingStep` is a module-level `const` arrow | changed to a named `function` declaration with a `satisfies` check | 2026-07-28 | `docs/work/mvp/phase4/phase4b/` plan |
-| `T.F1` | `PIPE-17`'s "options readable by any step" claimed while unmet | both documents record the partial deferral by name — 5a Task 1 | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` documents |
-| `T.F2` | Spec lists `replace` among the pillar-collision raisers | `replace` removed, `prependAll` added, `PIPE-5`'s exemption spelled out | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` design doc |
-| `T.F3` | `contextStore.clear()` in `afterEach` wipes sibling test state | both hooks deleted, with a comment recording why | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` plan |
-| `T.F4` | `NFR-13`'s SPDX header absent from every 4c listing | Global Constraints bullet, every listing, and Task 6's grep | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` plan |
-| `T.F5` | Claimed property tests the plan never shipped | three real `fc.assert` properties added for `PIPE-22`/`PIPE-38` | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` plan |
-| `T.F6` | Pipeline errors carry symbols as fields but never render them | both messages interpolate `String(type)` | 2026-07-29 | `packages/core/src/pipeline/errors.ts` |
-| `T.F7` | `StepContext.fork?: () => Next` spelled bare | spelled `?: (() => Next) \| undefined` in both documents | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` documents |
-| `T.F8` | `PIPE-18`/`PIPE-19` tags swapped on the builder listing | IDs corrected; the prose names the module-level helper | 2026-07-29 | `docs/work/mvp/phase4/phase4c/` design doc |
-| `T.F9` | `Cursor` never checks the signal between steps | option (a) — check in `#dispatch`, map through `abortToSdkError`; see `V15` | 2026-09-02 | `packages/core/src/pipeline/cursor.ts` |
-
----
-
-## Retired rows without an item ID
-
-Section D's deferral table and Section R's Phase-3-owned residuals hold rows, not items: they never
-carried an ID, and are cited by section and row title. `L1` is a live SPLIT whose `OBS-19` and `OBS-28`
-halves are resolved while `OBS-29` is not, so its two closed halves retire here by requirement rather
-than by ID. Nothing in this table reserves an ID, which is why it is kept out of the one above — that
-table is the register's second ID namespace and the citation check parses it.
-
-| Row | Subject | Resolution | Date | Evidence |
-|---|---|---|---|---|
-| L1 — `OBS-19` | Dropped-header verbosity policy deferred to Phase 8a | fixed — the policy now has three levels, not one; recorded as V1 | 2026-09-02 | `packages/transport-shared/src/drop-log.ts` |
-| L1 — `OBS-28` | Richer HTTP-tracer vocabulary deferred to Phase 8a | closed as satisfied-by-level — a SHOULD whose no-op extension mechanism ships | 2026-09-02 | `packages/core/src/observability/tracing.ts:40-74` |
-| R — residual: `BODY-34`'s shared preview-cap value | one cap value for both logging tees | shipped in 7b — one configured value threaded through both | 2026-09-02 | `packages/core/src/observability/logging-step.ts` |
-| R — residual: `BODY-4`/`BODY-5` replayability consultation | resilience must read `body.replayable` | shipped in 5a and 5b | 2026-09-02 | `retry/classify.ts` `isResendable`; `redirect/decide.ts` |
-| R — residual: `FileBody` | `HTTP-40`/`BODY-11`/`12`/`13`/`36` | shipped in 8a as a package, on the structural `Body.kind === 'file'` contract | 2026-09-02 | `packages/body-file/` |
-| R — residual: logging tees unwired to any `Logger` | both tees need a driver | shipped in 7b — both are driven from the logging step | 2026-09-02 | `packages/core/src/observability/logging-step.ts` |
-| D — Body lifecycle | `HTTP-36`–`HTTP-43` | shipped in 3b | 2026-08-26 | `packages/core/src/body/` |
-| D — Lazy `TypedResponse<T>` | `HTTP-44`, `HTTP-45` | shipped in 3b | 2026-08-26 | `packages/core/src/body/typed-response.ts` |
-| D — `MultipartBody` | `HTTP-51` | shipped in 3b; the non-appearance clause stays open in Section R's residuals | 2026-08-26 | `packages/core/src/body/multipart-body.ts` |
-| D — 1 MiB error-body buffering cap | `HTTP-52` | shipped in 3b; `RECOV-16` reuses it unchanged | 2026-08-26 | `packages/core/src/body/http-status-error.ts` |
-| D — Seam contracts | `SEAM-2`–`SEAM-30` | verified shipped across Phases 2 and 6a; §10 item 2 records the byte-stream removal | 2026-09-02 | `packages/core/src/seams/` |
-| D — Adapter packages, peer-dependency dedup | `NFR-2` | nine publishable packages, core a peer of every one | 2026-09-02 | `bun run verify:seam-1` |
-| D — Shrink-survival regression guard | `NFR-9` | `@dexpace/shrink-test`, private, in the CI step list | 2026-09-02 | `packages/shrink-test/` |
-| D — Concurrency-model agnosticism check | `NFR-11` | 4c executed; §10 item 1 carries the full-port collapse | 2026-09-02 | `docs/sdk-design-nodejs/10-deliberate-deviations-from-the-reference-contract.md` |
-| D — `CTX-17`'s positive half | `CTX-17` | `Runtime.send()` installs and evicts its own store entry | 2026-09-02 | `packages/core/src/pipeline/runtime.ts` |
-| D — Real W3C Trace Context generation | `CTX-14`, `CTX-15` | `generateTraceId`/`generateSpanId` ship with the all-zero sentinel guard | 2026-09-02 | `packages/core/src/observability/tracing.ts` |
-| D — `FakeTransport` test double | — | ships and is used across the retry, redirect, auth and observability suites | 2026-09-02 | `packages/core/src/testing/fake-transport.ts` |
-| D — Self-identifying version metadata | `NFR-15` | shipped; the missing barrel export is `K1`, not this row | 2026-09-02 | `packages/core/src/config/build-info.ts`, `client-identity-step.ts` |
-| D — `NFR-8` re-confirmed as a documented non-applicability | `NFR-8` | recorded as a deviation — no reflection-driven discovery surface exists | 2026-09-02 | deviations.md §10 |
-| D — Redirect structured logging | `REDIR-28`, `REDIR-15`, `XCUT-17`(d) | all three families emit; see `G2` | 2026-09-02 | `packages/core/src/redirect/redirect-step.ts` |
-| D — Redirect's loop-detected and malformed-Location events | `REDIR-28` | both emit behind the stop-reason discriminant; see `G3` | 2026-09-02 | `packages/core/src/redirect/decide.ts` |
-| D — The cross-origin marker's consumption side | `REDIR-11`(b/c), `XCUT-17`(b), `AUTH-29` | `planOutbound` reads the marker and clears it; see `G7` | 2026-09-02 | `packages/core/src/auth/auth-step.ts` |
-| D — Auth re-runs per redirect hop | `PIPE-2` | `standardResilience()` seats `authStep()` inside the redirect pillar | 2026-09-02 | `packages/core/src/auth/preset.ts` |
-| D — Public-barrel promotion of `redirectStep`/`withRedirect` | — | the half 5c left is closed; see `U7` | 2026-09-02 | `packages/core/etc/core.api.md` |
-| D — Re-confirm the redirect predicate's scope | `REDIR-20` | confirmed and recorded as a deviations row; see `G4` | 2026-09-02 | deviations.md, "Deviations recorded outside a phase" |
+which should carry this alongside N3's two markers and the two `<sub>` paths the documentation
+restructure left pointing at files it had moved. One visit, three fixes.
 
 ---
 
 ## Maintaining this file
 
 Add an entry the moment a gap is found, not when it is fixed — the failure mode this file prevents is a
-checklist row marked ✅ against code that does not implement it (A1 and A2 were both instances; A1 is retired).
-**Never delete an entry.** When the underlying requirement is genuinely satisfied *and* its checklist row
-agrees, retire it: cut the body, add one row to [Retired items](#retired-items) with the resolution, the date
-and `file:line` evidence, and mark the ID retired in the Section index. The ID stays reserved for good. When a
-phase closes, re-scan its checklist against the code rather than trusting the marks.
+checklist row marked ✅ against code that does not implement it (A2 is one such instance).
+**Never delete a live entry.** When the underlying requirement is genuinely satisfied *and* its checklist
+row agrees, remove the body and drop the ID from the Section index; nothing is kept in its place. The ID is
+never renumbered and never reused. When a phase closes, re-scan its checklist against the code rather than
+trusting the marks.
 
 **A new review is a new section, with the next letter.** Never renumber an existing item and never reuse a
-letter: item IDs are cited from source comments, which no gate updates. `node scripts/knowledge.mjs` has
+letter — including a letter the Section index no longer lists, whose items are all closed: item IDs are
+cited from source comments, which no gate updates. `node scripts/knowledge.mjs` has
 nothing to do with this file; the check that every citation resolves lives in the `housekeeping` skill's probe
-(`.claude/skills/housekeeping/probe.mjs`), and U6 records what it found the first time it ran.
+(`.claude/skills/housekeeping/probe.mjs`), which found six mis-cited IDs the first time it ran.
 
 **Heading form.** `## Section <Letter> — <Subject>` for a section, `### <Letter><N> — <title> — **STATUS**`
 for an item. Sections A–G used `## A.` until 2026-08-31; the letters did not change, only the form.

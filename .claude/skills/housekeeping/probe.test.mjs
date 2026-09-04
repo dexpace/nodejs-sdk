@@ -522,8 +522,8 @@ test('citations: a resolving citation is not reported', () => {
 });
 
 // Sections Q-T hold the relocated reviews' OWN row numbering, so three `F` namespaces coexist and a
-// bare `F8` resolves to any of them. The register's Section index states the qualified form and
-// `open-items.md` U3 records the decision; these four cases are the mechanism.
+// bare `F8` resolves to any of them. The register's Section index states the qualified form;
+// these four cases are the mechanism.
 const QUALIFIED_REGISTER =
   '# Open Items\n\n### A1 — a real item — **WATCH**\n\nBody.\n\n' +
   '## Section S — a relocated review\n\n' +
@@ -561,7 +561,7 @@ test('citations: a qualifier naming the wrong section is caught', () => {
   );
   assert.ok(
     found.some(f =>
-      /cites docs\/open-items\.md T\.F8, which Section T carries as neither a table row nor a retirement/.test(
+      /cites docs\/open-items\.md T\.F8, which Section T carries as neither a table row nor a purged row/.test(
         f.message,
       ),
     ),
@@ -606,25 +606,50 @@ test('citations: a bare ID still resolves against `### <ID>` headings only', () 
   );
 });
 
-// A resolved item's body is REMOVED from the register and replaced by one row in `## Retired items`.
-// The ID is never released, so every citation of it must keep resolving — which means the check has
-// to read that table as a second ID source, bare and section-qualified alike. `open-items.md` records
-// the mechanism in its own Status vocabulary under `RETIRED`.
-const RETIRED_REGISTER =
+// A resolved item's body was REMOVED from the register and replaced by one row in `## Retired items`.
+// On 2026-09-04 that table was deleted and its rows reproduced verbatim into a dated note, so the
+// second namespace of resolvable IDs now lives OUTSIDE the register. The ID is still never released,
+// so every citation of it must keep resolving — the check reads the note's `## Purged item IDs` table
+// as that second source, bare and section-qualified alike.
+const PURGE_NOTE = 'docs/work/mvp/2026-09-04-register-retirement-purge.md';
+
+// The register after the purge: one live heading, and a Section T whose rows are all gone.
+const PURGED_REGISTER =
   '# Open Items\n\n### A1 — a live item — **WATCH**\n\nBody.\n\n' +
   '## Section T — a relocated review\n\n' +
-  'All rows retired.\n\n' +
-  '## Retired items\n\n' +
+  'All rows retired.\n';
+
+// The note, with all three of its tables. Only the FIRST is a namespace, and the other two are the
+// two ways that can go wrong. `## Purged rows without an item ID` holds rows whose first cell is not
+// an ID at all (`D — …`, `L1 — …`); those fall out of the row pattern wherever it is pointed, which is
+// what the real note relies on. `## Purged deferral rows` is the one that would actually leak: give it
+// a row keyed like an item ID and a whole-file scan reserves it, while the slice does not.
+const PURGE_NOTE_TEXT =
+  '# Register retirement purge\n\n' +
+  'Prose.\n\n---\n\n' +
+  '## Purged item IDs\n\n' +
   '| ID | Title | Resolution | Date | Evidence |\n|---|---|---|---|---|\n' +
   '| `K10` | a fixed item | fixed | 2026-09-02 | `src/x.ts` |\n' +
-  '| `T.F9` | a retired review row | fixed | 2026-09-02 | `src/y.ts` |\n' +
-  '| D — a Section D row | — | shipped | 2026-09-02 | `src/z.ts` |\n';
+  '| `T.F9` | a retired review row | fixed | 2026-09-02 | `src/y.ts` |\n\n---\n\n' +
+  '## Purged rows without an item ID\n\n' +
+  '| Row | Subject | Resolution | Date | Evidence |\n|---|---|---|---|---|\n' +
+  '| L1 — `OBS-19` | a Section L half | fixed | 2026-09-02 | `src/w.ts` |\n' +
+  '| D — a Section D row | — | shipped | 2026-09-02 | `src/z.ts` |\n' +
+  '| R — residual: a thing | — | shipped | 2026-09-02 | `src/v.ts` |\n\n---\n\n' +
+  '## Purged deferral rows\n\n' +
+  '| Row key | Origin phase | Delivered by | Evidence | Date |\n|---|---|---|---|---|\n' +
+  '| `Y7` | Phase 0 | Phase 9 | `src/u.ts` | 2026-09-02 |\n';
 
-test('citations: a retired ID resolves against the `## Retired items` table', () => {
+const PURGED = {
+  'docs/open-items.md': PURGED_REGISTER,
+  [PURGE_NOTE]: PURGE_NOTE_TEXT,
+};
+
+test("citations: a purged ID resolves against the note's `## Purged item IDs` table", () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': RETIRED_REGISTER,
+        ...PURGED,
         'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K10')}\n`,
       },
     },
@@ -633,12 +658,12 @@ test('citations: a retired ID resolves against the `## Retired items` table', ()
   assert.deepEqual(messages(found), []);
 });
 
-test('citations: a retired Q-T row resolves through its section qualifier', () => {
+test('citations: a purged Q-T row resolves through its section qualifier', () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': RETIRED_REGISTER,
-        // Section T no longer carries F9 as a table row -- only the retirement table does.
+        ...PURGED,
+        // Section T no longer carries F9 as a table row -- only the note does.
         'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('T', 'F9')}\n`,
       },
     },
@@ -647,12 +672,12 @@ test('citations: a retired Q-T row resolves through its section qualifier', () =
   assert.deepEqual(messages(found), []);
 });
 
-test('citations: an ID in neither the headings nor the retired table still dangles', () => {
+test('citations: an ID in neither the headings nor the note still dangles', () => {
   const found = onFixture(
     {
       overrides: {
-        'docs/open-items.md': RETIRED_REGISTER,
-        // K11 is neither a `### <ID>` heading nor a retirement row. Retirement widens the ID set;
+        ...PURGED,
+        // K11 is neither a `### <ID>` heading nor a purged row. The note widens the ID set;
         // it must not turn the check into a no-op.
         'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K11')}\n`,
       },
@@ -661,9 +686,109 @@ test('citations: an ID in neither the headings nor the retired table still dangl
   );
   assert.ok(
     found.some(f =>
-      /cites docs\/open-items\.md K11, which has no `### <ID>` heading and no `## Retired items` row/.test(
-        f.message,
-      ),
+      new RegExp(
+        String.raw`cites docs/open-items\.md K11, which has no \`### <ID>\` heading and no ` +
+          String.raw`\`## Purged item IDs\` row in ${PURGE_NOTE}`,
+      ).test(f.message),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
+test('citations: the finding names the note, never the deleted `## Retired items` table', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        ...PURGED,
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K11')}\n${citeQualified('T', 'F8')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.equal(found.length, 2, JSON.stringify(messages(found)));
+  for (const message of messages(found)) {
+    assert.ok(message.includes(PURGE_NOTE), message);
+    assert.ok(!/Retired items/.test(message), message);
+  }
+});
+
+test('citations: a row under `## Purged rows without an item ID` is not an ID', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        ...PURGED,
+        // `L1` is the first cell of a row in the SECOND table. It reserves no ID -- the row is keyed
+        // by section and title -- so a citation of it must still dangle. Parsing the whole note
+        // instead of the one section is what this case forbids.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('L1')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md L1, which has no/.test(f.message),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
+test('citations: only the `## Purged item IDs` section is a namespace', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        ...PURGED,
+        // `Y7` is the first cell of a row in the note's THIRD table, which is a deferral audit and
+        // reserves no open-item ID. Only the one section is sliced, so a citation of it dangles.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('Y7')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md Y7, which has no/.test(f.message),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
+test('citations: the note being absent degrades rather than throws', () => {
+  // The default fixture writes no note at all. `ctx.read` is `readFileSync`, so an unguarded read of
+  // the missing path is an ENOENT that replaces every finding with a raw stack; the guard is what
+  // makes this a normal run with the pre-purge namespace only.
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('A1')}\n${cite('K10')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  // Spelled through `REGISTER` for the same reason `cite` is: a contiguous `open-items.md K10` in
+  // this file is a citation the live tree resolves, and asserting on one would couple this suite to
+  // whatever the real note happens to hold.
+  assert.deepEqual(messages(found), [
+    `docs/sdk-documentation/architecture.md:4 cites docs/${REGISTER} K10, which has no ` +
+      `\`### <ID>\` heading and no \`## Purged item IDs\` row in ${PURGE_NOTE}. ` +
+      'Item IDs are permanent; a dangling one means the citation, not the register, is wrong.',
+  ]);
+});
+
+test('citations: a note with no `## Purged item IDs` heading degrades too', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': PURGED_REGISTER,
+        [PURGE_NOTE]: '# a note that lost its table\n\nProse only.\n',
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K10')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md K10, which has no/.test(f.message),
     ),
     JSON.stringify(messages(found)),
   );

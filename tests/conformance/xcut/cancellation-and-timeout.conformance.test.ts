@@ -181,8 +181,8 @@ describe('XCUT-3: an inter-attempt wait is promptly cancellable', () => {
     // must carry is the SDK's OWN type: until 2026-09-02 the retry engine surfaced `signal.reason`
     // verbatim, so a cancelled backoff arrived as a bare DOMException `AbortError` while the
     // transport path mapped the identical abort to `CancellationError` -- one requirement, two
-    // types, depending on which layer noticed. Both layers now map through the same shape
-    // (docs/open-items.md N1), so this asserts the type as well as XCUT-3's letter.
+    // types, depending on which layer noticed. Both layers now map through the same shape, so this
+    // asserts the type as well as XCUT-3's letter.
     expect(carriesCancellation(surfaced)).toBe(true);
     expect(carriesSdkCancellationError(surfaced)).toBe(true);
     expect(carriesTimeout(surfaced)).toBe(false);

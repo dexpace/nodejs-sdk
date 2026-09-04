@@ -50,8 +50,8 @@ async function decideOrClose(
 
 /**
  * REDIR-28's loop-detected and malformed-Location events, the two that were blocked on `decide()`
- * carrying a reason (`docs/open-items.md` G3). Both fire alongside `http.redirect.rejected`, which
- * says only THAT the hop stopped.
+ * carrying a reason. Both fire alongside `http.redirect.rejected`, which says only THAT the hop
+ * stopped.
  *
  * The malformed-Location event logs the header **raw**, unredacted -- REDIR-28's own carve-out:
  * the value failed to parse into a URL, so `redactUrl` has nothing to key off, and a port receiving

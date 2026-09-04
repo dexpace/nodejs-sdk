@@ -220,8 +220,8 @@ export class BearerTokenCache {
         //
         // AUTH-37's "log-and-continue" is now BOTH halves. The log arrived on 2026-09-02, once 7b's
         // `getGlobalLogger()` existed to write to; until then the rejection was swallowed with no
-        // trace at all, which is what `docs/open-items.md` G12 owned. Continue is unchanged: the
-        // still-valid token was already returned and a failed refresh evicts nothing.
+        // trace at all. Continue is unchanged: the still-valid token was already returned and a
+        // failed refresh evicts nothing.
         //
         // Not raced against `fetchOptions.signal`: this refresh belongs to the cache, not to the
         // request that happened to trigger it, and it must outlive that request's cancellation.

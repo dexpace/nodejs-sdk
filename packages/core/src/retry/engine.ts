@@ -148,9 +148,9 @@ async function retire(response: Response): Promise<unknown> {
   // carried a status outside BODY-31's band -- the "successful exception" XCUT-8 forbids, built by
   // core itself, and the reason N2's "nothing in packages/core constructs one this way" was false.
   // The discarded response still owes RETRY-34 a trail entry, so it gets a leaf that says what
-  // actually happened rather than one that claims an HTTP failure that did not occur
-  // (docs/open-items.md N2, V14). The response is NOT consumed on this path (BODY-31 hands it back
-  // intact), so the caller's `finally` closes it.
+  // actually happened rather than one that claims an HTTP failure that did not occur. The response
+  // is NOT consumed on this path (BODY-31 hands it back intact), so the caller's `finally` closes
+  // it.
   return (
     (await toHttpError(response)) ??
     new RetryDiscardedResponseError(response.status.code)

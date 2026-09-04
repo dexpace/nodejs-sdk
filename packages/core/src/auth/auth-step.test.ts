@@ -1433,8 +1433,8 @@ describe('authStep: cancellation (AUTH-30)', () => {
     //
     // Strengthened 2026-09-02: the cursor now refuses the walk at the first step boundary, so a
     // pre-aborted call spends NO wire send either and rejects with `CancellationError` rather than
-    // handing back the 401 (docs/open-items.md V15). The auth step's OWN abort guard is what the
-    // next test covers -- an abort arriving during the hook, which the cursor never sees.
+    // handing back the 401. The auth step's OWN abort guard is what the next test covers -- an
+    // abort arriving during the hook, which the cursor never sees.
     let hookRan = false;
     const controller = new AbortController();
     controller.abort();

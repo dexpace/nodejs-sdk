@@ -52,7 +52,7 @@ describe('charset', () => {
   test('HTTP-24: an UNKNOWN encoding label is null, not the label verbatim', () => {
     // The requirement's own conformance text: `charset=utf-8` -> UTF-8; `charset=bogus` -> null;
     // no charset -> null. "Unknown" is resolved against the runtime's WHATWG Encoding registry,
-    // which is what `new TextDecoder(label)` accepts. See docs/open-items.md A1.
+    // which is what `new TextDecoder(label)` accepts.
     expect(MediaType.parse('text/plain;charset=bogus').charset).toBeUndefined();
     expect(
       MediaType.parse('text/plain;charset="not an encoding"').charset,

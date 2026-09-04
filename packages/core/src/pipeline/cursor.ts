@@ -69,7 +69,7 @@ export class Cursor {
    * Called exactly once per cursor -- `Runtime.send()` allocates a fresh cursor per call (PIPE-10).
    *
    * Every step boundary is a cancellation checkpoint: an aborted `signal` stops the walk before the
-   * next step runs, so a pre-aborted call does no work at all (`docs/open-items.md` V15).
+   * next step runs, so a pre-aborted call does no work at all.
    *
    * @returns the response the outermost step returned, which may be a synthetic one it short-circuited
    *   with, a substituted one, or the terminal transport's own (PIPE-12).
@@ -91,7 +91,7 @@ export class Cursor {
     //
     // Mapped through `abortToSdkError` rather than `throwIfAborted()`, whose `DOMException` is the
     // very inconsistency N1 closed: one cancellation type wherever the abort was observed, with the
-    // caller's own reason kept as `cause`. Recorded at `docs/open-items.md` T.F9 and V15.
+    // caller's own reason kept as `cause`.
     if (this.#signal?.aborted === true) {
       throw abortToSdkError(this.#signal, this.#signal.reason);
     }

@@ -35,9 +35,9 @@ export interface RedirectContext {
  *
  * `REDIR-28` names four structured events, and two of them -- loop-detected and malformed-Location
  * -- are indistinguishable from ordinary termination once the decision is a bare `{kind}`. They were
- * blocked on this discriminant and are emitted by `redirectStep` as of 2026-09-02
- * (`docs/open-items.md` G3). The other three reasons are carried for symmetry: a discriminant set on
- * some paths and absent on others is a worse shape than either extreme.
+ * blocked on this discriminant and are emitted by `redirectStep` as of 2026-09-02. The other three
+ * reasons are carried for symmetry: a discriminant set on some paths and absent on others is a worse
+ * shape than either extreme.
  *
  * @internal
  */

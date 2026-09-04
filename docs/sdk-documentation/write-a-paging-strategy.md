@@ -96,9 +96,10 @@ itself to a caller.
 **`parse` returns a `Promise`, and that is deliberate — do not "fix" it toward the literal
 requirement.** `PAGE-5` says the strategy reads what it needs *synchronously* inside `parse`. Node has
 no synchronous body read, so the literal form is unimplementable here and the discipline the clause
-protects — single use, nothing retained — is what the async signature preserves. Recorded in
-[`docs/deferred-items.md`](../deferred-items.md) — the `PAGE-5` "synchronously inside parse" row, now in
-its *Delivered and retired* table — precisely so an async signature does not later read as an oversight. Every shipped strategy's `extract` above is `async` for the same reason.
+protects — single use, nothing retained — is what the async signature preserves. Recorded in the `PAGE-5`
+"synchronously inside parse" row of
+[`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
+where [`docs/deferred-items.md`](../deferred-items.md)'s discharged rows went — precisely so an async signature does not later read as an oversight. Every shipped strategy's `extract` above is `async` for the same reason.
 
 **2. Build `nextRequest` from the template, not from the response.** The template carries the headers,
 auth tier and options the walk was started with. A next request built from scratch loses all of them.

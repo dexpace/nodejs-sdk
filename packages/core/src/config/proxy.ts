@@ -409,8 +409,8 @@ function readUrlCredentials(url: URL): ProxyCredentials | undefined {
 /**
  * CFG-24's WARNING half: "invalid config -> null + warning". The null half was always here; until
  * 2026-09-02 the warning had nowhere to go, because no `Logger` seam existed when 7a shipped this
- * module (`docs/open-items.md` K10). The consequence was that a typo'd `HTTPS_PROXY` routed every
- * request DIRECT with nothing to read anywhere.
+ * module. The consequence was that a typo'd `HTTPS_PROXY` routed every request DIRECT with
+ * nothing to read anywhere.
  *
  * Never the URL itself: a proxy URL carries `user:pass@`, and CFG-22 masks credentials in every
  * rendering. The variable that supplied it and the reason it was rejected are enough to act on.

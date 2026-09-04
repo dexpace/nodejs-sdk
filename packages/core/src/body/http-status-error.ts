@@ -29,7 +29,7 @@ export class HttpStatusError extends DexpaceError {
    *
    * "Always" is enforced by the constructor as of 2026-09-02, not merely asserted here. It was a
    * documented-but-unchecked invariant before that, which is what let a consumer build the
-   * "successful exception" `XCUT-8` forbids (`docs/open-items.md` N2).
+   * "successful exception" `XCUT-8` forbids.
    */
   readonly status: number;
   readonly #bodyBytes: Uint8Array | undefined;
@@ -94,12 +94,12 @@ export class HttpStatusError extends DexpaceError {
  * response's own close-guaranteeing scope (HTTP-52/BODY-30). Returns null for a non-error response
  * (BODY-31) -- the caller keeps the response, body intact.
  *
- * **A failing release can no longer replace the result** (RECOV-12; `docs/open-items.md` H14, which
- * `P1` describes as the same defect). The drain used to end its work in a bare `finally` block that
- * awaited `response.close()`; `Response.close()` memoizes its release promise, so a close that had
- * already failed handed the same rejection back and it replaced the `HttpStatusError` this function
- * was about to build -- the error never existed, and every caller documenting
- * `@throws HttpStatusError on 4xx/5xx` lied. Release now goes through `releaseQuietly`, so:
+ * **A failing release can no longer replace the result** (RECOV-12). The drain used to end its work
+ * in a bare `finally` block that awaited `response.close()`; `Response.close()` memoizes its
+ * release promise, so a close that had already failed handed the same rejection back and it
+ * replaced the `HttpStatusError` this function was about to build -- the error never existed, and
+ * every caller documenting `@throws HttpStatusError on 4xx/5xx` lied. Release now goes through
+ * `releaseQuietly`, so:
  *
  * - a **read** failure stays primary, with the release failure suppressed under it
  *   (`withReleaseFailure`), exactly as every other subsystem does it;

@@ -48,7 +48,7 @@ function trimSeen(seen: Set<string>): void {
  *
  * Until 2026-09-02 every mode emitted at `verbose`, so the policy was configurable in name only --
  * a caller-set header vanishing before it reached the wire was indistinguishable, at any level a
- * production logger enables, from nothing having happened. Recorded at `docs/open-items.md` V1.
+ * production logger enables, from nothing having happened.
  *
  * @internal
  */

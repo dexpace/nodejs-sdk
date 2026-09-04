@@ -12,8 +12,7 @@ import {CancellationError, isTimeoutSignal} from './seams/transport.js';
  * Core's own cancellable waits -- the retry engine's backoff, the bearer cache's token fetch --
  * surfaced `signal.reason` verbatim, so a caller writing
  * `catch (e) { if (e instanceof CancellationError) ... }` handled a cancelled dispatch and silently
- * missed a cancelled backoff, which arrived as a bare `DOMException` named `AbortError`. Recorded at
- * `docs/open-items.md` N1.
+ * missed a cancelled backoff, which arrived as a bare `DOMException` named `AbortError`.
  *
  * `XCUT-3` is why this is not unconditionally a `CancellationError`: a cancellation must be
  * distinguishable from a timeout, and `AbortSignal.timeout()` aborts with a `TimeoutError` reason.

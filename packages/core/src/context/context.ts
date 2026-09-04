@@ -102,7 +102,7 @@ export interface ContextInit {
  * A second module-level mutable binding, on top of the `contextStore` singleton that already takes
  * that deviation (`docs/knowledge/harvested/variables-and-declarations.md:22`). It is write-only
  * from outside: nothing reads it, nothing resets it, and no behaviour keys off its value -- it
- * labels a string. Recorded at `docs/open-items.md` A5.
+ * labels a string.
  */
 let nextKeySerial = 0;
 

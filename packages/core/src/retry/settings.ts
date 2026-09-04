@@ -49,10 +49,9 @@ export const DEFAULT_RETRY_SETTINGS: RetrySettings = Object.freeze({
  *
  * Bounded below only. A ceiling of `Clock`'s `MAX_SLEEP_MS` sat here between 2026-09-02 and later
  * the same day: it was the right guard while `Clock.sleep` REFUSED a longer wait, and it became
- * unnecessary the moment the clock started chaining timers to honor any finite duration
- * (`docs/open-items.md` V4, resolved by V13). Re-adding it would now reject a duration the platform
- * can wait -- and would make `RETRY-18`'s 365-day pacing clamp unconfigurable, which is the very
- * collision V13 closed.
+ * unnecessary the moment the clock started chaining timers to honor any finite duration. Re-adding
+ * it would now reject a duration the platform can wait -- and would make `RETRY-18`'s 365-day
+ * pacing clamp unconfigurable, which is the very collision V13 closed.
  */
 function validateDuration(label: string, value: number | undefined): void {
   if (value === undefined) return;
@@ -94,7 +93,7 @@ export function retrySettings(
   // fails inside the retry loop at `Clock.sleep`'s ceiling instead of at the call that configured it
   // -- and let a fractional `maxAttempts` through, which is not a count. Same reasoning as HTTP-35's
   // on `RequestOptionsBuilder.maxRetries`: these two are among the four holes the 2026-09-02 sweep
-  // of every public numeric setter closed to the full range (`docs/open-items.md` P2).
+  // of every public numeric setter closed to the full range.
   invariant(
     Number.isFinite(merged.multiplier) && merged.multiplier >= 1,
     `retry multiplier must be a finite number >= 1.0, got ${String(merged.multiplier)}`,

@@ -14,7 +14,6 @@ import {DexpaceError} from '../http/errors.js';
  * "successful exception" `XCUT-8` forbids, constructed by core itself, and contradicting
  * `HttpStatusError`'s own documented invariant. This leaf exists so the trail can say what actually
  * happened: a response was discarded by a caller-widened retry policy, which is not an HTTP failure.
- * Recorded at `docs/open-items.md` N2 and V14.
  *
  * A two-level leaf under {@link DexpaceError}, deliberately — see checkpoint §5.2 and
  * `docs/open-items.md` R.E2 on why no new middle tier is introduced.

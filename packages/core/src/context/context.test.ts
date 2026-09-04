@@ -140,7 +140,7 @@ describe('default key RENDERING (CTX-8)', () => {
     // Appendix C states CTX-8 as "an error whose MESSAGE identifies the key", and
     // `DuplicateContextKeyError`'s message is `String(key)`. Until 2026-09-02 every default key of a
     // flavor rendered as the identical `Symbol(dispatch-context)`, so the message named the flavor
-    // and not the key. See docs/open-items.md A5.
+    // and not the key.
     const a = String(createDispatchContext().key);
     const b = String(createDispatchContext().key);
     expect(a).not.toBe(b);

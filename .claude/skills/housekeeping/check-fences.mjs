@@ -10,8 +10,7 @@
 // with the API" (docs/knowledge/harvested/documentation.md:50). Nothing else in this
 // repository does it: `api:ci` diffs signatures, `verify:consumer-types` compiles the
 // emitted `.d.ts`, and neither reads a README. Two shipped transport READMEs opened with a
-// sample that had not compiled since Phase 10 (docs/open-items.md U8), which is why this
-// exists.
+// sample that had not compiled since Phase 10, which is why this exists.
 //
 // Two kinds of fence are skipped, and the rules are deliberate:
 //

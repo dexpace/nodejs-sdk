@@ -36,8 +36,8 @@ const STRICT_INTEGER = /^[+-]?\d+$/u;
  * The residue used to be that a seam failure was then silently INVISIBLE: an operator whose
  * secrets-store seam was misconfigured saw the caller's default resolve, with nothing anywhere to
  * say why. That half is closed as of 2026-09-02 -- the swallowed throw is warned about, naming the
- * layer and the key -- which is what `docs/open-items.md` K14 owned. The value still resolves to the
- * caller's default either way, because CFG-5's never-throw clause is the stronger obligation.
+ * layer and the key. The value still resolves to the caller's default either way, because CFG-5's
+ * never-throw clause is the stronger obligation.
  *
  * @param source - the caller-supplied lookup seam for one layer.
  * @param key - the key being looked up, already normalized for that layer.

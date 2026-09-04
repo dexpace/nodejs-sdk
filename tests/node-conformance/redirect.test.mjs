@@ -263,8 +263,8 @@ describe('redirect response lifecycle over real Node Web Streams', () => {
   });
 
   it("refuses the walk for a signal already aborted at entry, on Node's AbortSignal", async () => {
-    // `Cursor` checks the signal at every step boundary (docs/open-items.md V15), and maps the abort
-    // through the SDK's own mapper rather than `throwIfAborted()`'s bare DOMException (N1). Node's
+    // `Cursor` checks the signal at every step boundary, and maps the abort through the SDK's own
+    // mapper rather than `throwIfAborted()`'s bare DOMException (N1). Node's
     // AbortSignal/AbortController is an independent implementation of Bun's, and `signal.reason`
     // defaulting is one of the places the two have diverged before -- so the mapped `cause` is
     // asserted here and not only under `bun test`.
