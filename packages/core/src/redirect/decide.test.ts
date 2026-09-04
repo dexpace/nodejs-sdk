@@ -134,7 +134,10 @@ describe('fast path', () => {
       },
     });
     const decision = decide(aResponse(200), contextFor(aRequest()), settings);
-    expect(decision).toEqual({kind: 'return-current'});
+    expect(decision).toEqual({
+      kind: 'return-current',
+      reason: 'not-a-redirect',
+    });
     expect(consulted).toBe(false);
   });
 
@@ -145,7 +148,12 @@ describe('fast path', () => {
         contextFor(aRequest()),
         redirectSettings(),
       );
-      expect(decision).toEqual({kind: 'return-current'});
+      // 'not-a-redirect' rather than 'not-eligible': 300/304/305 never reach the eligibility gate,
+      // because `isRecognizedRedirect` excludes them and REDIR-21's fast path short-circuits first.
+      expect(decision).toEqual({
+        kind: 'return-current',
+        reason: 'not-a-redirect',
+      });
     }
   });
 });
@@ -173,7 +181,10 @@ describe('predicate override', () => {
     });
     const decision = decide(aResponse(301), contextFor(aRequest()), settings);
     expect(observed).toBe(true);
-    expect(decision).toEqual({kind: 'return-current'}); // still no Location to follow to
+    expect(decision).toEqual({
+      kind: 'return-current',
+      reason: 'malformed-location',
+    }); // still no Location to follow to
   });
 
   test('a predicate saying no wins over an otherwise-eligible code/method', () => {
@@ -183,9 +194,14 @@ describe('predicate override', () => {
       contextFor(aRequest({method: 'GET'})),
       settings,
     );
-    expect(decision).toEqual({kind: 'return-current'});
+    expect(decision).toEqual({
+      kind: 'return-current',
+      reason: 'not-eligible',
+    });
   });
+});
 
+describe('predicate override: the snapshot and the safety mechanics (REDIR-20)', () => {
   test('the condition snapshot is a defensive COPY -- a predicate cannot poison loop detection', () => {
     const live = new Set(['https://example.com/a']);
     const settings = redirectSettings({
@@ -294,6 +310,7 @@ describe('Location resolution -- the unfollowed paths', () => {
       decide(aResponse(302), contextFor(aRequest()), redirectSettings()),
     ).toEqual({
       kind: 'return-current',
+      reason: 'malformed-location',
     });
   });
 
@@ -302,6 +319,7 @@ describe('Location resolution -- the unfollowed paths', () => {
       decide(aResponse(302, ''), contextFor(aRequest()), redirectSettings()),
     ).toEqual({
       kind: 'return-current',
+      reason: 'malformed-location',
     });
   });
 
@@ -315,6 +333,7 @@ describe('Location resolution -- the unfollowed paths', () => {
       ),
     ).toEqual({
       kind: 'return-current',
+      reason: 'malformed-location',
     });
   });
 
@@ -329,6 +348,7 @@ describe('Location resolution -- the unfollowed paths', () => {
         decide(aResponse(302, raw), contextFor(aRequest()), redirectSettings()),
       ).toEqual({
         kind: 'return-current',
+        reason: 'malformed-location',
       });
     }
   });
@@ -395,6 +415,7 @@ describe('loop detection', () => {
       ),
     ).toEqual({
       kind: 'return-current',
+      reason: 'loop-detected',
     });
   });
 
@@ -408,6 +429,7 @@ describe('loop detection', () => {
       ),
     ).toEqual({
       kind: 'return-current',
+      reason: 'loop-detected',
     });
   });
 });
@@ -420,7 +442,10 @@ describe('hop cap', () => {
       context,
       redirectSettings({maxHops: 3}),
     );
-    expect(decision).toEqual({kind: 'return-current'});
+    expect(decision).toEqual({
+      kind: 'return-current',
+      reason: 'hop-cap',
+    });
   });
 
   test('maxHops: 0 fails on the very first follow attempt (REDIR-17)', () => {
@@ -429,7 +454,10 @@ describe('hop cap', () => {
       contextFor(aRequest()),
       redirectSettings({maxHops: 0}),
     );
-    expect(decision).toEqual({kind: 'return-current'});
+    expect(decision).toEqual({
+      kind: 'return-current',
+      reason: 'hop-cap',
+    });
   });
 
   test('property: the hop cap bounds every synthetic chain regardless of length', () => {
@@ -445,7 +473,10 @@ describe('hop cap', () => {
             redirectSettings({maxHops}),
           );
           if (followed + 1 > maxHops) {
-            expect(decision).toEqual({kind: 'return-current'});
+            expect(decision).toEqual({
+              kind: 'return-current',
+              reason: 'hop-cap',
+            });
           } else {
             expect(decision.kind).toBe('follow');
           }
@@ -735,7 +766,10 @@ describe('loop detection survives URL normalization', () => {
         contextFor(request),
         redirectSettings(),
       ),
-    ).toEqual({kind: 'return-current'});
+    ).toEqual({
+      kind: 'return-current',
+      reason: 'loop-detected',
+    });
   });
 
   test("the scheme's default port written explicitly still hits the visited set (REDIR-16)", () => {
@@ -746,7 +780,10 @@ describe('loop detection survives URL normalization', () => {
         contextFor(request),
         redirectSettings(),
       ),
-    ).toEqual({kind: 'return-current'});
+    ).toEqual({
+      kind: 'return-current',
+      reason: 'loop-detected',
+    });
   });
 });
 

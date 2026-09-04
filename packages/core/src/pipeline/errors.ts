@@ -6,11 +6,14 @@ import type {Stage} from './stage.js';
 /**
  * PIPE-5: installing a distinct second step onto an occupied pillar; names both types and the stage.
  *
- * @internal
+ * @public
  */
 export class PillarCollisionError extends DexpaceError {
+  /** The pillar stage that was already occupied. */
   readonly stage: Stage;
+  /** The step type already installed there. */
   readonly existingType: symbol;
+  /** The step type the rejected install tried to add. */
   readonly incomingType: symbol;
 
   // eslint-disable-next-line max-params -- constructor parameters fixed by error model: PIPE-5 requires the stage and BOTH colliding types, plus the taxonomy's trailing `options?: ErrorOptions`; same exemption as HttpStatusError. Revisit only if the error model drops a field.
@@ -36,10 +39,12 @@ export class PillarCollisionError extends DexpaceError {
 /**
  * PIPE-21: an insertAfter/insertBefore/replace whose anchor type matches nothing in the pipeline.
  *
- * @internal
+ * @public
  */
 export class AnchorNotFoundError extends DexpaceError {
+  /** The step type named as the anchor, which no installed step carries. */
   readonly anchorType: symbol;
+  /** The builder operation that failed -- `insertAfter`, `insertBefore` or `replace`. */
   readonly operation: string;
 
   constructor(anchorType: symbol, operation: string, options?: ErrorOptions) {
@@ -57,10 +62,12 @@ export class AnchorNotFoundError extends DexpaceError {
  * PIPE-18/PIPE-19: a cross-stage insert/replace -- the incoming descriptor's stage differs from the
  * anchor's.
  *
- * @internal
+ * @public
  */
 export class CrossStageEditError extends DexpaceError {
+  /** The stage the anchor step occupies. */
   readonly anchorStage: Stage;
+  /** The stage the incoming descriptor declares, which differs from the anchor's. */
   readonly incomingStage: Stage;
 
   constructor(
@@ -80,9 +87,10 @@ export class CrossStageEditError extends DexpaceError {
 /**
  * PIPE-11/PIPE-15: a step reused an already-invoked next()/fork() continuation instead of forking again.
  *
- * @internal
+ * @public
  */
 export class CursorAlreadyAdvancedError extends DexpaceError {
+  /** The stage of the step that reused its continuation. */
   readonly stage: Stage;
 
   constructor(stage: Stage, options?: ErrorOptions) {
@@ -97,9 +105,10 @@ export class CursorAlreadyAdvancedError extends DexpaceError {
 /**
  * PIPE-8: an attempt to install a user step onto the reserved, terminal SEND stage.
  *
- * @internal
+ * @public
  */
 export class ReservedStageError extends DexpaceError {
+  /** The builder operation that tried to write to the reserved SEND stage. */
   readonly operation: string;
 
   constructor(operation: string, options?: ErrorOptions) {

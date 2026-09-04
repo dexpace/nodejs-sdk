@@ -202,14 +202,23 @@ export class MediaType {
   }
 
   /**
-   * The `charset` parameter, resolved case-insensitively — `undefined` when absent, never throwing,
-   * so callers fall back to their own default (HTTP-24).
+   * The `charset` parameter, resolved case-insensitively — `undefined` when absent **or unknown**,
+   * never throwing, so callers fall back to their own default (HTTP-24).
    *
-   * The value is returned verbatim and is not checked against a registry of known encodings; an
-   * unrecognized name surfaces as-is rather than as `undefined`.
+   * "Unknown" is the runtime's own WHATWG Encoding registry: a label `TextDecoder` refuses is a
+   * label nothing in this SDK could decode with, so reporting it as a charset would only move the
+   * failure to whoever tried to use it. The label's original case is preserved for the ones it
+   * accepts (HTTP-23).
+   *
+   * The raw parameter stays reachable through {@link MediaType.parameter} — that getter answers
+   * "what did the wire say", this one answers "which encoding", and an unusable label is no
+   * encoding. {@link MediaType.render} likewise round-trips the parameter verbatim (HTTP-25), so
+   * the resolution here never rewrites the value.
    */
   get charset(): string | undefined {
-    return this.parameter('charset');
+    const declared = this.parameter('charset');
+    if (declared === undefined) return undefined;
+    return isKnownEncoding(declared) ? declared : undefined;
   }
 
   /**
@@ -257,5 +266,25 @@ export class MediaType {
       if (other.#parameters.get(key) !== value) return false;
     }
     return true;
+  }
+}
+
+/**
+ * Whether the runtime recognizes `label` as an encoding (HTTP-24's "unknown" half).
+ *
+ * `TextDecoder`'s constructor is the registry: it throws `RangeError` for a label outside the
+ * WHATWG Encoding Standard's table and accepts every alias inside it, which is a strictly better
+ * answer than any list this package could hand-maintain -- and it is the same resolution
+ * `decodeBodyText` performs one layer down, so the two cannot disagree about what is decodable.
+ *
+ * Not memoized. A caller-influenced label-to-boolean map is exactly the unbounded, process-lived
+ * cache XCUT-14 forbids, and construction is cheap next to the parse that produced the label.
+ */
+function isKnownEncoding(label: string): boolean {
+  try {
+    new TextDecoder(label);
+    return true;
+  } catch {
+    return false;
   }
 }

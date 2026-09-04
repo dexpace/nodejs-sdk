@@ -20,7 +20,15 @@
 // file path, per this suite's import rule.
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
-import {Headers, Protocol, Request, Response, Status} from '@dexpace/core';
+import {
+  CancellationError,
+  Headers,
+  Protocol,
+  Request,
+  Response,
+  Status,
+  TransportFailureError,
+} from '@dexpace/core';
 import {createRequestContext} from '../../packages/core/dist/context/context.js';
 import {Cursor} from '../../packages/core/dist/pipeline/cursor.js';
 import {originOf} from '../../packages/core/dist/redirect/cross-origin.js';
@@ -152,7 +160,10 @@ describe("Location resolution on Node's own URL parser", () => {
       contextFor(aRequest()),
       redirectSettings(),
     );
-    assert.deepEqual(decision, {kind: 'return-current'});
+    assert.deepEqual(decision, {
+      kind: 'return-current',
+      reason: 'malformed-location',
+    });
   });
 
   it('returns an unsupported scheme unfollowed, never dispatching it (REDIR-18)', () => {
@@ -166,7 +177,11 @@ describe("Location resolution on Node's own URL parser", () => {
         contextFor(aRequest()),
         redirectSettings(),
       );
-      assert.deepEqual(decision, {kind: 'return-current'}, raw);
+      assert.deepEqual(
+        decision,
+        {kind: 'return-current', reason: 'malformed-location'},
+        raw,
+      );
     }
   });
 });
@@ -215,25 +230,96 @@ describe('redirect response lifecycle over real Node Web Streams', () => {
     assert.equal(loop.cancelCount(), 0);
   });
 
-  it("honors an already-aborted signal on Node's AbortSignal", async () => {
+  it("honors an abort raised DURING a hop, on Node's AbortSignal", async () => {
+    // The redirect step's own per-hop guard: it runs before the step forks again, so the cursor's
+    // step-boundary check never sees this abort and the hop response is handed back OPEN, which is
+    // what PIPE-40 requires on the abandon path.
     const controller = new AbortController();
-    controller.abort();
     const hop = countingResponse(301);
     const located = withLocation(hop.response, 'https://example.com/next');
     const never = countingResponse(200);
-    const transport = new FakeTransport([located, never.response]);
+    const inner = new FakeTransport([located, never.response]);
     const seed = aRequest();
+    const aborting = {
+      send: async (request, options, signal) => {
+        const response = await inner.send(request, options, signal);
+        controller.abort();
+        return response;
+      },
+      close: () => Promise.resolve(),
+    };
 
     const response = await new Cursor({
       steps: [redirectStep()],
-      transport,
+      transport: aborting,
       request: seed,
       context: createRequestContext(seed),
       signal: controller.signal,
     }).advance();
 
-    assert.equal(transport.sendCount, 1);
+    assert.equal(inner.sendCount, 1);
     assert.equal(response, located);
     assert.equal(hop.cancelCount(), 0);
+  });
+
+  it("refuses the walk for a signal already aborted at entry, on Node's AbortSignal", async () => {
+    // `Cursor` checks the signal at every step boundary (docs/open-items.md V15), and maps the abort
+    // through the SDK's own mapper rather than `throwIfAborted()`'s bare DOMException (N1). Node's
+    // AbortSignal/AbortController is an independent implementation of Bun's, and `signal.reason`
+    // defaulting is one of the places the two have diverged before -- so the mapped `cause` is
+    // asserted here and not only under `bun test`.
+    const controller = new AbortController();
+    const reason = new Error('caller went away');
+    controller.abort(reason);
+    const never = countingResponse(200);
+    const transport = new FakeTransport([never.response]);
+    const seed = aRequest();
+
+    await assert.rejects(
+      new Cursor({
+        steps: [redirectStep()],
+        transport,
+        request: seed,
+        context: createRequestContext(seed),
+        signal: controller.signal,
+      }).advance(),
+      error => {
+        assert.ok(error instanceof CancellationError);
+        assert.equal(error.cause, reason);
+        return true;
+      },
+    );
+
+    assert.equal(transport.sendCount, 0);
+    assert.equal(never.cancelCount(), 0);
+  });
+
+  it('maps a TIMEOUT abort to TransportFailureError, not CancellationError (XCUT-3)', async () => {
+    // The other half of the mapper: a cancellation must stay distinguishable from a timeout, and
+    // `AbortSignal.timeout()`'s reason (`TimeoutError`) is runtime-provided.
+    const signal = AbortSignal.timeout(1);
+    await new Promise(resolve => {
+      signal.addEventListener('abort', resolve, {once: true});
+    });
+    const never = countingResponse(200);
+    const transport = new FakeTransport([never.response]);
+    const seed = aRequest();
+
+    await assert.rejects(
+      new Cursor({
+        steps: [redirectStep()],
+        transport,
+        request: seed,
+        context: createRequestContext(seed),
+        signal,
+      }).advance(),
+      error => {
+        assert.ok(error instanceof TransportFailureError);
+        assert.ok(!(error instanceof CancellationError));
+        return true;
+      },
+    );
+
+    assert.equal(transport.sendCount, 0);
   });
 });

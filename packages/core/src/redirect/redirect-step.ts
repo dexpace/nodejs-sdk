@@ -6,10 +6,15 @@ import {invariant} from '../invariant.js';
 import type {StepDescriptor} from '../pipeline/step.js';
 import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
 import {originOf} from './cross-origin.js';
-import {decide, type Decision, type RedirectContext} from './decide.js';
+import {
+  decide,
+  type Decision,
+  type RedirectContext,
+  type RedirectStopReason,
+} from './decide.js';
 import {redirectSettings, type RedirectSettings} from './settings.js';
 import {getGlobalLogger} from '../observability/logger.js';
-import {redactUrl} from '../observability/redaction.js';
+import {redactHeaderValue, redactUrl} from '../observability/redaction.js';
 
 /** Stable identity for pillar-slot occupancy and anchor matching (PIPE-6/PIPE-18). @internal */
 export const REDIRECT_STEP_TYPE: unique symbol = Symbol('dexpace.redirect');
@@ -40,6 +45,46 @@ async function decideOrClose(
     return decide(response, context, settings);
   } catch (error) {
     throw withReleaseFailure(error, await releaseQuietly(response));
+  }
+}
+
+/**
+ * REDIR-28's loop-detected and malformed-Location events, the two that were blocked on `decide()`
+ * carrying a reason (`docs/open-items.md` G3). Both fire alongside `http.redirect.rejected`, which
+ * says only THAT the hop stopped.
+ *
+ * The malformed-Location event logs the header **raw**, unredacted -- REDIR-28's own carve-out:
+ * the value failed to parse into a URL, so `redactUrl` has nothing to key off, and a port receiving
+ * credential-bearing malformed Location values inherits that exposure knowingly.
+ */
+function emitStopReason(stop: {
+  readonly reason: RedirectStopReason;
+  readonly request: Request;
+  readonly rawLocation: string | undefined;
+}): void {
+  try {
+    const {reason, request, rawLocation} = stop;
+    if (reason === 'loop-detected') {
+      getGlobalLogger()
+        .atLevel('warning')
+        .event('http.redirect.loopDetected')
+        .field('url.full', redactUrl(request.url))
+        // The header, not the resolved target: the target is `decide`'s own and never leaves it,
+        // and REDIR-27 lets the header be renamed, so 'location' names the POLICY to apply here.
+        .field('location', redactHeaderValue('location', rawLocation ?? ''))
+        .emit();
+      return;
+    }
+    if (reason === 'malformed-location') {
+      getGlobalLogger()
+        .atLevel('warning')
+        .event('http.redirect.malformedLocation')
+        .field('url.full', redactUrl(request.url))
+        .field('location.raw', rawLocation ?? '')
+        .emit();
+    }
+  } catch {
+    // OBS-20: logger failure must never fail the request
   }
 }
 
@@ -170,7 +215,14 @@ export function redirectStep(
         const decision = await decideOrClose(response, context, settings);
 
         if (decision.kind === 'return-current') {
-          if (response.status.isRedirect) emitRejected();
+          if (response.status.isRedirect) {
+            emitRejected();
+            emitStopReason({
+              reason: decision.reason,
+              request,
+              rawLocation: response.headers.get(settings.locationHeader),
+            });
+          }
           return response;
         }
         if (decision.kind === 'fail') {

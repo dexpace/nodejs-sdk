@@ -187,6 +187,42 @@ describe('BearerTokenCache: a failed background refresh is non-fatal (AUTH-37)',
     );
     expect(after.token).toBe('t1');
   });
+
+  test("AUTH-37's LOG half: the swallowed refresh failure reaches the global logger", async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const cache = new BearerTokenCache();
+      await cache.stamp(
+        fetchWith(
+          providerReturning(createBearerToken('t1', 1000)).provider,
+          500,
+          0,
+        ),
+      );
+      const failing: TokenProvider = () =>
+        Promise.reject(new Error('refresh backend down'));
+      await cache.stamp(fetchWith(failing, 500, 900));
+      await drainMacrotask();
+
+      const refreshFailures = events.filter(
+        e => e.get('event') === 'http.auth.bearerRefreshFailed',
+      );
+      expect(refreshFailures).toHaveLength(1);
+      expect(String(refreshFailures[0]?.get('cause'))).toContain(
+        'refresh backend down',
+      );
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
 });
 
 describe('BearerTokenCache: single-flight and cancellation (AUTH-11/AUTH-34)', () => {
@@ -240,11 +276,13 @@ describe('BearerTokenCache: cancellation is per-caller, not per-fetch (AUTH-34)'
     const patient = cache.stamp(fetchWith(provider, 0, 0)); // no signal at all
     expect(invocations).toBe(1);
 
-    controller.abort(new Error('caller A gave up'));
-    expect((await rejectionOf(aborting)) as Error).toHaveProperty(
-      'message',
-      'caller A gave up',
-    );
+    const givenUp = new Error('caller A gave up');
+    controller.abort(givenUp);
+    // N1/XCUT-1: the SDK's own terminal type, with the caller's reason kept as the cause.
+    const {CancellationError} = await import('../seams/transport.js');
+    const abortRejection = (await rejectionOf(aborting)) as Error;
+    expect(abortRejection).toBeInstanceOf(CancellationError);
+    expect(abortRejection.cause).toBe(givenUp);
 
     // The shared fetch was never cancelled, so B still gets its token.
     resolveProvider?.(createBearerToken('t1', 10_000));
@@ -266,7 +304,9 @@ describe('BearerTokenCache: cancellation is per-caller, not per-fetch (AUTH-34)'
       }),
     );
 
-    expect(rejected as Error).toHaveProperty('message', 'already gone');
+    const {CancellationError} = await import('../seams/transport.js');
+    expect(rejected as Error).toBeInstanceOf(CancellationError);
+    expect((rejected as Error).cause).toHaveProperty('message', 'already gone');
   });
 });
 

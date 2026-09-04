@@ -1427,9 +1427,14 @@ describe('authStep: a challenge this client cannot echo (AUTH-21/AUTH-22)', () =
 });
 
 describe('authStep: cancellation (AUTH-30)', () => {
-  test('a call already aborted when the challenge arrives never runs the hook at all', async () => {
+  test('a call already aborted at entry runs no step, no hook, and no wire send (V15)', async () => {
     // The default OAUTH2 hook does an IdP round trip and the BASIC/DIGEST one does key derivation.
     // Neither is worth doing for a caller who has already gone, so the hook is not even built.
+    //
+    // Strengthened 2026-09-02: the cursor now refuses the walk at the first step boundary, so a
+    // pre-aborted call spends NO wire send either and rejects with `CancellationError` rather than
+    // handing back the 401 (docs/open-items.md V15). The auth step's OWN abort guard is what the
+    // next test covers -- an abort arriving during the hook, which the cursor never sees.
     let hookRan = false;
     const controller = new AbortController();
     controller.abort();
@@ -1451,14 +1456,15 @@ describe('authStep: cancellation (AUTH-30)', () => {
       },
     });
 
-    const response = await runThrough(descriptor, transport, {
-      signal: controller.signal,
-    });
+    const {CancellationError} = await import('../seams/transport.js');
+    const error = await rejectionOf(
+      runThrough(descriptor, transport, {signal: controller.signal}),
+    );
 
+    expect(error).toBeInstanceOf(CancellationError);
     expect(hookRan).toBe(false);
-    expect(transport.sendCount).toBe(1);
-    expect(response.status.code).toBe(401);
-    expect(challenged.cancelCount()).toBe(0); // returned open, the caller's to close
+    expect(transport.sendCount).toBe(0);
+    expect(challenged.cancelCount()).toBe(0); // never dispatched, so nothing to close
   });
 
   test('an abort arriving DURING the hook still spends no second wire send', async () => {

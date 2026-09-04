@@ -13,7 +13,15 @@
 //     `process.version`, which is precisely the claim NFR-15 makes and Bun cannot verify.
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
-import {defaultClock, getBuildInfo, randomUuid} from '@dexpace/core';
+import {
+  CancellationError,
+  defaultClock,
+  getBuildInfo,
+  randomUuid,
+} from '@dexpace/core';
+// `sleepInChunks` is @internal with no public subpath, so it is reached by direct `dist/` path,
+// per this suite's import rule.
+import {sleepInChunks} from '../../packages/core/dist/config/clock.js';
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -43,29 +51,43 @@ describe('defaultClock.sleep on Node timers and AbortSignal (CFG-17)', () => {
     assert.ok(defaultClock.monotonic() - start < 50);
   });
 
-  it('rejects a duration above the timer-delay ceiling instead of silently firing at once', async () => {
-    // Node clamps a `setTimeout` delay to a 32-bit signed integer and rewrites anything larger to 1,
-    // emitting only a `TimeoutOverflowWarning` on stderr. `sleep(2 ** 31)` therefore used to return
-    // in about 7ms rather than waiting 24.8 days, turning an overflowed retry backoff into a hot
-    // loop. This is the divergence the conformance suite exists for: it is Node timer behavior, not
-    // shared code.
-    const reason = await rejectionOf(defaultClock.sleep(2 ** 31));
+  it("does NOT let Node silently clamp a duration past one timer's reach (V13)", async () => {
+    // THE Node-specific behaviour this file exists for. Node clamps a `setTimeout` delay to a 32-bit
+    // signed integer and rewrites anything larger to 1, emitting only a `TimeoutOverflowWarning` on
+    // stderr -- so a naive `setTimeout(fn, 2 ** 31)` fires in about a millisecond, turning an
+    // overflowed retry backoff into a hot loop against the upstream.
+    //
+    // Asserted WITHOUT waiting: a real oversized sleep is 24.8 days. `sleepInChunks` takes the slice
+    // size, so a tiny chunk proves the slicing on real Node timers, and the control below proves
+    // Node really does clamp -- i.e. that the slicing is load-bearing and not decoration.
+    const slices = [];
+    await sleepInChunks(4, undefined, {
+      chunkMs: 1,
+      onChunk: sliceMs => slices.push(sliceMs),
+    });
+    assert.deepEqual(slices, [1, 1, 1, 1]);
 
-    assert.equal(reason.name, 'InvariantViolation');
-    assert.match(reason.message, /2147483647/u);
-  });
-
-  it('rejects a negative duration with an InvariantViolation', async () => {
-    // Asserted by `name`, not `instanceof`: `InvariantViolation` is @internal and deliberately absent
-    // from the package barrel, so this suite -- which imports through the `@dexpace/core` specifier --
-    // has no constructor to compare against.
-    assert.equal(
-      (await rejectionOf(defaultClock.sleep(-1))).name,
-      'InvariantViolation',
+    // The control: an unsliced oversized delay resolves at once on Node. If this ever starts
+    // waiting, the platform changed and the chunking could be revisited.
+    const start = defaultClock.monotonic();
+    await new Promise(resolve => {
+      setTimeout(resolve, 2 ** 31);
+    });
+    assert.ok(
+      defaultClock.monotonic() - start < 1000,
+      'expected Node to clamp an oversized setTimeout delay to ~1ms',
     );
   });
 
-  it("surfaces Node's own default abort reason unchanged", async () => {
+  it('rejects a negative duration with a RangeError', async () => {
+    assert.ok(
+      (await rejectionOf(defaultClock.sleep(-1))) instanceof RangeError,
+    );
+  });
+
+  it("maps Node's own default abort reason to CancellationError, keeping it as cause", async () => {
+    // Node's default abort reason is a `DOMException` named `AbortError`, constructed by the
+    // platform -- an independent implementation of Bun's, and the reason this assertion lives here.
     const controller = new AbortController();
     controller.abort();
 
@@ -73,11 +95,12 @@ describe('defaultClock.sleep on Node timers and AbortSignal (CFG-17)', () => {
       defaultClock.sleep(60_000, controller.signal),
     );
 
-    assert.equal(reason, controller.signal.reason);
-    assert.equal(reason.name, 'AbortError');
+    assert.ok(reason instanceof CancellationError);
+    assert.equal(reason.cause, controller.signal.reason);
+    assert.equal(reason.cause.name, 'AbortError');
   });
 
-  it('surfaces a caller-supplied abort reason unchanged when cancelled mid-wait', async () => {
+  it('keeps a caller-supplied abort reason as cause when cancelled mid-wait', async () => {
     const controller = new AbortController();
     const supplied = new Error('cancelled');
     const start = defaultClock.monotonic();
@@ -87,8 +110,29 @@ describe('defaultClock.sleep on Node timers and AbortSignal (CFG-17)', () => {
       controller.abort(supplied);
     });
 
-    assert.equal(await rejectionOf(pending), supplied);
+    const reason = await rejectionOf(pending);
+    assert.ok(reason instanceof CancellationError);
+    assert.equal(reason.cause, supplied);
     assert.ok(defaultClock.monotonic() - start < 50);
+  });
+
+  it('aborts BETWEEN chunks on Node timers, not only at the end (V13)', async () => {
+    const controller = new AbortController();
+    const supplied = new Error('gave up mid-wait');
+    const slices = [];
+
+    const pending = sleepInChunks(10, controller.signal, {
+      chunkMs: 1,
+      onChunk: sliceMs => {
+        slices.push(sliceMs);
+        if (slices.length === 3) controller.abort(supplied);
+      },
+    });
+
+    const reason = await rejectionOf(pending);
+    assert.ok(reason instanceof CancellationError);
+    assert.equal(reason.cause, supplied);
+    assert.ok(slices.length < 10);
   });
 
   it('waits at least the requested duration on Node timers', async () => {

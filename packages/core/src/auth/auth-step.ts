@@ -697,7 +697,7 @@ async function handleChallenge(drive: ChallengeDrive): Promise<Response> {
  * @throws HeaderValidationError — as a rejected promise — when the credential material will not fit in
  *   a header value: a `TokenProvider` yielding a token with a control character passes AUTH-9's
  *   non-blank check but fails HTTP-18's outbound grammar at the write.
- * @throws InvariantViolation — synchronously from this factory when `bearerMarginMs` or
+ * @throws an assertion failure (a caller bug, not a catchable condition) — synchronously from this factory when `bearerMarginMs` or
  *   `BearerCredential.marginMs` is not a finite, non-negative duration, or a configured Digest/Basic
  *   credential is blank or not header-safe; and as a rejected promise from `send()` when no auth tier
  *   is configured at all (AUTH-6). All are caller misconfigurations, not operational failures.

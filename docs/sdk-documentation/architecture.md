@@ -121,7 +121,8 @@ interface Logger {
 There is **no registration step and no discovery mechanism**. A conforming object is a valid
 implementation; you pass it in. `SEAM-5`–`SEAM-10` describe a classpath-style plugin registry with
 conflict resolution, and this port will never build it — a permanent simplification, recorded in
-`docs/deferred-items.md` as a row that is explicitly *not* a deferral. `Tracer`, `Span`, `Meter`,
+`docs/deferred-items.md` — the `SEAM-5`–`SEAM-10` row in its *Delivered and retired* table — as an entry
+that is explicitly *not* a deferral. `Tracer`, `Span`, `Meter`,
 `Counter`, `Histogram` and `Clock` are the same shape: duck-typed, so an OpenTelemetry object
 satisfies them with no adapter.
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/cursor.ts
+import {abortToSdkError} from '../cancellation.js';
 import type {ExecutionContext} from '../context/context.js';
 import type {Request} from '../http/request.js';
 import type {RequestOptions} from '../http/request-options.js';
@@ -67,15 +68,33 @@ export class Cursor {
    * Drives the call from position 0 through every step and on to the terminal transport dispatch.
    * Called exactly once per cursor -- `Runtime.send()` allocates a fresh cursor per call (PIPE-10).
    *
+   * Every step boundary is a cancellation checkpoint: an aborted `signal` stops the walk before the
+   * next step runs, so a pre-aborted call does no work at all (`docs/open-items.md` V15).
+   *
    * @returns the response the outermost step returned, which may be a synthetic one it short-circuited
    *   with, a substituted one, or the terminal transport's own (PIPE-12).
    * @throws CursorAlreadyAdvancedError when a step reuses an already-invoked continuation (PIPE-15).
+   * @throws CancellationError when the caller's signal has aborted, carrying the caller's own abort
+   *   reason as `cause` — or `TransportFailureError` when the abort was a timeout (XCUT-3).
    */
   async advance(): Promise<Response> {
     return this.#dispatch(0);
   }
 
   async #dispatch(position: number): Promise<Response> {
+    // `concurrency-and-async.md:46`: check the signal at the top of each loop iteration or before
+    // each expensive step. The step walk is exactly that, and a pillar step's fork-driven re-drives
+    // are worse -- an already-aborted call used to walk every installed step and could do real work
+    // on the way (the auth step's bearer refresh is the concrete case) before the terminal transport
+    // hop finally rejected. Each pillar already guards its OWN loop (RETRY-32, and redirect's
+    // per-hop check); what was unguarded is the walk itself and any step without a loop of its own.
+    //
+    // Mapped through `abortToSdkError` rather than `throwIfAborted()`, whose `DOMException` is the
+    // very inconsistency N1 closed: one cancellation type wherever the abort was observed, with the
+    // caller's own reason kept as `cause`. Recorded at `docs/open-items.md` T.F9 and V15.
+    if (this.#signal?.aborted === true) {
+      throw abortToSdkError(this.#signal, this.#signal.reason);
+    }
     if (position >= this.#steps.length) {
       // PIPE-13: exhausted -- dispatch the current in-flight request to the terminal transport.
       return this.#transport.send(this.#request, this.#options, this.#signal);

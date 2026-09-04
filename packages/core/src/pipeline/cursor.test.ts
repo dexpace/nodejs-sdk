@@ -69,6 +69,11 @@ function passthroughStep(log: string[], label: string): Step {
   };
 }
 
+/** A non-pillar descriptor around `fn`, for tests that care about the walk rather than the stage. */
+function descriptorOf(fn: Step): StepDescriptor {
+  return {type: Symbol('probe'), stage: 'PRE_LOGGING', fn};
+}
+
 describe('Cursor terminal dispatch (PIPE-9, PIPE-13)', () => {
   test('an exhausted cursor dispatches to the terminal transport, threading options and signal', async () => {
     const canned = aResponse(200);
@@ -84,6 +89,91 @@ describe('Cursor terminal dispatch (PIPE-9, PIPE-13)', () => {
     expect(transport.calls).toHaveLength(1);
     expect(transport.calls[0]?.request).toBe(request);
     expect(transport.calls[0]?.signal).toBe(signal);
+  });
+});
+
+describe('Cursor honours an aborted signal before each step (T.F9/V15)', () => {
+  test('an already-aborted call runs NO step and never reaches the transport', async () => {
+    const {CancellationError} = await import('../seams/transport.js');
+    const transport = new RecordingTransport(aResponse(200));
+    const request = aRequest('https://example.com/a');
+    const controller = new AbortController();
+    const reason = new Error('caller went away');
+    controller.abort(reason);
+    const log: string[] = [];
+
+    const cursor = new Cursor({
+      steps: [descriptorOf(passthroughStep(log, 'first'))],
+      transport,
+      request,
+      context: createRequestContext(request),
+      signal: controller.signal,
+    });
+
+    const surfaced = await cursor.advance().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    // N1's mapper, not a bare DOMException: one cancellation type wherever it was observed.
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect((surfaced as Error).cause).toBe(reason);
+    expect(log).toEqual([]);
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  test('an abort raised BETWEEN steps stops the walk at the next step boundary', async () => {
+    const {CancellationError} = await import('../seams/transport.js');
+    const transport = new RecordingTransport(aResponse(200));
+    const request = aRequest('https://example.com/a');
+    const controller = new AbortController();
+    const log: string[] = [];
+
+    const abortingStep: Step = async (_request, ctx) => {
+      log.push('first');
+      controller.abort(new Error('gave up mid-walk'));
+      return ctx.next();
+    };
+
+    const cursor = new Cursor({
+      steps: [
+        descriptorOf(abortingStep),
+        descriptorOf(passthroughStep(log, 'second')),
+      ],
+      transport,
+      request,
+      context: createRequestContext(request),
+      signal: controller.signal,
+    });
+
+    const surfaced = await cursor.advance().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    expect(log).toEqual(['first']);
+    expect(transport.calls).toHaveLength(0);
+  });
+});
+
+describe('Cursor with a live (un-aborted) signal', () => {
+  test('an un-aborted signal changes nothing', async () => {
+    const transport = new RecordingTransport(aResponse(200));
+    const request = aRequest('https://example.com/a');
+    const log: string[] = [];
+
+    const cursor = new Cursor({
+      steps: [descriptorOf(passthroughStep(log, 'first'))],
+      transport,
+      request,
+      context: createRequestContext(request),
+      signal: new AbortController().signal,
+    });
+
+    expect((await cursor.advance()).status.code).toBe(200);
+    expect(log).toEqual(['first']);
+    expect(transport.calls).toHaveLength(1);
   });
 });
 

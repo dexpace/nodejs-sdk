@@ -74,11 +74,12 @@ Every slot is optional and every omitted one takes that pillar's own defaults.
 `PIPE-24`'s "installs into empty pillar slots only" holds **by construction**: the function always
 starts from a fresh `PipelineBuilder`, so no slot can be occupied and no runtime check is needed.
 
-`standardResilience()` also installs the redirect pillar through an internal helper that seats a
+`standardResilience()` also installs the redirect pillar through `withRedirect()`, which seats a
 second, `POST_AUTH` step alongside it — the guard that strips the SDK's internal cross-origin marker
-header before dispatch (`REDIR-11(c)`). **That guard is not publicly reachable**, so a pipeline that
-installs `redirectStep()` by hand forwards the marker to the wire; use `seedFrom` instead of building
-a redirect pipeline from scratch (`docs/open-items.md` U7).
+header before dispatch (`REDIR-11(c)`). **Both are public as of 2026-09-02**
+(`docs/open-items.md` U7): call `withRedirect(builder)` to get the pillar and its guard together, or
+`stripCrossOriginMarkerStep()` to install the guard yourself. A pipeline that installs bare
+`redirectStep()` and neither of them forwards the marker to the wire.
 
 ## Extending the preset
 

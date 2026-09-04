@@ -521,6 +521,154 @@ test('citations: a resolving citation is not reported', () => {
   assert.deepEqual(messages(found), []);
 });
 
+// Sections Q-T hold the relocated reviews' OWN row numbering, so three `F` namespaces coexist and a
+// bare `F8` resolves to any of them. The register's Section index states the qualified form and
+// `open-items.md` U3 records the decision; these four cases are the mechanism.
+const QUALIFIED_REGISTER =
+  '# Open Items\n\n### A1 — a real item — **WATCH**\n\nBody.\n\n' +
+  '## Section S — a relocated review\n\n' +
+  '| # | Sev | Finding |\n|---|---|---|\n| F8 | minor | a row, not a heading |\n\n' +
+  '## Section T — another relocated review\n\n' +
+  '| # | Sev | Finding |\n|---|---|---|\n| F9 | major | a different row |\n';
+
+const citeQualified = (section, id) =>
+  `See \`docs/${REGISTER}\` ${section}.${id} for the rest.`;
+
+test("citations: a qualified citation resolves against that section's table rows", () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': QUALIFIED_REGISTER,
+        'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('S', 'F8')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.deepEqual(messages(found), []);
+});
+
+test('citations: a qualifier naming the wrong section is caught', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': QUALIFIED_REGISTER,
+        // F8 is Section S's row, not Section T's. Both sections exist and both carry an `F`
+        // namespace, which is exactly the confusion the qualifier is for.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('T', 'F8')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md T\.F8, which Section T carries as neither a table row nor a retirement/.test(
+        f.message,
+      ),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
+test('citations: a qualified ID is NOT satisfied by a `### <ID>` heading elsewhere', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': QUALIFIED_REGISTER,
+        // A1 has a heading, but Section S does not carry it as a row, so `S.A1` must not resolve.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('S', 'A1')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f => /cites docs\/open-items\.md S\.A1/.test(f.message)),
+    JSON.stringify(messages(found)),
+  );
+});
+
+test('citations: a bare ID still resolves against `### <ID>` headings only', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': QUALIFIED_REGISTER,
+        // F8 exists as a Section S ROW. Unqualified, it must not resolve -- the bare namespace is
+        // the `###` headings, and this is what makes the qualifier load bearing rather than optional.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('F8')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md F8, which has no/.test(f.message),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
+// A resolved item's body is REMOVED from the register and replaced by one row in `## Retired items`.
+// The ID is never released, so every citation of it must keep resolving — which means the check has
+// to read that table as a second ID source, bare and section-qualified alike. `open-items.md` records
+// the mechanism in its own Status vocabulary under `RETIRED`.
+const RETIRED_REGISTER =
+  '# Open Items\n\n### A1 — a live item — **WATCH**\n\nBody.\n\n' +
+  '## Section T — a relocated review\n\n' +
+  'All rows retired.\n\n' +
+  '## Retired items\n\n' +
+  '| ID | Title | Resolution | Date | Evidence |\n|---|---|---|---|---|\n' +
+  '| `K10` | a fixed item | fixed | 2026-09-02 | `src/x.ts` |\n' +
+  '| `T.F9` | a retired review row | fixed | 2026-09-02 | `src/y.ts` |\n' +
+  '| D — a Section D row | — | shipped | 2026-09-02 | `src/z.ts` |\n';
+
+test('citations: a retired ID resolves against the `## Retired items` table', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': RETIRED_REGISTER,
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K10')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.deepEqual(messages(found), []);
+});
+
+test('citations: a retired Q-T row resolves through its section qualifier', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': RETIRED_REGISTER,
+        // Section T no longer carries F9 as a table row -- only the retirement table does.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${citeQualified('T', 'F9')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.deepEqual(messages(found), []);
+});
+
+test('citations: an ID in neither the headings nor the retired table still dangles', () => {
+  const found = onFixture(
+    {
+      overrides: {
+        'docs/open-items.md': RETIRED_REGISTER,
+        // K11 is neither a `### <ID>` heading nor a retirement row. Retirement widens the ID set;
+        // it must not turn the check into a no-op.
+        'docs/sdk-documentation/architecture.md': `# a\n\n${cite('K11')}\n`,
+      },
+    },
+    ['citations'],
+  );
+  assert.ok(
+    found.some(f =>
+      /cites docs\/open-items\.md K11, which has no `### <ID>` heading and no `## Retired items` row/.test(
+        f.message,
+      ),
+    ),
+    JSON.stringify(messages(found)),
+  );
+});
+
 test('registerCitations is the single derivation, and reports where each site is', () => {
   const root = makeFixture({
     overrides: {
@@ -536,6 +684,10 @@ test('registerCitations is the single derivation, and reports where each site is
       file: 'docs/sdk-documentation/architecture.md',
       line: 3,
       id: 'A1',
+      // `undefined` rather than absent: an unqualified citation still carries the field, so a
+      // caller can tell "bare" from "qualified" without re-parsing the text.
+      qualifier: undefined,
+      cited: 'A1',
       resolves: true,
     });
   } finally {

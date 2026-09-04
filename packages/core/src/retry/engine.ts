@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/retry/engine.ts
-import {HttpStatusError, toHttpError} from '../body/http-status-error.js';
+import {toHttpError} from '../body/http-status-error.js';
+import {abortToSdkError} from '../cancellation.js';
 import {invariant} from '../invariant.js';
 import type {Clock} from '../config/clock.js';
 import type {Request} from '../http/request.js';
@@ -10,6 +11,7 @@ import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
 import {suppress} from '../suppress.js';
 import {stampAttempt} from './attempt-stamp.js';
 import {computeDelay} from './backoff.js';
+import {RetryDiscardedResponseError} from './errors.js';
 import {isResendable, isRetryableFailure} from './classify.js';
 import {parsePacingHint} from './pacing.js';
 import type {RetrySettings} from './settings.js';
@@ -141,15 +143,17 @@ function resolveDelay(hint: number | null, state: LoopState): number {
  * the gates -- a surviving response is returned live and untouched.
  */
 async function retire(response: Response): Promise<unknown> {
-  // toHttpError returns null for a sub-400 status, reachable only when a caller widens the
-  // retryable set to include one. Fabricating an HttpStatusError there carries a status outside
-  // BODY-31's 400-599 band -- a deliberate, narrow exception: the discarded response still owes
-  // RETRY-34 a trail entry, and inventing a leaf error class for a caller-opted-in edge would
-  // breach this phase's "no new error leaf classes" constraint for less benefit. The response is
-  // NOT consumed on this path (BODY-31 hands it back intact), so the caller's `finally` closes it.
+  // `toHttpError` returns null for a status outside 400-599, reachable only when a caller widens the
+  // retryable set to include one. 5a fabricated `new HttpStatusError(<that status>, ...)` here, which
+  // carried a status outside BODY-31's band -- the "successful exception" XCUT-8 forbids, built by
+  // core itself, and the reason N2's "nothing in packages/core constructs one this way" was false.
+  // The discarded response still owes RETRY-34 a trail entry, so it gets a leaf that says what
+  // actually happened rather than one that claims an HTTP failure that did not occur
+  // (docs/open-items.md N2, V14). The response is NOT consumed on this path (BODY-31 hands it back
+  // intact), so the caller's `finally` closes it.
   return (
     (await toHttpError(response)) ??
-    new HttpStatusError(response.status.code, undefined, undefined)
+    new RetryDiscardedResponseError(response.status.code)
   );
 }
 
@@ -371,8 +375,15 @@ export async function runWithRetry(
 
   for (let attempt = 1; ; attempt += 1) {
     // RETRY-32: once the caller has cancelled, launch no further attempt.
+    //
+    // Mapped, not surfaced verbatim (N1/XCUT-1). The engine used to hand back `signal.reason` --
+    // a bare `DOMException` named `AbortError` for an ordinary `AbortController` -- while the
+    // transport layer mapped the identical abort to `CancellationError`. A caller writing
+    // `catch (e) { if (e instanceof CancellationError) ... }` therefore handled a cancelled dispatch
+    // and silently missed a cancelled backoff. The raw reason is kept as `.cause`.
     if (config.signal?.aborted === true) {
-      return withTrail(failure(config.signal.reason), trail);
+      const cancellation = abortToSdkError(config.signal, config.signal.reason);
+      return withTrail(failure(cancellation), trail);
     }
 
     try {

@@ -2,8 +2,14 @@
 // packages/core/src/body/http-status-error.ts
 import {decodeBodyText, resolveCharset} from '../http/charset.js';
 import {DexpaceError} from '../http/errors.js';
+import {HttpStatusValidationError} from './errors.js';
 import type {Response} from '../http/response.js';
 import {invariant} from '../invariant.js';
+import {
+  releaseQuietly,
+  releasedCleanly,
+  withReleaseFailure,
+} from '../recovery/release.js';
 import type {Body} from './body.js';
 import {headerSafeMediaType} from './media-type-safety.js';
 import {byteArrayBody} from './simple-bodies.js';
@@ -18,11 +24,26 @@ const ERROR_BODY_CAP_BYTES = 1024 * 1024; // 1 MiB, HTTP-52/BODY-30
  * @public
  */
 export class HttpStatusError extends DexpaceError {
-  /** The response status code, always in HTTP-11's 400-599 error band (BODY-31). */
+  /**
+   * The response status code, always in HTTP-11's 400-599 error band (BODY-31).
+   *
+   * "Always" is enforced by the constructor as of 2026-09-02, not merely asserted here. It was a
+   * documented-but-unchecked invariant before that, which is what let a consumer build the
+   * "successful exception" `XCUT-8` forbids (`docs/open-items.md` N2).
+   */
   readonly status: number;
   readonly #bodyBytes: Uint8Array | undefined;
   readonly #mediaType: string | undefined;
 
+  /**
+   * @param status - the response status; MUST be an integer in HTTP-11's 400-599 error band.
+   * @param bodyBytes - the buffered error body, capped at 1 MiB (HTTP-52/BODY-30), or `undefined`.
+   * @param mediaType - the response's `Content-Type`, used to decode {@link HttpStatusError.preview}.
+   * @param options - standard error options; pass `{cause}` when wrapping a caught error.
+   * @throws {@link HttpStatusValidationError} when `status` is not an integer in 400-599. `XCUT-8`
+   *   requires the mapping to reject a non-error status rather than fabricate a "successful
+   *   exception"; `toHttpError` is the total form that returns `null` instead of throwing.
+   */
   // eslint-disable-next-line max-params -- constructor parameters fixed by error model
   constructor(
     status: number,
@@ -31,6 +52,9 @@ export class HttpStatusError extends DexpaceError {
     options?: ErrorOptions,
   ) {
     super(`HTTP ${String(status)}`, options);
+    if (!Number.isInteger(status) || status < 400 || status > 599) {
+      throw new HttpStatusValidationError(status);
+    }
     this.status = status;
     this.#bodyBytes = bodyBytes;
     this.#mediaType = mediaType;
@@ -70,7 +94,23 @@ export class HttpStatusError extends DexpaceError {
  * response's own close-guaranteeing scope (HTTP-52/BODY-30). Returns null for a non-error response
  * (BODY-31) -- the caller keeps the response, body intact.
  *
- * @throws Whatever reading the response body raises; the response is closed either way (BODY-16).
+ * **A failing release can no longer replace the result** (RECOV-12; `docs/open-items.md` H14, which
+ * `P1` describes as the same defect). The drain used to end its work in a bare `finally` block that
+ * awaited `response.close()`; `Response.close()` memoizes its release promise, so a close that had
+ * already failed handed the same rejection back and it replaced the `HttpStatusError` this function
+ * was about to build -- the error never existed, and every caller documenting
+ * `@throws HttpStatusError on 4xx/5xx` lied. Release now goes through `releaseQuietly`, so:
+ *
+ * - a **read** failure stays primary, with the release failure suppressed under it
+ *   (`withReleaseFailure`), exactly as every other subsystem does it;
+ * - a **successful** read returns the `HttpStatusError` even when the release failed, carrying that
+ *   failure as its `cause` so it is recorded rather than dropped.
+ *
+ * @param response - the response to convert; it is released either way (BODY-16).
+ * @returns the error for a 4xx/5xx, or `null` for any other status.
+ * @throws Whatever reading the response body raises; the response is released either way (BODY-16).
+ *   If releasing ALSO fails, the read failure stays primary and the release failure rides along
+ *   suppressed.
  * @public
  */
 export async function toHttpError(
@@ -82,8 +122,13 @@ export async function toHttpError(
   if (!response.status.isError) return null;
   const mediaType = response.headers.get('content-type');
   if (response.body === null) {
-    await response.close();
-    return new HttpStatusError(response.status.code, undefined, mediaType);
+    const releaseFailure = await releaseQuietly(response);
+    return new HttpStatusError(
+      response.status.code,
+      undefined,
+      mediaType,
+      releaseOptions(releaseFailure),
+    );
   }
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -91,6 +136,7 @@ export async function toHttpError(
   // external consumer already holds the lock, and acquiring it above the try skipped the close on
   // exactly that path -- holding the connection open (HTTP-52/BODY-30).
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let readFailure: {readonly error: unknown} | undefined;
   try {
     reader = response.body.getReader();
     for (;;) {
@@ -103,10 +149,14 @@ export async function toHttpError(
       chunks.push(piece);
       total += piece.length;
     }
-  } finally {
-    // Release before close(): cancel() rejects with TypeError on a locked stream (see Response.bytes).
-    reader?.releaseLock();
-    await response.close();
+  } catch (error: unknown) {
+    readFailure = {error};
+  }
+  // Release before close(): cancel() rejects with TypeError on a locked stream (see Response.bytes).
+  reader?.releaseLock();
+  const releaseFailure = await releaseQuietly(response);
+  if (readFailure !== undefined) {
+    throw withReleaseFailure(readFailure.error, releaseFailure);
   }
   invariant(
     total <= ERROR_BODY_CAP_BYTES,
@@ -119,5 +169,19 @@ export async function toHttpError(
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return new HttpStatusError(response.status.code, bytes, mediaType);
+  return new HttpStatusError(
+    response.status.code,
+    bytes,
+    mediaType,
+    releaseOptions(releaseFailure),
+  );
+}
+
+/**
+ * Turns {@link releaseQuietly}'s opaque token into `ErrorOptions`. A clean release yields
+ * `undefined`, so the common path constructs exactly what it always did; a failed one rides along as
+ * `cause`, which is the only slot a RETURNED error has for a secondary failure.
+ */
+function releaseOptions(releaseToken: unknown): ErrorOptions | undefined {
+  return releasedCleanly(releaseToken) ? undefined : {cause: releaseToken};
 }

@@ -7,7 +7,8 @@
 // including from caller predicate code -- closes the current response before propagating), REDIR-16
 // (a detected loop returns the loop response open, without throwing), REDIR-15 (a rejected downgrade
 // closes the current response and propagates SchemeDowngradeError), and the cancellation check (an
-// already-aborted signal returns the current response open rather than issuing a further hop).
+// an abort DURING a hop returns the current response open rather than issuing a further hop, while a
+// signal already aborted at entry is refused by the cursor before the step runs -- see V15).
 import {describe, expect, test} from 'bun:test';
 import {
   createRequestContext,
@@ -22,6 +23,7 @@ import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
 import {Cursor} from '../pipeline/cursor.js';
 import type {StepDescriptor} from '../pipeline/step.js';
+import type {Transport} from '../seams/transport.js';
 import type {SuppressedErrorLike} from '../suppress.js';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
 import {NonReplayableBodyError, SchemeDowngradeError} from './errors.js';
@@ -212,23 +214,58 @@ describe('redirectStep -- termination without a throw', () => {
 });
 
 describe('redirectStep -- cancellation and the failure paths', () => {
-  test('an already-aborted signal returns the first hop response open, never dispatching a second', async () => {
+  test('an abort DURING the first hop returns that response open, never dispatching a second', async () => {
+    // The redirect step's own per-hop `signal?.aborted` check, which is what discharges PIPE-40's
+    // "the in-flight response MUST be returned unclosed" on the abandon path. It runs BEFORE the
+    // step forks again, so the cursor's own step-boundary check (V15) never sees this abort and
+    // cannot pre-empt the open hand-back. Aborting mid-flight rather than up front is what keeps
+    // this test on the step's guard instead of the cursor's.
     const controller = new AbortController();
-    controller.abort();
     const hop = countingResponse(301);
     const located = withLocation(hop.response, 'https://example.com/next');
     const never = countingResponse(200);
     const transport = new FakeTransport([located, never.response]);
+    const aborting: Transport = {
+      send: async (request, options, signal) => {
+        const response = await transport.send(request, options, signal);
+        controller.abort();
+        return response;
+      },
+      close: () => Promise.resolve(),
+    };
 
-    const response = await runThrough(
-      redirectStep(),
-      transport,
-      controller.signal,
-    );
+    const response = await new Cursor({
+      steps: [redirectStep()],
+      transport: aborting,
+      request: SEED,
+      context: aRequestContext(),
+      signal: controller.signal,
+    }).advance();
 
-    expect(transport.sendCount).toBe(1); // the first hop always dispatches; the second never does
+    expect(transport.sendCount).toBe(1); // the first hop dispatched; the second never does
     expect(response).toBe(located); // returned open -- the caller owns it
     expect(hop.cancelCount()).toBe(0);
+  });
+});
+
+describe('redirectStep -- cancellation at entry (V15)', () => {
+  test('a signal already aborted at entry never dispatches at all', async () => {
+    // Distinct from the case above: the cursor now refuses the walk before the step runs, so there
+    // is no in-flight response to hand back and nothing to leak. Before 2026-09-02 this dispatched
+    // the first hop and returned it open.
+    const {CancellationError} = await import('../seams/transport.js');
+    const controller = new AbortController();
+    controller.abort();
+    const never = countingResponse(200);
+    const transport = new FakeTransport([never.response]);
+
+    const error = await rejectionOf(
+      runThrough(redirectStep(), transport, controller.signal),
+    );
+
+    expect(error).toBeInstanceOf(CancellationError);
+    expect(transport.sendCount).toBe(0);
+    expect(never.cancelCount()).toBe(0);
   });
 
   test('a rejected scheme downgrade closes the current response first (REDIR-15/REDIR-22b)', async () => {
@@ -426,7 +463,70 @@ describe('Phase 7b retrofit: redirect hop and downgrade logging', () => {
       setGlobalLogger(NOOP_LOGGER);
     }
   });
+});
 
+describe('REDIR-28: the loop-detected and malformed-Location events (G3)', () => {
+  test('emits http.redirect.loopDetected when the target is already visited', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const hop = countingResponse(302);
+      const loop = countingResponse(302);
+      const transport = new FakeTransport([
+        withLocation(hop.response, 'https://example.com/dest'),
+        withLocation(loop.response, 'https://example.com/dest'),
+      ]);
+
+      await runThrough(redirectStep(), transport);
+
+      const detected = events.filter(
+        e => e.get('event') === 'http.redirect.loopDetected',
+      );
+      expect(detected).toHaveLength(1);
+      expect(detected[0]?.get('location')).toBe('https://example.com/dest');
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+
+  test('emits http.redirect.malformedLocation with the RAW header', async () => {
+    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+      await import('../observability/logger.js');
+    const events: Map<string, unknown>[] = [];
+    setGlobalLogger(
+      createLogger((_level, fields) => {
+        events.push(new Map(fields));
+      }),
+    );
+
+    try {
+      const bad = countingResponse(302);
+      const transport = new FakeTransport([
+        withLocation(bad.response, 'javascript:alert(1)'),
+      ]);
+
+      await runThrough(redirectStep(), transport);
+
+      const malformed = events.filter(
+        e => e.get('event') === 'http.redirect.malformedLocation',
+      );
+      expect(malformed).toHaveLength(1);
+      // REDIR-28's carve-out: unredacted, because it never parsed into a URL.
+      expect(malformed[0]?.get('location.raw')).toBe('javascript:alert(1)');
+    } finally {
+      setGlobalLogger(NOOP_LOGGER);
+    }
+  });
+});
+
+describe('Phase 7b retrofit: the permitted-downgrade event', () => {
   test('emits http.redirect.downgradePermitted when downgrade policy permits http redirect', async () => {
     const {createLogger, setGlobalLogger, NOOP_LOGGER} =
       await import('../observability/logger.js');

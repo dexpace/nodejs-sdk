@@ -14,7 +14,7 @@ is the index; the rule is that nothing in `docs/` is unowned, and nothing is wri
 | [`work/`](./work/) | Process records: per-phase design, plan and checklist, one directory per phase under a unit of delivery | The phase that produced them; **collected** here by the skill | Yes — `git mv` only |
 | [`superpowers/`](./superpowers/) | Nothing, for long. The **inbox** the Superpowers skills write into | `brainstorming`, `writing-plans` | Yes — it drains it |
 | [`open-items.md`](./open-items.md) | Everything unmet, unverified, misreported, or surprising. Sections A–U, letters permanent | Every review | Yes — appends |
-| [`deferred-items.md`](./deferred-items.md) | Work a phase decided not to do yet, with the phase that owns it | Every phase's brainstorm | Yes — appends |
+| [`deferred-items.md`](./deferred-items.md) | Two tables: work a phase decided not to do yet and has not done, then *Delivered and retired* — the compact audit trail of every deferral since discharged. Rows move between them; none is deleted. Cite a row by its key, never by line | Every phase's brainstorm | Yes — appends, and retires |
 | [`deviations.md`](./deviations.md) | The as-built audit of §10, and the landing point for a deviation found outside a phase | An audit or review | Yes — appends |
 | [`assets/`](./assets/) | Vendored wordmark SVGs the root `README.md` renders | Copied from `dexpace/morphic` | Yes |
 
@@ -51,8 +51,8 @@ The boundary is **when** the item was created, not what it is about.
   phase's `## Deviation Ledger` section, consolidated into §10; `deviations.md` audits §10 and
   catches what has no owning phase.
 
-The same requirement ID can legitimately appear in two. `AUTH-37` is deferred to Phase 7b in
-`deferred-items.md` and recorded as a live silent swallow at `open-items.md` G12.
+The same requirement ID can legitimately appear in two. `AUTH-37` was deferred to Phase 7b in
+`deferred-items.md` and is recorded as a live silent swallow at `open-items.md` G12.
 
 Register letters and item numbers in `open-items.md` are **permanent**: they are cited across the
 repository from source comments, tests, changesets and this tree. A new review appends the next

@@ -267,8 +267,43 @@ The full contract is in [`CLAUDE.md`](CLAUDE.md); the documentation map is
   return types on exported functions. Formatting is an error, not a warning. Every
   `eslint-disable` must carry a stated reason.
 - **Every gap is recorded.** A deferral goes in [`docs/deferred-items.md`](docs/deferred-items.md),
-  a finding in [`docs/open-items.md`](docs/open-items.md), a deliberate divergence in the deviation
-  ledger. Silent gaps are the failure mode this project is structured to prevent.
+  which retires a row to its *Delivered and retired* table once the work lands. A finding goes in
+  [`docs/open-items.md`](docs/open-items.md), and a deliberate divergence in the deviation ledger.
+  Silent gaps are the failure mode this project is structured to prevent.
 
 As-built documentation — how the packages compose, and worked examples across a package boundary —
 is [`docs/sdk-documentation/`](docs/sdk-documentation/).
+
+## Releases
+
+Releases start from `main` only. The workflow is
+[`.github/workflows/release.yml`](.github/workflows/release.yml). It runs on each push to `main`.
+It reads the pending changesets and opens a "Version Packages" pull request. When that pull request
+merges, the workflow publishes the packages.
+
+The workflow does not run on `mvp` or on any other branch. Work on those branches is not released.
+Changesets written there wait until the branch merges into `main`.
+
+Each package is at version `0.0.0`. The first release starts from that version.
+
+Publishing is blocked at this time. The block is deliberate. Three conditions must be true before
+the first publish can succeed:
+
+1. The repository must have an `NPM_TOKEN` secret. Without it, the workflow opens the pull request
+   but does not publish.
+2. The maintainers must decide the access level of the `@dexpace` scope.
+   [`.changeset/config.json`](.changeset/config.json) sets `"access": "restricted"`. Restricted
+   packages are private. npm does not attach provenance to a private package. The workflow sets
+   `NPM_CONFIG_PROVENANCE` for `NFR-16`, so a publish with the current setting fails. To publish
+   with provenance, set the access to `public`. To stay private, remove the provenance setting and
+   record `NFR-16` as a deviation.
+3. The source repository must be public. npm issues provenance attestations for public source only.
+
+[`docs/deferred-items.md`](docs/deferred-items.md) records all three under `NFR-16`.
+
+The sibling repositories do not share one answer yet. `dexpace/python-sdk` publishes to PyPI with
+trusted publishing and PEP 740 attestations; PyPI has no private tier, so those packages are public
+by construction. `dexpace/dexpace-react` is `UNLICENSED`, sets `"access": "restricted"`, and its
+release policy names `npm publish --provenance`, which is the same conflict as this repository.
+This SDK is MIT-licensed, like the Python SDK. Until the maintainers decide, this repository keeps
+the current settings and stays unpublished.

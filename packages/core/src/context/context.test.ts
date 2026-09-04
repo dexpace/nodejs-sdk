@@ -133,7 +133,32 @@ describe('off-chain construction (CTX-5, CTX-6)', () => {
     }
     expect(keys.size).toBe(3000);
   });
+});
 
+describe('default key RENDERING (CTX-8)', () => {
+  test('two default keys of one flavor RENDER differently, not just compare so', () => {
+    // Appendix C states CTX-8 as "an error whose MESSAGE identifies the key", and
+    // `DuplicateContextKeyError`'s message is `String(key)`. Until 2026-09-02 every default key of a
+    // flavor rendered as the identical `Symbol(dispatch-context)`, so the message named the flavor
+    // and not the key. See docs/open-items.md A5.
+    const a = String(createDispatchContext().key);
+    const b = String(createDispatchContext().key);
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^Symbol\(dispatch-context#\d+\)$/u);
+  });
+
+  test('the three flavors stay distinguishable in the rendering', () => {
+    const request = aRequest();
+    expect(String(createRequestContext(request).key)).toMatch(
+      /^Symbol\(request-context#\d+\)$/u,
+    );
+    expect(
+      String(createExchangeContext(request, aResponse(request)).key),
+    ).toMatch(/^Symbol\(exchange-context#\d+\)$/u);
+  });
+});
+
+describe('off-chain construction, continued (CTX-5, CTX-6)', () => {
   test('an explicit key can be pinned so two contexts share one slot', () => {
     const key = Symbol('shared');
     const a = createDispatchContext({key});

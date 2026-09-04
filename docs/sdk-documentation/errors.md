@@ -135,35 +135,43 @@ On an error status it drains the body to a 1 MiB cap (`BODY-30`/`HTTP-52`), keep
 error, and **closes the response**. On any other status it returns `null` and leaves the response
 untouched. The full error body is irrecoverable after the call; that is the documented trade.
 
-## Errors you cannot catch by class
+## Errors raised by the pipeline and the redirect pillar
 
-Some throwables are not exported from the barrel, so `instanceof` is unavailable and the only handle
-is `error.name` or the message:
+Eight classes that a `@throws` tag named but no package exported were promoted to the barrel on
+2026-09-02, so `instanceof` now works for all of them (`docs/open-items.md` U9):
 
-| Error | Raised by | Reachable as |
-|---|---|---|
-| `SchemeDowngradeError` | the redirect pillar, on a rejected HTTPS→HTTP hop | `error.name === 'SchemeDowngradeError'` |
-| `NonReplayableBodyError` | the redirect pillar, when a hop needs a body resend it cannot do | `error.name === 'NonReplayableBodyError'` |
-| `PillarCollisionError` | `PipelineBuilder`, on a second step in one pillar stage | `error.name === 'PillarCollisionError'` |
-| `AnchorNotFoundError` | `insertBefore`/`insertAfter`/`replace`, on an unknown `type` symbol | `error.name === 'AnchorNotFoundError'` |
-| `CrossStageEditError`, `ReservedStageError`, `CursorAlreadyAdvancedError` | `PipelineBuilder` and the cursor | likewise |
+| Error | Raised by |
+|---|---|
+| `SchemeDowngradeError` | the redirect pillar, on a rejected HTTPS→HTTP hop |
+| `NonReplayableBodyError` | the redirect pillar, when a hop needs a body resend it cannot do |
+| `PillarCollisionError` | `PipelineBuilder`, on a second step in one pillar stage |
+| `AnchorNotFoundError` | `insertBefore`/`insertAfter`/`replace`, on an unknown `type` symbol |
+| `CrossStageEditError` | an insert or replace whose incoming step declares a different stage than its anchor |
+| `ReservedStageError` | any attempt to install a user step onto the terminal `SEND` stage |
+| `CursorAlreadyAdvancedError` | a step reusing an already-invoked `next()`/`fork()` continuation |
+| `EndOfStreamError` | a `BufferedSource` read that required more bytes than the source delivered |
 
-All of them descend from `DexpaceError`, so the broad catch works; only the narrow one does not.
+Two more joined them on the same date, both from `XCUT-8`'s "never fabricate a successful exception":
 
-**`InvariantViolation` is the exception to the exception.** It extends `Error` directly, not
-`DexpaceError`, and it is not exported. It signals a broken internal precondition — a bug in this SDK
-or in a seam implementation you supplied, never a condition to handle. `standardResilience()` raises
-it synchronously for invalid pillar settings, such as a non-finite bearer refresh margin or a
-non-header-safe Digest username, which is the one case a consumer will see it: at wiring time, loudly,
-before any request is sent.
+| Error | Raised by |
+|---|---|
+| `HttpStatusValidationError` | `new HttpStatusError(status, …)` when `status` is not an integer in 400–599. The constructor validated nothing before, so a consumer could build an `HttpStatusError` claiming a `200`. `toHttpError` is the total form — it returns `null` instead of throwing |
+| `RetryDiscardedResponseError` | the retry engine's suppressed trail, for a response it discarded whose status is outside 400–599. Reachable only if you widen `RetrySettings.retryableStatuses` to include a non-error code; the trail previously said `HttpStatusError` for it, which claimed an HTTP failure that had not happened |
 
-**Whether to promote the classes in the table above is an open decision** (`docs/open-items.md` U9,
-where the full count is ten classes across 57 `@throws` tags). Every one of them is documented in a
-`@public` function's `@throws` tag, and the styleguide's rule for `@throws` is that it names the type
-*and what the caller should do about it* (`docs/knowledge/harvested/documentation.md:24`), which a
-caller cannot act on without the class. `InvariantViolation` is the awkward member and may well be
-resolved the other way — by dropping its tags rather than exporting it, since a bug is not a
-condition.
+All of them descend from `DexpaceError`, so the broad catch works too.
+
+**`InvariantViolation` is the one that stays unreachable, deliberately.** It extends `Error`
+directly, not `DexpaceError`, and it is not exported. It signals a broken internal precondition — a
+bug in this SDK or in a seam implementation you supplied, never a condition to handle — so the
+`@throws` tags that used to name it now read as prose ("an assertion failure (a caller bug, not a
+catchable condition)"), because a `@throws` tag is supposed to name the type *and what the caller
+should do about it* (`docs/knowledge/harvested/documentation.md:24`), and "catch this" is the wrong
+answer here. `standardResilience()` raises it synchronously for invalid pillar settings, such as a
+non-finite bearer refresh margin or a non-header-safe Digest username, which is the one case a
+consumer will see it: at wiring time, loudly, before any request is sent.
+
+`DuplicateContextKeyError` is likewise unexported, because the only thing that raises it —
+`ContextStore` — is itself `@internal` and appears in no `.d.ts` a consumer reads.
 
 ## What does not throw
 

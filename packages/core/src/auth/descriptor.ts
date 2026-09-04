@@ -25,7 +25,7 @@ export interface AuthDescriptor {
  *
  * @param requirements - the requirements, in preference order. Must be non-empty.
  * @returns the frozen descriptor.
- * @throws InvariantViolation when `requirements` is empty (AUTH-3).
+ * @throws an assertion failure (a caller bug, not a catchable condition) when `requirements` is empty (AUTH-3).
  *
  * @public
  */

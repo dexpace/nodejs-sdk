@@ -61,7 +61,12 @@ function createContext(root) {
       )
         .trim()
         .split('\n')
-        .filter(Boolean),
+        .filter(Boolean)
+        // `ls-files` lists the INDEX, so a file deleted in the working tree and not yet staged is
+        // still listed. Every caller goes on to read what it gets back, and an `ENOENT` there takes
+        // the whole run down with a raw stack instead of producing a finding -- which is what
+        // happened the first time a check ran against a tree with an uncommitted deletion in it.
+        .filter(path => existsSync(join(root, path))),
     /** Tracked paths PLUS untracked, non-ignored ones. */
     present: (...globs) =>
       execFileSync(
@@ -587,7 +592,74 @@ function checkRegisterLeakage(ctx) {
 // 8. Every `open-items.md <Letter><N>` citation resolves to a real item.
 // ---------------------------------------------------------------------------------------
 
-const CITATION = /open-items\.md`?[  ]*(?:§)?\s*([A-Z]\d+)/g;
+// An optional `[Q-T].` qualifier: Sections Q, R, S and T carry the relocated reviews' OWN row
+// numbering, so three `F` namespaces coexist and a bare `F8` resolves to any of them. The register's
+// Section index states the qualified form; `open-items.md` U3 records why option 2 (renumbering the
+// dated records) was rejected in favour of teaching this check instead.
+const CITATION = /open-items\.md`?[  ]*(?:§)?\s*(?:([Q-T])\.)?([A-Z]\d+)/g;
+
+// `## Section <Letter> — …`. Sections Q-T hold their rows as `| <ID> | …` table rows rather than as
+// `### <ID>` headings, so a qualified citation has to be resolved against the section's own rows.
+const SECTION_HEADING = /^## Section ([A-Z])(?:[^\n]*)$/gm;
+const TABLE_ROW_ID = /^\|\s*([A-Z]\d+)\s*\|/gm;
+const QUALIFIED_SECTIONS = 'QRST';
+
+// `## Retired items` — the register's final section. A resolved item's BODY is removed and replaced
+// by one row there; the ID is never released, so a source comment citing it must still resolve. The
+// table is therefore a second source of resolvable IDs, bare (`| \`K10\` |`) and section-qualified
+// (`| \`T.F9\` |`) alike. Rows whose first cell is neither — `D — …`, `R — residual: …` — name
+// Section D and Section R table rows that never had IDs, and are ignored here.
+const RETIRED_HEADING = /^## Retired items\s*$/m;
+const RETIRED_ROW = /^\|\s*`?(?:([Q-T])\.)?([A-Z]\d+)`?\s*\|/gm;
+
+/**
+ * The IDs the `## Retired items` table reserves, as `{bare: Set, qualified: Map}`.
+ *
+ * Empty maps when the register carries no such section, so the check degrades to the pre-retirement
+ * behaviour rather than throwing.
+ */
+function retiredIds(register) {
+  const heading = RETIRED_HEADING.exec(register);
+  const bare = new Set();
+  const qualified = new Map();
+  if (heading === null) return {bare, qualified};
+  const from = heading.index + heading[0].length;
+  const next = register.slice(from).search(/^## /m);
+  const body =
+    next === -1 ? register.slice(from) : register.slice(from, from + next);
+  for (const [, section, id] of body.matchAll(RETIRED_ROW)) {
+    if (section === undefined) bare.add(id);
+    else {
+      if (!qualified.has(section)) qualified.set(section, new Set());
+      qualified.get(section).add(id);
+    }
+  }
+  return {bare, qualified};
+}
+
+/**
+ * Row IDs per qualifiable section, as `{Q: Set('D1', …), R: Set('E1', …), …}`.
+ *
+ * Read from the table rows, not from headings: a relocated review's rows have no `###` of their own,
+ * which is the whole reason a bare citation into one is ambiguous.
+ */
+function qualifiableRows(register) {
+  const bounds = [];
+  for (const match of register.matchAll(SECTION_HEADING)) {
+    bounds.push({letter: match[1], start: match.index});
+  }
+  const rows = new Map();
+  for (const [i, section] of bounds.entries()) {
+    if (!QUALIFIED_SECTIONS.includes(section.letter)) continue;
+    const end = bounds[i + 1]?.start ?? register.length;
+    const body = register.slice(section.start, end);
+    rows.set(
+      section.letter,
+      new Set([...body.matchAll(TABLE_ROW_ID)].map(m => m[1])),
+    );
+  }
+  return rows;
+}
 
 function citedFiles(ctx) {
   return ctx
@@ -614,30 +686,49 @@ export function registerCitations(ctx) {
   const ids = new Set(
     [...register.matchAll(/^### ([A-Z]\d+)\b/gm)].map(m => m[1]),
   );
+  const rows = qualifiableRows(register);
+  // A retired item has no heading and no section row left, only its row in the retirement table.
+  // Merged in rather than checked separately: a citation does not know, and must not care, whether
+  // the item it names is still live.
+  const retired = retiredIds(register);
+  for (const id of retired.bare) ids.add(id);
+  for (const [section, set] of retired.qualified) {
+    if (!rows.has(section)) rows.set(section, new Set());
+    for (const id of set) rows.get(section).add(id);
+  }
   const sites = [];
   for (const file of citedFiles(ctx)) {
     const text = ctx.read(file);
     for (const match of text.matchAll(CITATION)) {
+      const [, qualifier, id] = match;
       sites.push({
         file,
         line: text.slice(0, match.index).split('\n').length,
-        id: match[1],
-        resolves: ids.has(match[1]),
+        id,
+        qualifier,
+        cited: qualifier === undefined ? id : `${qualifier}.${id}`,
+        resolves:
+          qualifier === undefined
+            ? ids.has(id)
+            : (rows.get(qualifier)?.has(id) ?? false),
       });
     }
   }
-  return {ids, sites};
+  return {ids, rows, sites};
 }
 
 function checkRegisterCitations(ctx) {
   const {sites} = registerCitations(ctx);
   for (const site of sites.filter(s => !s.resolves)) {
+    const where =
+      site.qualifier === undefined
+        ? 'which has no `### <ID>` heading and no `## Retired items` row'
+        : `which Section ${site.qualifier} carries as neither a table row nor a retirement`;
     ctx.finding(
       'citations',
       'act',
-      `${site.file}:${String(site.line)} cites docs/open-items.md ${site.id}, which has no ` +
-        '`### <ID>` heading. Item IDs are permanent; a dangling one means the citation, ' +
-        'not the register, is wrong.',
+      `${site.file}:${String(site.line)} cites docs/open-items.md ${site.cited}, ${where}. ` +
+        'Item IDs are permanent; a dangling one means the citation, not the register, is wrong.',
     );
   }
 }
@@ -737,8 +828,9 @@ function main(argv) {
     process.stdout.write(
       `citations: ${String(sites.length)} total, ${String(outside.length)} outside the ` +
         `register, ${String(core.length)} in packages/core/src/, ` +
-        `${String(new Set(sites.map(s => s.id)).size)} distinct IDs against ` +
-        `${String(ids.size)} items\n`,
+        `${String(new Set(sites.map(s => s.cited)).size)} distinct IDs against ` +
+        `${String(ids.size)} items ` +
+        `(${String(sites.filter(s => s.qualifier !== undefined).length)} section-qualified)\n`,
     );
   }
   process.stdout.write('\n');

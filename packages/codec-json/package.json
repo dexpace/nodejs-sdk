@@ -9,6 +9,11 @@
   "engines": {
     "node": ">=20.3"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dexpace/nodejs-sdk.git",
+    "directory": "packages/codec-json"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

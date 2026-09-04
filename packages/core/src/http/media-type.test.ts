@@ -48,6 +48,34 @@ describe('charset', () => {
   test('is undefined, never throws, when absent or unknown', () => {
     expect(MediaType.parse('text/plain').charset).toBeUndefined();
   });
+
+  test('HTTP-24: an UNKNOWN encoding label is null, not the label verbatim', () => {
+    // The requirement's own conformance text: `charset=utf-8` -> UTF-8; `charset=bogus` -> null;
+    // no charset -> null. "Unknown" is resolved against the runtime's WHATWG Encoding registry,
+    // which is what `new TextDecoder(label)` accepts. See docs/open-items.md A1.
+    expect(MediaType.parse('text/plain;charset=bogus').charset).toBeUndefined();
+    expect(
+      MediaType.parse('text/plain;charset="not an encoding"').charset,
+    ).toBeUndefined();
+  });
+
+  test('HTTP-24: every recognized label still comes back with its original case', () => {
+    expect(MediaType.parse('text/plain;charset=UTF-8').charset).toBe('UTF-8');
+    expect(MediaType.parse('text/plain;charset=iso-8859-1').charset).toBe(
+      'iso-8859-1',
+    );
+    expect(MediaType.parse('text/plain;charset=Shift_JIS').charset).toBe(
+      'Shift_JIS',
+    );
+  });
+
+  test('HTTP-24: the raw parameter is still reachable verbatim', () => {
+    // `charset` answers "which encoding", and an unknown one is no encoding. `parameter('charset')`
+    // answers "what did the wire say", and still says it.
+    expect(
+      MediaType.parse('text/plain;charset=bogus').parameter('charset'),
+    ).toBe('bogus');
+  });
 });
 
 describe('construction rejects forbidden bytes (HTTP-26)', () => {

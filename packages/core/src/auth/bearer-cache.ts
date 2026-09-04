@@ -6,6 +6,8 @@ import {
   type TokenProvider,
 } from './credential.js';
 import {AuthResolutionError} from './errors.js';
+import {abortToSdkError} from '../cancellation.js';
+import {getGlobalLogger} from '../observability/logger.js';
 
 /**
  * The value {@link BearerTokenCache.inFlightEvictionGeneration} carries when the in-flight fetch (if
@@ -13,6 +15,27 @@ import {AuthResolutionError} from './errors.js';
  * counter only ever increments from 0, so no post-eviction fetch can collide with it.
  */
 const NO_EVICTION_GENERATION = -1;
+
+/**
+ * AUTH-37's record half: a background refresh that failed is non-fatal, and is *logged*.
+ *
+ * Swallowed rather than re-raised for the reason stated at the call site -- a bare `void` leaves an
+ * unhandled rejection that terminates the process under Node's default policy, asynchronously and
+ * unattributable to any request, for a fault in caller-supplied `TokenProvider` code. The log is
+ * what makes "continue" honest rather than silent.
+ */
+function warnRefreshFailed(error: unknown): void {
+  try {
+    getGlobalLogger()
+      .atLevel('warning')
+      .event('http.auth.bearerRefreshFailed')
+      .cause(error)
+      .emit();
+  } catch {
+    // OBS-20: logger failure must never fail the request -- and this one is not even on a request
+    // path, so a throw here would be the detached rejection the catch above exists to prevent.
+  }
+}
 
 /**
  * One token fetch's inputs.
@@ -99,7 +122,11 @@ async function raceAbort(
 ): Promise<BearerToken> {
   // Before `start()`, so an already-dead caller never opens a fetch it cannot use --
   // `concurrency-and-async.md`'s "check the signal before each expensive step".
-  if (signal?.aborted === true) throw signal.reason as Error;
+  //
+  // Mapped through `abortToSdkError` rather than rethrown verbatim (N1/XCUT-1): a cancelled token
+  // fetch and a cancelled transport dispatch are the same event to a caller, and used to arrive as
+  // two different types. The caller's own reason is kept as `.cause`.
+  if (signal?.aborted === true) throw abortToSdkError(signal, signal.reason);
   const pending = start();
   if (signal === undefined) return pending;
   let onAbort = (): void => undefined;
@@ -108,7 +135,7 @@ async function raceAbort(
       pending,
       new Promise<never>((_resolve, reject) => {
         onAbort = (): void => {
-          reject(signal.reason as Error);
+          reject(abortToSdkError(signal, signal.reason));
         };
         signal.addEventListener('abort', onAbort, {once: true});
       }),
@@ -191,14 +218,17 @@ export class BearerTokenCache {
         // invariants at the point WE detect them; it does not license re-raising someone else's
         // failure into a detached promise.
         //
-        // The half AUTH-37 asks for and this cannot yet do is the LOG in "log-and-continue" --
-        // tracked as G12 against Phase 7b's logging step, and recorded in the phase checklist's
-        // Deviation Ledger alongside the standing `error-handling.md` conflict this sits on.
+        // AUTH-37's "log-and-continue" is now BOTH halves. The log arrived on 2026-09-02, once 7b's
+        // `getGlobalLogger()` existed to write to; until then the rejection was swallowed with no
+        // trace at all, which is what `docs/open-items.md` G12 owned. Continue is unchanged: the
+        // still-valid token was already returned and a failed refresh evicts nothing.
         //
         // Not raced against `fetchOptions.signal`: this refresh belongs to the cache, not to the
         // request that happened to trigger it, and it must outlive that request's cancellation.
         void this.refresh(fetchOptions, NO_EVICTION_GENERATION).catch(
-          () => undefined,
+          (error: unknown) => {
+            warnRefreshFailed(error);
+          },
         );
         return stillValid;
       }

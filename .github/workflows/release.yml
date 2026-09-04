@@ -1,0 +1,109 @@
+# .github/workflows/release.yml
+#
+# NFR-16 (SHOULD): published artifacts are cryptographically signed for provenance, with signing
+# enforced on the release/CI path and gracefully optional in local builds. This workflow is that
+# path. `docs/deferred-items.md`'s `NFR-16` row (still deferred) tracks the requirement.
+#
+# THIS WORKFLOW IS INERT UNTIL AN `NPM_TOKEN` REPOSITORY SECRET EXISTS.
+# Without one, `changesets/action` cannot authenticate to the registry, so the publish step is a
+# no-op: the action still opens and maintains the "Version Packages" pull request, but nothing is
+# ever pushed to npm. That is deliberate. The workflow is authored ahead of the first release so
+# the release path is reviewable now rather than improvised under time pressure later.
+#
+# Two manifest prerequisites are ALSO unmet as of 2026-09-02, and the first real publish fails
+# without them:
+#   1. No package.json in the workspace carries a `repository` field. npm rejects `--provenance`
+#      without one that resolves to the source repository.
+#   2. `.changeset/config.json` sets `"access": "restricted"`. Provenance attestations go to a
+#      public transparency log and require a public package.
+# Neither is fixed here; both are recorded so the first release does not discover them at the
+# registry.
+#
+# How a release happens once the above are satisfied:
+#   1. A change lands on `main` carrying a changeset under `.changeset/` (see CLAUDE.md — write
+#      one with `bun run changeset`, which names the file `YYYY-MM-DD-<slug>.md`).
+#   2. This workflow runs. `changesets/action` finds unreleased changesets and opens (or updates)
+#      a "Version Packages" pull request that applies the version bumps and rewrites CHANGELOGs.
+#   3. Merging that pull request runs this workflow again. This time there are no changesets left,
+#      so the action runs the `publish` command below instead, which publishes every package whose
+#      version is not yet on the registry.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Two pushes to main must never publish concurrently: the second would race the first's registry
+# writes and could publish a half-versioned set. `cancel-in-progress` stays false on purpose — a
+# publish that has already started must be allowed to finish rather than be killed mid-registry.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  # `contents: write` and `pull-requests: write` let the action open, update and push to the
+  # "Version Packages" pull request. `id-token: write` is what makes provenance possible at all:
+  # npm exchanges the GitHub OIDC token for the signed attestation.
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    # Belt and braces with the `on.push.branches` filter above: releases run from `main` only.
+    # Work on `mvp` or any other branch is never versioned or published, even if this file is
+    # copied to another trigger later.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changesets needs the full history to work out what has already been released.
+          fetch-depth: 0
+
+      # Pinned exactly the way .github/workflows/ci.yml pins it: the version in .bun-version, not
+      # whatever the runner ships. Bun's fetch/node:http behaviour differs enough between releases
+      # that an unpinned runner has produced green-here/red-there results before (see CLAUDE.md).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      # Build once here so a broken tree fails before the action starts touching the registry.
+      # This is not the real gate: each package's own `prepublishOnly` re-runs
+      # `bun run build && bun run api:ci && publint . && attw --pack .` at publish time, and npm
+      # aborts that package's publish if any of the four fails. Everything those scripts need
+      # (Bun, @microsoft/api-extractor, publint, @arethetypeswrong/cli) is a root devDependency the
+      # frozen install above provides.
+      - name: Build
+        run: bun run build
+
+      - name: Version pull request, or publish
+        uses: changesets/action@v1
+        with:
+          # The lockfile-pinned changesets binary, invoked directly.
+          #
+          # NOT `bun run changeset publish`: that routes through scripts/changeset.mjs, a wrapper
+          # whose only job is renaming a newly *created* changeset file. `publish` is already in
+          # its passthrough list, so on this path the wrapper adds a process layer and a second
+          # `bunx` resolution and changes nothing.
+          #
+          # NOT `bun x changeset publish` either: `bun x` falls back to fetching from the registry
+          # when local resolution misses, and a release path must never publish using tooling the
+          # lockfile did not pin. `bun install --frozen-lockfile` ran immediately above, so
+          # node_modules/.bin/changeset is guaranteed present and guaranteed to be the pinned
+          # @changesets/cli.
+          publish: node_modules/.bin/changeset publish
+          version: node_modules/.bin/changeset version
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          # changesets/action writes ~/.npmrc from NPM_TOKEN when it is set, and skips publishing
+          # entirely when it is not — which is what makes this workflow inert today.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Applies to every `npm publish` the action drives, so provenance is enforced on the
+          # release path rather than being a flag someone can forget at one call site (NFR-16).
+          NPM_CONFIG_PROVENANCE: 'true'

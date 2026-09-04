@@ -8,7 +8,7 @@ import {DexpaceError} from '../http/errors.js';
  * already-consumed single-use body -- this one is a fail-fast gate evaluated BEFORE any write is
  * attempted, and names replayability specifically as the requirement demands.
  *
- * @internal
+ * @public
  */
 export class NonReplayableBodyError extends DexpaceError {
   /**
@@ -37,7 +37,7 @@ export class NonReplayableBodyError extends DexpaceError {
  * REDIR-15: an HTTPS-to-HTTP hop, rejected unless `RedirectSettings.allowSchemeDowngrade` is set.
  * Evaluated per hop transition, so an HTTPS-to-HTTP-to-HTTPS chain flags only the hop that downgraded.
  *
- * @internal
+ * @public
  */
 export class SchemeDowngradeError extends DexpaceError {
   /** The current hop's request URL -- the HTTPS side of the rejected transition. */

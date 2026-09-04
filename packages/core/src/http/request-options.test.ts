@@ -51,6 +51,21 @@ describe('timeout validation (HTTP-35)', () => {
     );
   });
 
+  test('rejects a non-finite timeout, the same way maxRetries does (P2)', () => {
+    expect(() =>
+      RequestOptions.newBuilder().timeoutMs(Number.POSITIVE_INFINITY),
+    ).toThrow(RequestOptionsValidationError);
+    expect(() => RequestOptions.newBuilder().timeoutMs(Number.NaN)).toThrow(
+      RequestOptionsValidationError,
+    );
+  });
+
+  test('accepts a fractional millisecond timeout, which a deadline can honor', () => {
+    expect(RequestOptions.newBuilder().timeoutMs(1.5).build().timeoutMs).toBe(
+      1.5,
+    );
+  });
+
   test('accepts a null (undefined) timeout — no override', () => {
     expect(() =>
       RequestOptions.newBuilder().timeoutMs(undefined).build(),

@@ -41,7 +41,7 @@ export interface AuthTiers {
  * @param availableSchemes - the schemes a credential is actually configured for.
  * @returns the first satisfiable requirement from the selected tier, in declared order.
  * @throws AuthResolutionError when the selected tier lists no satisfiable scheme (AUTH-6).
- * @throws InvariantViolation when every tier is absent — a caller misconfiguration, not an
+ * @throws an assertion failure (a caller bug, not a catchable condition) when every tier is absent — a caller misconfiguration, not an
  *   operational failure (AUTH-6, per the plan's Global Constraints).
  *
  * @public

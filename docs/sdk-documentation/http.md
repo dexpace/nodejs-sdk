@@ -89,7 +89,7 @@ These have no builder; a static factory is the whole surface.
 |---|---|---|
 | `Status` | `of`, `recognized` | above |
 | `Protocol` | `HTTP_1_1`, `HTTP_2`, `parse` | Both shipped transports always report `HTTP_1_1`: neither `fetch`'s `Response` nor undici's `ResponseData` exposes the negotiated version. A ledgered deviation, not a silent gap |
-| `MediaType` | `of`, `parse` | `parse('text/plain;charset=utf-8').charset` → `'utf-8'`. `matches(pattern)` does wildcard subtype matching. **`charset=bogus` returns `'bogus'`, not `undefined`** — there is no encoding registry to fail a lookup against (`docs/open-items.md` A1) |
+| `MediaType` | `of`, `parse` | `parse('text/plain;charset=utf-8').charset` → `'utf-8'`. `matches(pattern)` does wildcard subtype matching. **`charset` is resolved against the runtime's WHATWG encoding registry**, so an unrecognized label answers `undefined` — `parse('text/plain;charset=bogus').charset` is `undefined` (`HTTP-24`) while `parameter('charset')` still returns `'bogus'` verbatim and `render()` round-trips it (`HTTP-25`) |
 | `ETag` | `parse`, `ANY` | `parse` returns `undefined` on a malformed tag rather than throwing. `isWeak`, `opaque`, `raw` |
 | `HttpRange` | `bounded`, `open`, `suffix`, `parse` | `kind` discriminates the three |
 
@@ -108,9 +108,10 @@ const options = RequestOptions.newBuilder()
 ```
 
 `RequestOptions.EMPTY` is the shared no-op instance. A step reads it as `ctx.options`, and a
-transport receives it as `send()`'s second argument. `maxRetries` rejects anything that is not a
-non-negative integer; `timeoutMs` rejects zero and negatives but — a known gap — still accepts
-`Infinity` and `NaN` (`docs/open-items.md` P2).
+transport receives it as `send()`'s second argument. Both range checks are the **full** range, not
+only the lower bound: `maxRetries` rejects anything that is not a non-negative integer, and
+`timeoutMs` rejects zero, negatives, `Infinity` and `NaN` alike (`HTTP-35`). A fractional
+`timeoutMs` is accepted — a timeout is a duration, not a count.
 
 `auth` on the builder is the **per-call** auth tier, the highest-precedence one; see
 [`auth.md`](./auth.md).
@@ -139,7 +140,7 @@ const conditioned = request.newBuilder().headers(conditions.applyTo(request.head
 `QueryParams` is the one URL-manipulation surface. It is not `URLSearchParams`, and the difference is
 deliberate: `URLSearchParams` re-serializes a whole query string, reorders parameters, and re-encodes
 what was already encoded. `QueryParams` preserves insertion order and encodes exactly once
-(`docs/open-items.md` J-section), with RFC 3986 component encoding rather than
+(`docs/open-items.md` J4), with RFC 3986 component encoding rather than
 `application/x-www-form-urlencoded`'s — so a space becomes `%20`, not `+`, and a literal `+` becomes
 `%2B`.
 

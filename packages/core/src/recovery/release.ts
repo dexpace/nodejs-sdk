@@ -33,6 +33,23 @@ export async function releaseQuietly(
 }
 
 /**
+ * Whether {@link releaseQuietly}'s token means "released without incident".
+ *
+ * For a caller whose primary is a RETURNED value rather than a throwable, {@link withReleaseFailure}
+ * has nothing to pair the failure with -- `toHttpError` returns its `HttpStatusError` -- so it needs
+ * the plain question instead, and the answer must not be re-derived against this module's private
+ * sentinel from outside it.
+ *
+ * @param releaseToken - the token {@link releaseQuietly} returned.
+ * @returns `true` when the release was clean.
+ *
+ * @internal
+ */
+export function releasedCleanly(releaseToken: unknown): boolean {
+  return releaseToken === RELEASED_CLEANLY;
+}
+
+/**
  * Keeps `primary` primary, with a release failure riding along as suppressed (RECOV-12, RETRY-22's
  * "a teardown failure can never mask the upstream failure"; REDIR-22's equivalent, where the error
  * that must propagate is the decision failure, not the teardown that ran on its way out).

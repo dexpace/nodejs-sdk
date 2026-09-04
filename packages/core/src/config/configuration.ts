@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/config/configuration.ts
 import {invariant} from '../invariant.js';
+import {getGlobalLogger} from '../observability/logger.js';
 import {parseDurationMs} from './duration.js';
 
 /**
@@ -32,19 +33,46 @@ const STRICT_INTEGER = /^[+-]?\d+$/u;
  * an absent key. The production seam additionally guards the prototype case at its own source; this
  * guard is the one that holds for a seam this package did not write.
  *
- * The residue: a seam failure is now silently invisible. `docs/open-items.md` K14 owns surfacing it,
- * alongside CFG-24's warning, once a `Logger` seam exists to surface it *to*.
+ * The residue used to be that a seam failure was then silently INVISIBLE: an operator whose
+ * secrets-store seam was misconfigured saw the caller's default resolve, with nothing anywhere to
+ * say why. That half is closed as of 2026-09-02 -- the swallowed throw is warned about, naming the
+ * layer and the key -- which is what `docs/open-items.md` K14 owned. The value still resolves to the
+ * caller's default either way, because CFG-5's never-throw clause is the stronger obligation.
+ *
+ * @param source - the caller-supplied lookup seam for one layer.
+ * @param key - the key being looked up, already normalized for that layer.
+ * @param layer - which layer this is, for the diagnostic.
  */
-function readLayer(source: SourceFn, key: string): string | undefined {
+function readLayer(
+  source: SourceFn,
+  key: string,
+  layer: 'environment' | 'property',
+): string | undefined {
   let value: unknown;
   try {
     value = source(key);
-  } catch {
+  } catch (error) {
     // Deliberately unnarrowed: the throw comes from caller-supplied code, so no error type can be
     // predicted, and CFG-5 makes "the lookup never fails the caller" the stronger obligation.
+    warnSourceFailed(layer, key, error);
     return undefined;
   }
   return typeof value === 'string' ? value : undefined;
+}
+
+/** The diagnostic for a seam that threw. Never the value -- a configuration value can be a secret. */
+function warnSourceFailed(layer: string, key: string, error: unknown): void {
+  try {
+    getGlobalLogger()
+      .atLevel('warning')
+      .event('config.sourceFailed')
+      .field('source', layer)
+      .field('key', key)
+      .cause(error)
+      .emit();
+  } catch {
+    // OBS-20: logger failure must never fail a lookup CFG-5 makes total.
+  }
 }
 
 /** CFG-3: the property layer is queried lower-cased with underscores replaced by dots. */
@@ -109,7 +137,7 @@ export interface Configuration {
    * Produces a reconfigured copy, copy-on-write (CFG-9): the override map is copied before `mutate`
    * runs and the source seams are inherited by reference, so this instance is left unchanged.
    *
-   * @throws InvariantViolation when `mutate` is not a function (CFG-37).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `mutate` is not a function (CFG-37).
    */
   derive(mutate: (builder: ConfigurationBuilder) => void): Configuration;
 }
@@ -133,19 +161,20 @@ class LayeredConfiguration implements Configuration {
   getString(key: string, fallback?: string): string | undefined {
     const override = this.#overrides.get(key);
     if (override !== undefined) return override;
-    const fromEnv = readLayer(this.#envSource, key);
+    const fromEnv = readLayer(this.#envSource, key, 'environment');
     // CFG-2: an environment value that is present but empty is absent, so the lookup falls through.
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
     const fromProperty = readLayer(
       this.#propertySource,
       normalizePropertyKey(key),
+      'property',
     );
     if (fromProperty !== undefined) return fromProperty;
     return fallback;
   }
 
   getRawProperty(key: string, fallback?: string): string | undefined {
-    return readLayer(this.#propertySource, key) ?? fallback;
+    return readLayer(this.#propertySource, key, 'property') ?? fallback;
   }
 
   getInt(key: string, fallback: number): number {
@@ -205,7 +234,7 @@ export class ConfigurationBuilder {
   /**
    * Sets an override for the exact key, the highest-precedence layer.
    *
-   * @throws InvariantViolation when `key` or `value` is not a string (CFG-37).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `key` or `value` is not a string (CFG-37).
    */
   put(key: string, value: string): this {
     invariant(
@@ -224,7 +253,7 @@ export class ConfigurationBuilder {
    * Drops the override for `key`, leaving the lower layers to answer as if it had never been set
    * (CFG-10). Removing a key with no override is a no-op.
    *
-   * @throws InvariantViolation when `key` is not a string (CFG-37).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `key` is not a string (CFG-37).
    */
   remove(key: string): this {
     invariant(
@@ -238,7 +267,7 @@ export class ConfigurationBuilder {
   /**
    * Replaces the environment seam (CFG-11).
    *
-   * @throws InvariantViolation when `source` is not a function (CFG-37).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `source` is not a function (CFG-37).
    */
   withEnvSource(source: SourceFn): this {
     invariant(
@@ -252,7 +281,7 @@ export class ConfigurationBuilder {
   /**
    * Replaces the property seam (CFG-11).
    *
-   * @throws InvariantViolation when `source` is not a function (CFG-37).
+   * @throws an assertion failure (a caller bug, not a catchable condition) when `source` is not a function (CFG-37).
    */
   withPropertySource(source: SourceFn): this {
     invariant(
@@ -352,7 +381,7 @@ export function getGlobalConfiguration(): Configuration {
 /**
  * Replaces the process-wide configuration slot, last-write-wins (CFG-13).
  *
- * @throws InvariantViolation when `config` is not an object (CFG-37).
+ * @throws an assertion failure (a caller bug, not a catchable condition) when `config` is not an object (CFG-37).
  *
  * @public
  */
