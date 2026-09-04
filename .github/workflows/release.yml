@@ -2,7 +2,7 @@
 #
 # NFR-16 (SHOULD): published artifacts are cryptographically signed for provenance, with signing
 # enforced on the release/CI path and gracefully optional in local builds. This workflow is that
-# path. `docs/deferred-items.md`'s `NFR-16` row (still deferred) tracks the requirement.
+# path. `docs/first-release.md` tracks the requirement and the blockers below.
 #
 # THIS WORKFLOW IS INERT UNTIL AN `NPM_TOKEN` REPOSITORY SECRET EXISTS.
 # Without one, `changesets/action` cannot authenticate to the registry, so the publish step is a

@@ -75,9 +75,9 @@ export class FormBodyValidationError extends DexpaceError {
  * `new HttpStatusError(200, …)` built exactly the object the requirement forbids and contradicted
  * the class's own documented invariant. Enforced from 2026-09-02.
  *
- * A two-level leaf under {@link DexpaceError} rather than a new `DomainModelError` leaf, matching
- * its siblings in this file: checkpoint §5.2 is queued to flatten that tier
- * (`docs/open-items.md` R.E2), and this pass does not add an eleventh leaf to it.
+ * A two-level leaf under {@link DexpaceError}, matching its siblings in this file. It never joined
+ * the `DomainModelError` tier `http/errors.ts` carried at the time; that tier has since been
+ * flattened onto {@link DexpaceError} as well, and `isDomainModelError` groups what hung off it.
  *
  * Deliberately NOT part of {@link isBodyError}. That guard groups the three failures a caller meets
  * while *working with* a body; this one reports a programmer error at the moment an error object is

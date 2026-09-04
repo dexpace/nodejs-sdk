@@ -333,10 +333,6 @@ export interface DispatchContext {
 }
 
 // @public
-export class DomainModelError extends DexpaceError {
-}
-
-// @public
 export type DroppedHeaderPolicy = 'mark' | 'omit';
 
 // @public
@@ -358,7 +354,7 @@ export class ETag {
 }
 
 // @public
-export class EtagParseError extends DomainModelError {
+export class EtagParseError extends DexpaceError {
 }
 
 // @public
@@ -478,7 +474,7 @@ export class HeadersBuilder implements Builder<Headers_2> {
 }
 
 // @public
-export class HeaderValidationError extends DomainModelError {
+export class HeaderValidationError extends DexpaceError {
     constructor(kind: 'name' | 'value', offendingName: string, _offendingValue: string | undefined);
     readonly escapedName: string;
     readonly kind: 'name' | 'value';
@@ -503,7 +499,7 @@ export class HttpRange {
 }
 
 // @public
-export class HttpRangeValidationError extends DomainModelError {
+export class HttpRangeValidationError extends DexpaceError {
 }
 
 // @public
@@ -546,6 +542,9 @@ export function isAbsent<T>(tristate: Tristate<T>): tristate is {
 
 // @public
 export function isBodyError(error: unknown): error is ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError;
+
+// @public
+export function isDomainModelError(error: unknown): error is RequiredFieldError | HeaderValidationError | MediaTypeParseError | ProtocolParseError | UrlConstructionError | RequestOptionsValidationError | EtagParseError | HttpRangeValidationError | RequestConditionsValidationError | RequestBodyNotAllowedError;
 
 // @public
 export function isNull<T>(tristate: Tristate<T>): tristate is {
@@ -658,7 +657,7 @@ export class MediaType {
 }
 
 // @public
-export class MediaTypeParseError extends DomainModelError {
+export class MediaTypeParseError extends DexpaceError {
 }
 
 // @public
@@ -878,7 +877,7 @@ export class Protocol {
 }
 
 // @public
-export class ProtocolParseError extends DomainModelError {
+export class ProtocolParseError extends DexpaceError {
 }
 
 // @public
@@ -972,7 +971,7 @@ class Request_2 {
 export { Request_2 as Request }
 
 // @public
-export class RequestBodyNotAllowedError extends DomainModelError {
+export class RequestBodyNotAllowedError extends DexpaceError {
     constructor(method: string);
 }
 
@@ -1002,7 +1001,7 @@ export class RequestConditionsBuilder implements Builder<RequestConditions> {
 }
 
 // @public
-export class RequestConditionsValidationError extends DomainModelError {
+export class RequestConditionsValidationError extends DexpaceError {
 }
 
 // @public
@@ -1035,11 +1034,11 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
 }
 
 // @public
-export class RequestOptionsValidationError extends DomainModelError {
+export class RequestOptionsValidationError extends DexpaceError {
 }
 
 // @public
-export class RequiredFieldError extends DomainModelError {
+export class RequiredFieldError extends DexpaceError {
     constructor(fieldName: string);
     readonly fieldName: string;
 }
@@ -1413,7 +1412,7 @@ export class TypedResponse<T> {
 export function typedSseStream<T>(stream: SseStream, mapper: SseMapper<T>): AsyncIterable<T>;
 
 // @public
-export class UrlConstructionError extends DomainModelError {
+export class UrlConstructionError extends DexpaceError {
 }
 
 // @public

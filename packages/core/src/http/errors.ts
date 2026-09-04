@@ -18,18 +18,6 @@ export class DexpaceError extends Error {
   }
 }
 
-/**
- * The root of every error the HTTP domain model throws.
- *
- * Catch this to handle any construction, validation, or parse failure from the model uniformly;
- * catch a leaf subclass to distinguish a specific failure. A sibling of the seam layer's
- * {@link DexpaceError}-rooted errors (`CancellationError`, `OperationAssemblyError`) — a cancelled
- * transport call or an unassembled operation is not itself a domain-model construction failure.
- *
- * @public
- */
-export class DomainModelError extends DexpaceError {}
-
 // Narrows a caught `unknown` into an Error (styleguide 8.4). Defined once, imported everywhere a caught
 // value becomes a `cause`. Must never itself throw from inside a catch — String() can throw on a
 // null-prototype object or a hostile toString, hence the inner try.
@@ -59,7 +47,7 @@ export function toError(value: unknown): Error {
  *
  * @public
  */
-export class RequiredFieldError extends DomainModelError {
+export class RequiredFieldError extends DexpaceError {
   /** The name of the field that was missing. */
   readonly fieldName: string;
 
@@ -94,7 +82,7 @@ function escapeControlChars(input: string): string {
  *
  * @public
  */
-export class HeaderValidationError extends DomainModelError {
+export class HeaderValidationError extends DexpaceError {
   /** Whether the header's name or its value failed validation. */
   readonly kind: 'name' | 'value';
   /**
@@ -128,7 +116,7 @@ export class HeaderValidationError extends DomainModelError {
  *
  * @public
  */
-export class MediaTypeParseError extends DomainModelError {}
+export class MediaTypeParseError extends DexpaceError {}
 
 /**
  * Thrown when a protocol identifier is not one of the recognized HTTP versions or their aliases
@@ -136,7 +124,7 @@ export class MediaTypeParseError extends DomainModelError {}
  *
  * @public
  */
-export class ProtocolParseError extends DomainModelError {}
+export class ProtocolParseError extends DexpaceError {}
 
 /**
  * Thrown when a request URL is malformed or not absolute; the message carries the offending input
@@ -144,7 +132,7 @@ export class ProtocolParseError extends DomainModelError {}
  *
  * @public
  */
-export class UrlConstructionError extends DomainModelError {}
+export class UrlConstructionError extends DexpaceError {}
 
 /**
  * Thrown when a per-call operational override is out of range — a non-null timeout that is zero or
@@ -152,7 +140,7 @@ export class UrlConstructionError extends DomainModelError {}
  *
  * @public
  */
-export class RequestOptionsValidationError extends DomainModelError {}
+export class RequestOptionsValidationError extends DexpaceError {}
 
 /**
  * Thrown when an ETag is unterminated, has an empty strong opaque tag, or contains a character
@@ -160,7 +148,7 @@ export class RequestOptionsValidationError extends DomainModelError {}
  *
  * @public
  */
-export class EtagParseError extends DomainModelError {}
+export class EtagParseError extends DexpaceError {}
 
 /**
  * Thrown when a byte range is invalid — a negative offset, a non-positive length, an overflowing
@@ -168,7 +156,7 @@ export class EtagParseError extends DomainModelError {}
  *
  * @public
  */
-export class HttpRangeValidationError extends DomainModelError {}
+export class HttpRangeValidationError extends DexpaceError {}
 
 /**
  * Thrown when conditional-request state is contradictory — mixing the any-tag (`*`) with a concrete
@@ -176,7 +164,7 @@ export class HttpRangeValidationError extends DomainModelError {}
  *
  * @public
  */
-export class RequestConditionsValidationError extends DomainModelError {}
+export class RequestConditionsValidationError extends DexpaceError {}
 
 /**
  * Thrown when a request carries a body on a method whose classification forbids one — GET, HEAD,
@@ -184,11 +172,55 @@ export class RequestConditionsValidationError extends DomainModelError {}
  *
  * @public
  */
-export class RequestBodyNotAllowedError extends DomainModelError {
+export class RequestBodyNotAllowedError extends DexpaceError {
   /**
    * @param method - the method that forbids a body, named in the message.
    */
   constructor(method: string) {
     super(`method ${method} does not allow a request body`);
   }
+}
+
+/**
+ * Groups every error the HTTP domain model throws, with no class tier between those leaves and
+ * {@link DexpaceError} — the corpus caps custom error hierarchies at two levels. This is the
+ * replacement for the `DomainModelError` class, which was removed: a `catch` that read
+ * `error instanceof DomainModelError` reads `isDomainModelError(error)` instead, and narrows to the
+ * same union.
+ *
+ * Matches any construction, validation, or parse failure the model raises; test against a leaf class
+ * to distinguish a specific one. Deliberately excludes the seam layer's own {@link DexpaceError}
+ * leaves (`CancellationError`, `OperationAssemblyError`) — a cancelled transport call or an
+ * unassembled operation is not itself a domain-model construction failure.
+ *
+ * @param error - the caught value.
+ * @returns whether `error` is one of the ten domain-model error classes.
+ *
+ * @public
+ */
+export function isDomainModelError(
+  error: unknown,
+): error is
+  | RequiredFieldError
+  | HeaderValidationError
+  | MediaTypeParseError
+  | ProtocolParseError
+  | UrlConstructionError
+  | RequestOptionsValidationError
+  | EtagParseError
+  | HttpRangeValidationError
+  | RequestConditionsValidationError
+  | RequestBodyNotAllowedError {
+  return (
+    error instanceof RequiredFieldError ||
+    error instanceof HeaderValidationError ||
+    error instanceof MediaTypeParseError ||
+    error instanceof ProtocolParseError ||
+    error instanceof UrlConstructionError ||
+    error instanceof RequestOptionsValidationError ||
+    error instanceof EtagParseError ||
+    error instanceof HttpRangeValidationError ||
+    error instanceof RequestConditionsValidationError ||
+    error instanceof RequestBodyNotAllowedError
+  );
 }

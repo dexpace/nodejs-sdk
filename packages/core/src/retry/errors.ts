@@ -15,8 +15,11 @@ import {DexpaceError} from '../http/errors.js';
  * `HttpStatusError`'s own documented invariant. This leaf exists so the trail can say what actually
  * happened: a response was discarded by a caller-widened retry policy, which is not an HTTP failure.
  *
- * A two-level leaf under {@link DexpaceError}, deliberately — see checkpoint §5.2 and
- * `docs/open-items.md` R.E2 on why no new middle tier is introduced.
+ * A two-level leaf under {@link DexpaceError}, deliberately: checkpoint §5.2 caps the taxonomy at two
+ * levels. `DomainModelError`, the one middle tier that existed purely as a grouping device, was deleted
+ * rather than grown, with the exported `isDomainModelError` guard taking over the narrowing it provided.
+ * `IoError` remains a middle tier under `TransportFailureError` only because `TRANSPORT-20` requires that
+ * subtyping and this module's own `classify.ts` cause-walk is load-bearing on it.
  *
  * @public
  */

@@ -15,14 +15,26 @@ the second source, so every one of those citations resolves again, to a row that
 how it closed.
 
 **What this note is not.** It is not a register. Nothing is appended here as work proceeds; it is a dated
-record of one deletion. A new finding goes to `docs/open-items.md`, a new deferral to
-`docs/deferred-items.md`, exactly as before.
+record of two deletions, both made on 2026-09-04 — first the two retirement tables described above, then,
+later the same day, the whole of `docs/deferred-items.md`. A new finding still goes to
+`docs/open-items.md`. **A new deferral goes there too now**, as an open item stating the trigger that would
+discharge it, because there is no deferral register left to send it to: `docs/open-items.md` and
+`docs/deviations.md` are the two that remain. The five deferrals that were still live when the register was
+deleted are archived under *Live deferrals* below — an archive of record, not an intake, and not appended to
+either.
 
 **Counts, at the moment of deletion.** 102 retired item IDs, 25 retired rows that never carried an ID, and 67
 discharged deferrals. `docs/open-items.md` went from 1933 lines to 1767, `docs/deferred-items.md` from 199 to
 104. Every table below is reproduced verbatim from `git show HEAD:` of the pre-deletion files, commit
 `853c349`; the rows' own `file:line` evidence is unmodified and may itself have drifted since the date each
 row carries.
+
+**The register's own deletion, later the same day.** `docs/deferred-items.md` did not stay at 104 lines. A
+maintainer pass decided four of its ten remaining rows rather than re-deferring them (`docs/open-items.md`
+Section W), and the file — 99 lines by then — was deleted outright: the `NFR-16` row became
+[`docs/first-release.md`](../../first-release.md), the other five moved to *Live deferrals* below, and every
+live reference to the path across the tree was repointed. `docs/work/` was not, because it is never
+retro-edited; its ~20 mentions of the register are correct records of what was true when they were written.
 
 **Citations still in flight.** The bare-ID references inside test titles and inline comment shorthand —
 `(T.F9/V15)`, `(H14/P1, RECOV-12)`, "the very collision V13 closed", 44 of them across 20 files — were
@@ -255,6 +267,39 @@ they are easy to mistake for one. Rows are keyed by requirement ID or topic, nev
 | `CONSTANT_CASE` vs `lowerCamelCase` for module-level immutable collections | Phase 4c validation review (2026-07-29) | resolved by practice, 2026-09-02 | 24 module-level collections swept across all eleven packages, every one `CONSTANT_CASE`, zero `lowerCamelCase`. Declarations at `packages/core/src/pipeline/stage.ts:38`, `:58`. **This row's trigger had already fired six times** and it cited the import line, not the declaration | 2026-09-02 |
 | `BODY-34`'s single shared preview-cap **value** | Phase 3b checklist | Phase 7b (`bd37a08`) | `packages/core/src/observability/logging-step.ts:64-65`, resolved once at `:465-466`, threaded to both tees at `:327` and `:379`. Recovered by the 2026-09-02 audit; had never reached this register | 2026-09-02 |
 | Wiring either logging tee to a real `Logger` | Phase 3b checklist | Phase 7b (`bd37a08`) | `packages/core/src/observability/logging-step.ts:492` — `settings.logger ?? getGlobalLogger()`. Recovered by the 2026-09-02 audit; had never reached this register | 2026-09-02 |
+
+---
+
+## Live deferrals — the five rows that did NOT close
+
+**Every other table in this note records something that ended.** This one does not. These five rows were
+still live when `docs/deferred-items.md` was deleted later on 2026-09-04: nothing below has been built,
+nothing below was withdrawn, and each one still carries a trigger a reader could observe firing. They are
+reproduced here because the register that held them is gone and this note is now their archive of record —
+the only place in the repository where they exist. Read them as outstanding work, not as history.
+
+The sixth survivor, the `NFR-16` publish-provenance row, is not in this table. It was the one row with live,
+actionable content of its own, and it became [`docs/first-release.md`](../../first-release.md) on the same
+day rather than being archived here.
+
+**This still does not make the note a register.** Nothing is appended to this table as work proceeds. When
+one of these five triggers fires the work is done and the row is simply no longer true; a *new* deferral
+goes to `docs/open-items.md` as an open item carrying its trigger, per the preamble above. Rows are keyed
+by requirement ID or topic, never by line number — the convention the register itself used.
+
+Reproduced verbatim from `docs/deferred-items.md`'s `## Still deferred` table as it stood at deletion,
+including each row's own dated mid-sentence corrections. The `file:line` evidence inside them is unmodified
+and carries the same drift caveat as every other table here. **One mechanical exception:** four relative
+Markdown link targets inside these rows were written from the `docs/` root and are re-anchored to this
+file's directory, so they still resolve. No word of the rows changed.
+
+| Item | Originated in | Target phase | Note |
+|---|---|---|---|
+| `RETRY-29` — opt-in server-driven retry-classification override header | Phase 5a brainstorm | **UNSCHEDULED — trigger: a consumer needs server-driven backoff beyond `Retry-After`** | `MAY` — the spec's own level, at `docs/product-spec/09-retry-and-resilience.md:35` and appendix C: "an opt-in server-driven override **MAY** let a response header force or suppress the retry classification … The override MUST flip only classification and MUST remain subject to the attempt cap and the re-send-safety gate." **What is built.** Server *pacing* headers are honored in full: `packages/core/src/retry/pacing.ts:62-90` reads `Retry-After` (numeric form, then HTTP-date), then `retry-after-ms`, then `x-ms-retry-after-ms`, then `X-RateLimit-Reset`, first parseable value winning (`RETRY-21`/`RECOV-24`), with a strict decimal grammar screening the value before any float parse (`:16-21`, `RETRY-19`), a one-year clamp (`:14`, `RETRY-18`/`RECOV-26`), and no jitter applied to a literal `Retry-After` (`:56`, `RETRY-20`). **What is not built.** Nothing lets a response header change the retry *classification*: `packages/core/src/retry/classify.ts` decides retryability from its allow-list and the shared `RETRYABLE_STATUSES` alone (shared meaning re-exported out of `config/retryable.ts` at `packages/core/src/retry/classify.ts:13`, so `RETRY-1` and `CFG-35` cannot drift). The two surfaces answer different questions — pacing answers "how long," `RETRY-29` answers "whether" — so honoring `Retry-After` is not partial credit toward this row. Not scheduled because it widens the classifier's input surface to server-controlled values, a trust decision deserving its own deliberation rather than a default. No caller identified. **Trigger added 2026-09-02**; the register table above requires an unscheduled deferral to carry one, and this row had none |
+| A real `@opentelemetry/sdk-metrics`-backed `Meter` adapter package | Phase 7b brainstorm | **UNSCHEDULED — trigger: the first consumer that needs a metrics backend, or a post-mvp delivery** | `OBS-31` only requires the no-op default and that core not depend on a metrics runtime, and both hold: the default is `NOOP_METER` (`packages/core/src/observability/metrics.ts:56`, over the frozen `NOOP_COUNTER`/`NOOP_HISTOGRAM` at `:40,45`), `@dexpace/core` declares `dependencies: {}`, and `verify:seam-1` enforces it. Re-confirmed 2026-09-02: eleven packages exist and none is a metrics backend — unlike tracing, which has a duck-typed zero-adapter path (a caller-supplied `tracerFactory`, over the trace- and span-id generators Phase 7b shipped at `packages/core/src/observability/tracing.ts:206-223`) and so needs no package at all. **Trigger added 2026-09-02.** The register table above requires an unscheduled row to carry a trigger; this row had none, having read only "Not scheduled" since Phase 7b |
+| RFC 7616 §4 `username*` (RFC 5987) extended notation for a non-ASCII Digest username | Phase 5c checklist | **UNSCHEDULED — trigger: a Digest server observed requiring `username*` or `userhash`** | **Recovered by the 2026-08-31 register audit; never reached this log.** `digestHandler()` rejects a non-header-safe username at construction today — a loud refusal, not a silent mangle, so the failure mode is safe. Implementing `username*` would let such a username be sent correctly rather than refused, and is the standard's own answer. Not scheduled: no server has been observed requiring it, and the refusal is a correct (if narrow) implementation until one is. **Trigger added 2026-09-02** per the register table above; the row had read only "Unscoped". Source: [5c's checklist](./phase5/phase5c/2026-07-26-phase5c-auth-checklist.md):227 — corrected 2026-09-02 from `:220`, which is the `## Deferred Items` heading, not the row |
+| A caller-supplied `ChallengeHandler` list on `AuthStepSettings` | Phase 5c checklist | **UNSCHEDULED — trigger: a second auth scheme needing a challenge handler beyond Digest** | **Recovered by the 2026-08-31 register audit; never reached this log.** `handlers` was removed at review: it forced three types onto the public barrel and could not compose with the built-in handlers, which stay internal. If a caller ever needs to ADD a handler rather than replace the whole reaction, the shape to ship is an append-semantics field plus public `basicHandler`/`digestHandler` factories — not the replace-semantics field that was cut. **Trigger added 2026-09-02** per the register table above; the row had read only "Unscoped". Source: [5c's checklist](./phase5/phase5c/2026-07-26-phase5c-auth-checklist.md):230 — corrected 2026-09-02 from `:220`, which is the `## Deferred Items` heading, not the row |
+| Zero-copy file dispatch for `@dexpace/body-file` — both a read-only memory-mapped `fileBody()` view (`BODY-36`, MAY) **and** a real `sendfile(2)`-equivalent path if Node's HTTP stack ever exposes one (`TRANSPORT-28`, SHOULD) | Phase 8a brainstorm (both) | **UNSCHEDULED — trigger: Node exposes a `sendfile(2)`/mmap path for the HTTP stack** | **Two 8a rows merged here 2026-09-02, because they share one trigger.** The 2026-08-31 register audit recovered the `BODY-36` half and missed the `sendfile(2)` half, so a standing revisit trigger lived only in a phase document — the exact failure the Maintenance rule above forbids. `BODY-36` is a MAY for local hashing/signing without heap copying; no caller identified in this roadmap's scope, same "don't build speculatively" discipline as `FakeTransport`'s original deferral. `TRANSPORT-28`'s kernel-transfer SHOULD has no Node analogue today — neither `fetch` nor `undici` exposes a `sendfile`-shaped API for outbound bodies — which 8a's design **confirmed** rather than merely flagged, recording it as a `PAGE-29`-shaped collapse in its own Deviation Ledger and again in [`deviations.md`](../../deviations.md), the transport-impossibility list ("Zero-copy `sendfile(2)` (`TRANSPORT-28`, SHOULD)"). Revisit `transport-undici`'s file-body dispatch if a future Node/undici release adds a genuine kernel-transfer API, not before. Sources: [8a's design](./phase8/phase8a/2026-07-28-phase8a-transport-design.md):585 (the `sendfile(2)` revisit trigger) and `:586` (the memory-mapped view) — the memory-mapped citation is corrected 2026-09-02 from `:581`, which is the `## Deferred Items` heading. `@dexpace/body-file` shipped in 8a without either path and the collapse is settled; what is *not* settled, and is why this row stays open, is the revisit trigger |
 
 ---
 

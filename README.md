@@ -266,10 +266,10 @@ The full contract is in [`CLAUDE.md`](CLAUDE.md); the documentation map is
 - **Lint is type-aware and strict.** 70-line function cap, `max-depth` 3, `max-params` 3, explicit
   return types on exported functions. Formatting is an error, not a warning. Every
   `eslint-disable` must carry a stated reason.
-- **Every gap is recorded.** A deferral goes in [`docs/deferred-items.md`](docs/deferred-items.md),
-  which drops the row once the work lands, so the table states what is still outstanding and nothing
-  else. A finding goes in [`docs/open-items.md`](docs/open-items.md), and a deliberate divergence in
-  the deviation ledger. Silent gaps are the failure mode this project is structured to prevent.
+- **Every gap is recorded.** A finding goes in [`docs/open-items.md`](docs/open-items.md), and so does a
+  deferral — as an open item carrying the trigger that would discharge it, since the separate deferral
+  register was dissolved on 2026-09-04. A deliberate divergence goes in the deviation ledger. Silent gaps
+  are the failure mode this project is structured to prevent.
 
 As-built documentation — how the packages compose, and worked examples across a package boundary —
 is [`docs/sdk-documentation/`](docs/sdk-documentation/).
@@ -299,7 +299,8 @@ the first publish can succeed:
    record `NFR-16` as a deviation.
 3. The source repository must be public. npm issues provenance attestations for public source only.
 
-[`docs/deferred-items.md`](docs/deferred-items.md) records all three under `NFR-16`.
+[`docs/first-release.md`](docs/first-release.md) records all three under `NFR-16`, together with what
+the release path already does.
 
 The sibling repositories do not share one answer yet. `dexpace/python-sdk` publishes to PyPI with
 trusted publishing and PEP 740 attestations; PyPI has no private tier, so those packages are public

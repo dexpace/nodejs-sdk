@@ -15,7 +15,20 @@ import type {AuthScheme} from './scheme.js';
 export interface AuthTiers {
   /** The per-call override, sourced from `RequestOptions.auth` by the AUTH pillar step. */
   readonly perCall?: AuthDescriptor | undefined;
-  /** The per-operation tier. No shipped source yet — see the roadmap's Deferred Items Log. */
+  /**
+   * The per-operation tier. It resolves correctly whenever a caller populates it — selection
+   * below is `perCall ?? operation ?? client` — but nothing in the workspace writes it, so
+   * `client` and `operation` alike are construction-time configuration in practice. AUTH-4
+   * through AUTH-7 are satisfied either way; what is absent is a source, not behavior.
+   *
+   * That absence has a measured cost, and it is not a free-standing gap: a consumer with
+   * per-operation descriptors has to fold them into `perCall` itself, which reimplements this
+   * very precedence rule outside core and leaves core unable to tell a genuine per-call override
+   * from an operation's declared requirement. `examples/petstore/FINDINGS.md` §4 measures it and
+   * names the fix — a second per-call slot, either `RequestOptions.operationAuth` folded in by
+   * `effectiveTiers()` or the operation descriptor carried separately on `StepContext.options`.
+   * Tracked as `docs/open-items.md` W1; owned by whoever lands the codegen surface.
+   */
   readonly operation?: AuthDescriptor | undefined;
   /** The client-wide tier, fixed at step construction. */
   readonly client?: AuthDescriptor | undefined;

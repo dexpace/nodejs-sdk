@@ -87,7 +87,7 @@ test('everything the skill is allowed to write stays writable', () => {
   for (const path of [
     'docs/README.md',
     'docs/open-items.md',
-    'docs/deferred-items.md',
+    'docs/first-release.md',
     'docs/deviations.md',
     'docs/sdk-documentation/architecture.md',
     'docs/work/mvp/phase1/2026-07-23-phase1-core-http-domain-model.md',

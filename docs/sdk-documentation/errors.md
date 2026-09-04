@@ -33,17 +33,19 @@ Two levels by rule, with exactly one sanctioned third.
 ```
 Error
 └── DexpaceError
-    ├── DomainModelError          — a model rejected its input
-    │   ├── RequiredFieldError            a builder was missing a required field (HTTP-4)
-    │   ├── HeaderValidationError         a header name or value broke the grammar
-    │   ├── UrlConstructionError          the URL could not be built
-    │   ├── MediaTypeParseError           malformed media type
-    │   ├── EtagParseError                malformed ETag
-    │   ├── ProtocolParseError            unrecognized protocol token
-    │   ├── HttpRangeValidationError      malformed or impossible Range
-    │   ├── RequestOptionsValidationError timeoutMs / maxRetries out of range
-    │   ├── RequestConditionsValidationError
-    │   └── RequestBodyNotAllowedError    a body on a method that forbids one
+    │
+    │   (the ten HTTP domain-model errors — `isDomainModelError` matches this whole group)
+    ├── RequiredFieldError                a builder was missing a required field (HTTP-4)
+    ├── HeaderValidationError             a header name or value broke the grammar
+    ├── UrlConstructionError              the URL could not be built
+    ├── MediaTypeParseError               malformed media type
+    ├── EtagParseError                    malformed ETag
+    ├── ProtocolParseError                unrecognized protocol token
+    ├── HttpRangeValidationError          malformed or impossible Range
+    ├── RequestOptionsValidationError     timeoutMs / maxRetries out of range
+    ├── RequestConditionsValidationError  contradictory if-match / if-none-match state
+    ├── RequestBodyNotAllowedError        a body on a method that forbids one
+    │
     ├── IoError                   — a byte-level failure
     │   └── TransportFailureError         the one third level, see below
     ├── HttpStatusError           — the server answered 4xx/5xx (see `toHttpError`)
@@ -65,6 +67,14 @@ Error
 (`docs/deviations.md` item 17): flattening it would force every consumer to discriminate on a string
 tag, and `catch (e) { if (e instanceof IoError) }` still catches a transport failure. Held at exactly
 three; a fourth is not sanctioned.
+
+**`DomainModelError` was a second such tier, and it is gone.** It sat between `DexpaceError` and the
+ten model leaves above as an empty marker class, and nothing in the SDK ever narrowed on it. Those
+ten now extend `DexpaceError` directly, and `isDomainModelError(e)` replaces
+`e instanceof DomainModelError` — same union, no inheritance level. That is a breaking change to a
+barrel export, taken while `@dexpace/core` is still `0.0.0` and it is cheap to take. It does **not**
+make the tree uniformly two-level: `TransportFailureError` above is required to be a third level by
+`TRANSPORT-20`.
 
 ## The distinction that matters most: cancel versus timeout
 
@@ -107,12 +117,13 @@ errors to raise.
 Three predicates exist for the cases where `instanceof` on a union is tedious:
 
 ```typescript
-import {isBodyError, isSerdeError} from '@dexpace/core';
+import {isBodyError, isDomainModelError, isSerdeError} from '@dexpace/core';
 
 declare const e: unknown;
 
 isBodyError(e); // ConsumedBodyError | MultipartBoundaryError | FormBodyValidationError
 isSerdeError(e); // SerializationError | DeserializationError
+isDomainModelError(e); // the ten domain-model leaves; replaces `e instanceof DomainModelError`
 ```
 
 ## HTTP status failures

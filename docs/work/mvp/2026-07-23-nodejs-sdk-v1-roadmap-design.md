@@ -123,7 +123,7 @@ and checklist live once the phase is done. The `housekeeping` skill does the col
 
 This document is updated only to mark a phase's status (not-started / in-progress / done) and link to its spec
 once written — it does not absorb implementation detail from completed phases. It carried one exception until
-2026-08-31, the Deferred Items Log, which is now [`docs/deferred-items.md`](../../deferred-items.md). Every
+2026-08-31, the Deferred Items Log, which is now `docs/deferred-items.md`. Every
 phase's brainstorming session should check that register for entries targeting it before starting, and append
 any new deferral it produces before that phase is considered done — this is how a decision made in Phase 0
 ("we'll handle NFR-2 properly once adapter packages exist") doesn't silently evaporate by Phase 8.
@@ -131,7 +131,7 @@ any new deferral it produces before that phase is considered done — this is ho
 ## Deferred Items Log
 
 **Moved out on 2026-08-31.** The aggregate log — 74 rows — is now
-[`docs/deferred-items.md`](../../deferred-items.md), a register at the `docs/` root beside `open-items.md`
+`docs/deferred-items.md`, a register at the `docs/` root beside `open-items.md`
 and `deviations.md`.
 
 It was here because there was nowhere else to put it, and this document's own rule (["How Phases Get
@@ -144,7 +144,7 @@ new path.
 
 **Reading these.** Each note below is dated and is not retro-edited. Written when the log sat in this file,
 they say "the row above" and "the rows above"; every such reference now means a row of
-[`docs/deferred-items.md`](../../deferred-items.md), and the ones that name a specific row have been
+`docs/deferred-items.md`, and the ones that name a specific row have been
 repointed in place. The four `## Open Findings` review sections that used to follow them are
 [`docs/open-items.md`](../../open-items.md) Sections Q, R, S and T.
 

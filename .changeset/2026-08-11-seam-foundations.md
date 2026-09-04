@@ -2,6 +2,6 @@
 "@dexpace/core": minor
 ---
 
-Add the seam foundations: the `Transport` contract with its `composeSignal`/`isTimeoutSignal` cancellation helpers and `CancellationError`, the operation-input projection (`OperationDescriptor`, `buildRequest`, `OperationAssemblyError`), and `DexpaceError` as the new root of the error taxonomy above `DomainModelError`.
+Add the seam foundations: the `Transport` contract with its `composeSignal`/`isTimeoutSignal` cancellation helpers and `CancellationError`, the operation-input projection (`OperationDescriptor`, `buildRequest`, `OperationAssemblyError`), and `DexpaceError` as the root of the error taxonomy.
 
-`DomainModelError` now extends `DexpaceError` instead of `Error`. This is additive — every existing leaf keeps its parent, its behavior, and its `instanceof DomainModelError` narrowing.
+Every existing error leaf keeps its behavior and its message. The taxonomy is two levels: a leaf's own superclass is `DexpaceError` itself, and a family is grouped with an exported type guard rather than an intermediate class.

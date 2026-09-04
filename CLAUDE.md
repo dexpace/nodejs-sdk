@@ -226,7 +226,7 @@ because the one that used to be omitted — `open-items.md` — is the largest f
 | `docs/work/<delivery>/phaseN/` | Per-phase design doc, implementation plan and requirement-coverage checklist. `mvp/` is the only delivery so far. | yes |
 | `docs/superpowers/` | The **inbox** the `brainstorming` and `writing-plans` skills hard-code. Drained into `docs/work/`; never a citation target. | yes |
 | `docs/open-items.md` | **Register.** Everything unmet, unverified, misreported or surprising. Sixteen lettered sections; a resolved item's body is removed and its ID leaves the Section index, and a letter whose items are all resolved goes with them, but neither is ever renumbered or reused. | yes |
-| `docs/deferred-items.md` | **Register.** One table: work a phase decided not to do yet. A discharged row is removed rather than archived here. Cite a row by its key, never by line. | yes |
+| `docs/first-release.md` | **Live.** Release-readiness: what the release path already does, and the blockers that must clear before a first publish. Was the `NFR-16` row of the dissolved deferral register. | yes |
 | `docs/deviations.md` | **Register.** The as-built audit of §10, and where a deviation found outside a phase lands. | yes |
 | `docs/assets/` | Vendored wordmark SVGs the root `README.md` renders. | yes |
 
@@ -234,11 +234,15 @@ because the one that used to be omitted — `open-items.md` — is the largest f
 `housekeeping` skill's guard (`.claude/skills/housekeeping/guard.mjs`) enforces it and `guard.test.mjs`
 proves it; the per-tree reasons are in `docs/README.md`.
 
-**Which register.** The boundary is *when* an item was created. A **deferral** is a decision made before the
-work ("not this phase, that one") → `deferred-items.md`. An **open item** is a discovery made after ("this is
-not what the checklist says it is") → `open-items.md`. A **deviation** goes in the owning phase spec's own
-`## Deviation Ledger` section, is consolidated into §10, and is audited by `deviations.md` — which is also
-where a deviation with no owning phase lands, since §10 sits in a frozen tree.
+**Which register. There are two, not three, from 2026-09-04.** An **open item** is a discovery made after the
+work ("this is not what the checklist says it is") → `open-items.md`. A **deferral** — a decision made before
+the work, "not this phase, that one" — goes there too now, as an open item stating the trigger that would
+discharge it; the separate `deferred-items.md` register was dissolved, its `NFR-16` row becoming
+`docs/first-release.md` and its five still-live rows archived under *Live deferrals* in
+`docs/work/mvp/2026-09-04-register-retirement-purge.md`. That archive is not an intake: nothing is appended
+to it. A **deviation** goes in the owning phase spec's own `## Deviation Ledger` section, is consolidated
+into §10, and is audited by `deviations.md` — which is also where a deviation with no owning phase lands,
+since §10 sits in a frozen tree.
 
 **Never renumber `open-items.md`.** Its item IDs are cited from source comments, tests, changesets and the
 `docs/` tree — `docs/open-items.md K11` in `packages/core/src/index.ts`, `V13` in `config/clock.ts`, and so on.
@@ -345,8 +349,13 @@ catch:
   factories instead.
 - **Required fields go through `requireField()`** from `builder.ts` — never a bespoke `if (!x) throw`. It
   single-sources HTTP-4's `` `${name} is required` `` message.
-- **Typed errors only.** Everything descends from `DomainModelError`; no bare `throw new Error(...)`. Each
-  subclass sets `this.name = new.target.name`, and wrap-and-rethrow always passes `{cause}`.
+- **Typed errors only.** Everything descends from `DexpaceError`, the single root; no bare
+  `throw new Error(...)`. Each subclass sets `this.name = new.target.name`, and wrap-and-rethrow always
+  passes `{cause}`. **Two levels, not three** — a leaf's own superclass is `DexpaceError` itself. Group a
+  family with an exported type guard (`isDomainModelError`, `isIoError`, `isBodyError`), never with an
+  intermediate class; `DomainModelError` was exactly that intermediate class and was removed on 2026-09-04.
+  The one surviving middle tier is `TransportFailureError extends IoError`, which `TRANSPORT-20` requires
+  and `retry/classify.ts`'s cause-walk is load-bearing on.
 - **Getters return frozen or freshly-copied values.** `Request.url` clones on every access because the native
   `URL` is mutable — the one place a frozen class still leaks mutability (HTTP-5).
 

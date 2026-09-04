@@ -141,7 +141,7 @@ body is irrecoverably gone; that is the trade, and it is deliberate. The cap its
 `BODY-30`/`HTTP-52` — and the decision to size it once for every consumer rather than make it
 configurable is recorded as a **closed deferral** — the "Every buffering cap" row of
 [`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
-where [`docs/deferred-items.md`](../deferred-items.md)'s discharged rows went — not as a deviation:
+where the dissolved deferral register's rows went — not as a deviation:
 nothing here departs from the reference contract. `errors.md` states the same fact the same way.
 
 ### Reading a response as a model

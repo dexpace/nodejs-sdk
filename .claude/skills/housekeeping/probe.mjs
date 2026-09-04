@@ -581,7 +581,7 @@ function checkRegisterLeakage(ctx) {
         'registers',
         'act',
         `${file}:${String(line)} carries "${match[0].trim()}". An aggregate register belongs ` +
-          "at the docs/ root — open-items.md, deferred-items.md or deviations.md. A phase's " +
+          "at the docs/ root — open-items.md or deviations.md. A phase's " +
           'own dated `## Deferred Items` section stays in place; the aggregate does not.',
       );
     }
@@ -753,7 +753,7 @@ function checkRegisterCitations(ctx) {
 const WRITABLE_SURFACE = [
   'docs/README.md',
   'docs/open-items.md',
-  'docs/deferred-items.md',
+  'docs/first-release.md',
   'docs/deviations.md',
   'docs/sdk-documentation',
   'docs/work',

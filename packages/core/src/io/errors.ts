@@ -96,8 +96,9 @@ export class AllocationLimitError extends DexpaceError {
 /**
  * Groups every leaf in this file, including bare `IoError`, without reintroducing a class tier between
  * them and `DexpaceError` — the corpus caps custom error hierarchies at two levels. Retrofits Phase 3a's
- * shape, where the four leaves extended `IoError` (a 3-tier chain the checkpoint's `DomainModelError` fix
- * should also have caught and didn't).
+ * shape, where the four leaves extended `IoError` (a 3-tier chain). `http/errors.ts` carried an
+ * identically-shaped tier for longer; `isDomainModelError` is this guard's counterpart there, added
+ * when that one was flattened.
  *
  * @internal
  */

@@ -7,7 +7,7 @@
 export type {Builder} from './builder.js';
 export {
   DexpaceError,
-  DomainModelError,
+  isDomainModelError,
   RequiredFieldError,
   HeaderValidationError,
   MediaTypeParseError,

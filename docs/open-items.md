@@ -9,12 +9,17 @@ It is one of three files at the `docs/` root, and the boundary between them is *
 | Register | Holds | Item is |
 |---|---|---|
 | `open-items.md` (this file) | Everything unmet, unverified, misreported, or surprising | A gap found **after** the work, between what is claimed and what is built |
-| [`deferred-items.md`](./deferred-items.md) | Work a phase decided not to do yet, with the phase that owns it | A decision made **before** the work: "not this phase, that one" |
+| [`first-release.md`](./first-release.md) | Release readiness and the blockers before a first publish | Live, maintainer-owned; was the `NFR-16` deferral |
 | [`deviations.md`](./deviations.md) | The as-built audit of the deviation ledger | A place this port deliberately differs from the reference contract |
 
-The same requirement ID can legitimately sit in two of them. `AUTH-37` was deferred to Phase 7b in
-`deferred-items.md` and recorded here as a live silent swallow until its log half landed on 2026-09-02,
-which is the shape a requirement takes as it moves between the two files.
+**There were three registers until 2026-09-04.** `deferred-items.md` held work a phase decided not to do
+yet; it was dissolved that day, its `NFR-16` row becoming `first-release.md` and its five still-live rows
+archived under *Live deferrals* in
+[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md),
+an archive of record that is never appended to. **A new deferral is now an open item here**, carrying the
+trigger that would discharge it. `AUTH-37` shows the shape a requirement used to take across the two files:
+deferred to Phase 7b there, recorded here as a live silent swallow until its log half landed on 2026-09-02.
+Both halves are discharged; a requirement in that position today carries one item stating both.
 
 A requirement absent from this file is either satisfied or belongs to a phase that has not started. The point
 of the file is that nothing is unmet *silently* — every gap below is scheduled against a named phase, awaiting a
@@ -38,8 +43,8 @@ paragraph was one of them until 2026-09-02:
 node .claude/skills/housekeeping/probe.mjs --only=citations
 ```
 
-**A citation into Section R is written with a section qualifier** — `open-items.md R.E2`, never a bare
-`E2` — because that section's rows carry the 3b execution review's own numbering rather than this register's
+**A citation into Section R is written with a section qualifier** — `open-items.md R.E3`, never a bare
+`E3` — because that section's rows carry the 3b execution review's own numbering rather than this register's
 item IDs, and the three sibling reviews relocated beside it number their rows in `D` and `F` namespaces that
 collide with Section F's. The probe's citation check resolves the qualified and the bare form alike.
 
@@ -60,9 +65,10 @@ table below is spent, not free: its items are all closed, and it is never reused
 | N | Phase 9 — cross-cutting invariants and conformance | `N3`, `N4` |
 | O | Knowledge-corpus split | `O1`, `O2` |
 | P | Phase 5a — retry (merged from the repository-root register, 2026-08-31) | `P3`–`P8` |
-| R | Phase 3b execution, relocated from the roadmap, 2026-08-31 | **table rows, not `###` items:** `E2`–`E4`, the review's own numbering. Cite one qualified — `R.E2` |
+| R | Phase 3b execution, relocated from the roadmap, 2026-08-31 | **table rows, not `###` items:** `E3`, `E4`, the review's own numbering. Cite one qualified — `R.E3` |
 | U | Documentation restructure | `U4`, `U5` |
-| V | Register audit, 2026-09-02 | `V2`, `V3`, `V11` |
+| V | Register audit, 2026-09-02 | `V2`, `V11` |
+| W | Register dispositions taken 2026-09-04 | `W1` |
 
 **Reviewed state.** Scaffold milestone (`0ebdc79`); Phase 1 (branch `2-phase-1-core-http-domain-model`,
 uncommitted at time of review); Phases 3a/3b; Phase 4a (`7-phase-4a-execution-context`, three passes);
@@ -171,8 +177,11 @@ Split the banner per sub-phase, and add an `XCUT-14` row pointing at 4a Task 4 (
 
 ## Section D — Scheduled deferrals
 
-> **Historical, as of 2026-09-02.** [`docs/deferred-items.md`](./deferred-items.md) is the
-> authoritative deferral register. The rows that stay do so because other documents link to them — the
+> **Historical, as of 2026-09-02, and doubly so now.** `docs/deferred-items.md` was the authoritative
+> deferral register when this section was written; it was dissolved on 2026-09-04 (Section W), so this
+> section's rows are the surviving long-form reasoning rather than a pointer to a shorter aggregate. The
+> `NFR-16` provenance row's live half is [`first-release.md`](./first-release.md). The rows that stay do so
+> because other documents link to them — the
 > `await using` row and the `NFR-16` provenance row each carry an HTML anchor — and because a row's
 > reasoning is often longer here than in the aggregate. Cite a row by that anchor or by its title,
 > never by line. The **status marks below were re-derived against the tree on 2026-09-02**; the rows
@@ -786,8 +795,10 @@ absence of the `"undefined"` prototype key an unguarded declaration would leave 
 unconditional `implements AsyncDisposable` when `engines.node` moves past Node 20.4.~~
 
 **Widened 2026-08-30 (Phase 10).** `Page`, `FetchTransport`, and `UndiciTransport` were the three sites that
-had declared the member unguarded; all four now share `SseStream`'s shape. See the deferred-items row
-"`await using` support on `Page`, `fetchTransport()`, `undiciTransport()`" and §10 ledger item 11.
+had declared the member unguarded; all four now share `SseStream`'s shape. See §10 ledger item 11. The
+deferred-items row "`await using` support on `Page`, `fetchTransport()`, `undiciTransport()`" this
+paragraph used to name was discharged with the rest of that table; it is reproduced in
+[the purge note](./work/mvp/2026-09-04-register-retirement-purge.md), which `J3` and `R.E1` both cite.
 
 **Corrected 2026-08-30 (Phase 10): the "becomes unconditional when the floor moves" sentence is struck, not
 merely deferred.** Raising `engines.node` to `>=20.4` to recover the declaration is **decided against** —
@@ -795,7 +806,7 @@ merely deferred.** Raising `engines.node` to `>=20.4` to recover the declaration
 higher-floor capability a hard requirement of the general-purpose core, and the floor is derived from the
 runtime built-ins the SDK calls (`scripts/verify-runtime-floor.mjs:22-29,33`), not chosen. The guarded install
 is the permanent shape here, matching the `SuppressedError` precedent (`packages/core/src/suppress.ts`). Full
-reasoning and citations in the deferred-items row named above. This item stays **WATCH** only for the narrower
+reasoning and citations in the archived deferral named above. This item stays **WATCH** only for the narrower
 thing it was always about: if a *future* TypeScript or `lib` change makes an optionally-typed declaration
 honest on the floor, revisit the typing — never the floor.
 
@@ -1405,7 +1416,7 @@ the 3b plan's prerequisite claim plausible to whoever wrote it. Measured status 
 | § | Item | Status |
 |---|---|---|
 | 5.1 | Coverage floor as a *blocking* gate | **Done** — `bunfig.toml` carries `coverage = true`, `coverageThreshold = 0.8` |
-| 5.2 | Flatten the `DomainModelError` tier | **Open** — E2 below |
+| 5.2 | Flatten the `DomainModelError` tier | **Done 2026-09-04** — the ten leaves reparented onto `DexpaceError`, the empty marker class deleted, `isDomainModelError` published in its place. E2 retired |
 | 5.3 | Error leaves carry identifying `readonly` fields | **Partial** — 2 of 10; E3 below |
 | 5.4 | `Symbol.asyncDispose` + floor bump + `lib` entry | **Open** |
 | 5.5 | Bounded collections vs `RetentionWindow`/tap | **No action needed** — confirmatory in the checkpoint itself |
@@ -1423,8 +1434,7 @@ had. **Verify a prerequisite against the artifact it was supposed to produce, no
 
 | # | Sev | Finding | Where | Resolution |
 |---|---|---|---|---|
-| E2 | major — **UNSCHEDULED 2026-09-02, checkpoint §5.2. And now understated: Phase 8a ADDED a third-level branch this row says `io/` no longer contributes — `TransportFailureError extends IoError` (`packages/core/src/io/errors.ts:126`). `docs/deviations.md` §17 argues that one is uncorrectable (`TRANSPORT-20` requires the subtyping, and `classify.ts`'s cause-walk is load-bearing on it), so the tier question is two-sided rather than one. See V3. Trigger: the pre-publish breaking-change batch that also decides `DomainModelError`'s tier — the row `docs/deferred-items.md` carries for it.** | 3b's Task 1 flattened `io/`'s four error leaves off `IoError` on the stated basis that checkpoint §5.2 had already flattened Phase 1's `DomainModelError` tier. It had not, so the taxonomy is now *mixed*: `DexpaceError → EndOfStreamError` is two levels while `DexpaceError → DomainModelError → RequiredFieldError` is still three | `packages/core/src/http/errors.ts`; 3b design §"Error Tree" | **Deliberately not fixed in 3b.** Removing `DomainModelError` deletes a class exported from the public barrel that consumers can `instanceof` — a breaking API change belonging to the checkpoint. The residual is strictly smaller than what preceded it (`io/` no longer adds a second independent violation) and is recorded in 3b's ledger and checklist. **Blast radius, measured:** ten leaves extend it — `RequiredFieldError`, `HeaderValidationError`, `MediaTypeParseError`, `ProtocolParseError`, `UrlConstructionError`, `RequestOptionsValidationError`, `EtagParseError`, `HttpRangeValidationError`, `RequestConditionsValidationError`, `RequestBodyNotAllowedError` — all in one file, and `DomainModelError` itself is a runtime value export, so `instanceof` narrowing on it is live public API. §5.2 pre-specifies the replacement (an exported `isDomainModelError` type-guard union, never a re-subclass), and 3b already proved that pattern twice in-tree with `isIoError` and `isBodyError`. **Sequencing:** §5.2's own note — "Phase 4's error families then land as leaves on `DexpaceError` too, which is what keeps the flattening from being undone one phase later". **Ten queued phases introduce new SDK error types** — 4a (`DuplicateContextKeyError`), 4c (five, including `PillarCollisionError`, `CrossStageEditError`, `ReservedStageError`), 5b (`NonReplayableBodyError`, `SchemeDowngradeError`), 5c (`AuthResolutionError`, `PlaintextCredentialError`, `DigestChallengeUnsupportedError`), 6a (`SerdeError`, `SerializationError`, `DeserializationError`), 6b (`SseStreamError`, `SseLineTooLongError`), 6c (`PaginationError`), 8a (`TransportFailureError`), and 5a/8b, which reuse rather than define. Counted from the phase design docs 2026-08-26; 4b and 7a/7b define none. Every one of those that ships before the flatten is another tier decision taken against the wrong parent. Owned by checkpoint §5.2 |
-| E3 | major — **OPEN, checkpoint §5.3** | §5.3 requires every error subclass to carry its identifying inputs as sanitized `readonly` fields, because `JSON.stringify(error)` and structured-log field enumeration bypass `.message` entirely. It was applied to **two** leaves and stopped: `RequiredFieldError` carries `fieldName`, `HeaderValidationError` carries `kind` + `escapedName`. The other **eight** carry nothing — their identifying data exists only interpolated into the message string, which is precisely the shape the rule forbids. Not raised by any of Phase 3b's three review passes either; found only when the checkpoint was audited item by item | `packages/core/src/http/errors.ts` | **Open.** Same file and same ten classes as E2, so doing §5.2 and §5.3 in one pass is strictly cheaper than two. §5.3 also specifies the sanitization shape per leaf: the offending *name* control-character-escaped, the offending *value* never stored raw (a `valueLength`, a masked minimum fragment, or no field at all), and for `MediaTypeParseError` the failing token/offset rather than the full input. It further asks for a file comment on `errors.ts` recording *why* fields are sanitized at construction — that comment is what stops a later contributor "restoring" the raw value |
+| E3 | major — **OPEN, checkpoint §5.3** | §5.3 requires every error subclass to carry its identifying inputs as sanitized `readonly` fields, because `JSON.stringify(error)` and structured-log field enumeration bypass `.message` entirely. It was applied to **two** leaves and stopped: `RequiredFieldError` carries `fieldName`, `HeaderValidationError` carries `kind` + `escapedName`. The other **eight** carry nothing — their identifying data exists only interpolated into the message string, which is precisely the shape the rule forbids. Not raised by any of Phase 3b's three review passes either; found only when the checkpoint was audited item by item | `packages/core/src/http/errors.ts` | **Open.** Same file and the same ten classes as the §5.2 flatten, which shipped on 2026-09-04 without §5.3's fields, so the "one pass rather than two" saving that pairing offered is spent. §5.3 also specifies the sanitization shape per leaf: the offending *name* control-character-escaped, the offending *value* never stored raw (a `valueLength`, a masked minimum fragment, or no field at all), and for `MediaTypeParseError` the failing token/offset rather than the full input. It further asks for a file comment on `errors.ts` recording *why* fields are sanitized at construction — that comment is what stops a later contributor "restoring" the raw value |
 | E4 | major — **OPEN, checkpoint §5.7** | No isolated linker is configured. `bunfig.toml` carries only a `[test]` block and there is no `.npmrc` at all, so the install is flat-hoisted by default. Under flat hoisting `@dexpace/core` can import a package it never declared and still pass every gate — including `verify:seam-1`, which reads the `dependencies` map rather than what the code actually resolves. That is the one phantom-dependency failure mode `SEAM-1`'s gate structurally cannot see | `bunfig.toml` (no linker key); no `.npmrc`; `scripts/verify-seam-1.mjs` | **Open.** §5.7 requires confirming the exact linker option against the pinned Bun version before writing it. Low effort, and it strengthens a `SEAM-1` guarantee the project treats as foundational |
 
 ### Phase-3-owned residuals
@@ -1564,30 +1574,6 @@ only shape that satisfies the 1:1 binding without moving the `LOGGING` step out 
 
 ---
 
-### V3 — Phase 8a added a third error tier that Section R's `E2` says `io/` no longer contributes — **UNSCHEDULED**
-
-`R.E2` records that 3b flattened `io/`'s leaves off `IoError`, leaving `DexpaceError → DomainModelError
-→ RequiredFieldError` as the only three-level branch. `packages/core/src/io/errors.ts:126` is
-`TransportFailureError extends IoError`, added by Phase 8a — a second three-level branch, in the very
-folder `R.E2` says stopped contributing one. Nothing in this register recorded it.
-
-**It is not unrecorded everywhere.** `docs/deviations.md` §17 covers it and argues it is
-**uncorrectable**: `TRANSPORT-20` requires `TransportFailureError` to *be* an `IoError`, and
-`classify.ts`'s cause-walk returns retryable for any `IoError`, so the `extends` is what makes a
-no-response transport failure retryable with no edit to the retry layer. A flat sibling would have to
-be enumerated by hand in the classifier, and again for every transport added later.
-
-So the finding is not "an unrecorded deviation" but **a register that contradicts itself across two
-files**: `deviations.md` §17 holds the tier at exactly three and argues for it; `open-items.md`'s
-`R.E2` still describes a taxonomy with one such branch.
-
-**UNSCHEDULED — trigger: the pre-publish breaking-change batch that also decides `DomainModelError`'s
-tier** (the row `docs/deferred-items.md` carries for it). Both questions are the same question and
-both are breaking; `@dexpace/core` is `0.0.0` and that batch is the last moment either is free.
-`R.E2` is annotated to point here.
-
----
-
 ### V11 — the Phase 4b validation review's corpus conflict declines to be a finding, and has sat unsettled since 2026-07-28 — **UNSCHEDULED**
 
 `docs/knowledge/harvested/function-design.md:22-23` requires an options object at three or more
@@ -1610,6 +1596,67 @@ the mechanism for recording a reading against a harvested rule is a note under
 maintenance action. **UNSCHEDULED — trigger: the next deliberate edit to `docs/knowledge/notes/`**,
 which should carry this alongside N3's two markers and the two `<sub>` paths the documentation
 restructure left pointing at files it had moved. One visit, three fixes.
+
+---
+
+## Section W — register dispositions taken 2026-09-04
+
+A maintainer pass over `docs/deferred-items.md`, row by row, deciding each rather than re-deferring
+it. Four rows left the table: `challengeHandler` (kept, reasoning moved onto the field itself),
+`DomainModelError` (flattened — Section R's `E2` and Section V's `V3` retired in the same change),
+the `operation` `AuthTier`, and `#private`-vs-`private` (closed as correctly scoped, recorded as
+`docs/knowledge/notes/data-modeling.md`). Three of the four closed cleanly. The fourth did not, and
+is `W1`.
+
+**The pass ended by dissolving the register itself.** With four rows decided, what remained did not
+earn a file: one row with live actionable content, and five unscheduled deferrals each carrying a
+trigger and nothing to act on. So `docs/deferred-items.md` was deleted. The `NFR-16` row became
+[`first-release.md`](./first-release.md); the five others are archived under *Live deferrals* in
+[`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md).
+**A new deferral is an open item in this file from here on**, stating the trigger that would discharge
+it — there is no second register to send one to.
+
+---
+
+### W1 — the `operation` `AuthTier` row was closed on a premise the petstore spike had already falsified — **OPEN**
+
+The row read `BLOCKED — no source layer exists on this roadmap`, and justified carrying no trigger on
+the grounds that "there is no trigger to state because nothing on the roadmap can fire one." It was
+removed from `docs/deferred-items.md` on that basis.
+
+**The premise was already false when the row was read.** `7b26c1c` (2026-09-03, PR #65) added
+`examples/petstore/` as the witness for the codegen target surface — which is precisely the
+per-operation configuration layer the row said nothing would ship — and its findings document
+measured the gap rather than merely noting it
+([`examples/petstore/FINDINGS.md`](../examples/petstore/FINDINGS.md), §4):
+
+1. **`AUTH-4`'s precedence chain is reimplemented outside core.** The spike's executor folds the
+   operation's descriptor into the per-call slot — `const auth = call.auth ?? operation?.auth` — so
+   the top two-thirds of the tier chain lives in consumer code. Every generated SDK would carry it.
+2. **Core cannot tell the two tiers apart once they are folded.** A caller's genuine per-call
+   override and an operation's declared requirement arrive in the same slot, the collision is
+   resolved before core sees it, and core can therefore neither audit nor log which tier won.
+3. `AuthTiers.operation` has no writer anywhere in the workspace.
+
+**No requirement is unmet.** `AUTH-4`–`AUTH-7` are mechanically satisfied — presence-selects-the-tier
+works, and the spike's canary asserts all three outcomes including an unsatisfiable `OAUTH2`
+requirement raising `AuthResolutionError` with `transport.calls` still empty. What is defective is
+the *shape*: core publishes a tier it gives consumers no way to fill, so the consumer reimplements
+core's own precedence rule.
+
+**The fix is already specified**, by the spike rather than by this item: either `RequestOptions`
+gains `operationAuth?: AuthDescriptor`, which `effectiveTiers()` folds into `AuthTiers.operation`, or
+`StepContext.options` carries the operation descriptor separately. Either makes the consumer-side
+fold disappear. Both are additive to a `0.0.0` package.
+
+**Why an open item rather than a restored deferral.** The register boundary is *when* the item was
+created: a deferral is a decision taken before the work, an open item a discovery made after. Phase
+5c's decision not to build the tier stands and is genuinely settled — what changed is that a later
+spike found the consequence. That is a discovery, so it lands here. The closure of the deferral is
+not reversed.
+
+**Owner: whoever lands the codegen surface.** Not scheduled against a phase, because the roadmap's
+phase table ends at Phase 10 and Phase 10 is executed.
 
 ---
 

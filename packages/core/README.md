@@ -81,12 +81,13 @@ replayability by buffering. `streamBody` is single-use by construction.
 including the ones where an error is propagating. Nothing in the pipeline closes a response it hands
 you.
 
-**5. Errors are a two-level tree.** `DexpaceError` at the root, one subclass per subsystem —
-`DomainModelError`, `IoError`, `HttpStatusError`, `AuthResolutionError`, `PaginationError`,
-`SerializationError`/`DeserializationError`, `SseStreamError`, `CancellationError`. Exactly one
-sanctioned third level: `TransportFailureError extends IoError`, so `catch (e) { if (e instanceof
-IoError) }` still catches a transport failure (`docs/deviations.md` item 17). Wrap-and-rethrow always
-passes `{cause}`.
+**5. Errors are a two-level tree.** `DexpaceError` at the root, then leaves — the ten HTTP
+domain-model errors (`RequiredFieldError`, `HeaderValidationError`, and the rest, grouped by the
+`isDomainModelError` guard rather than by a class tier), `IoError`, `HttpStatusError`,
+`AuthResolutionError`, `PaginationError`, `SerializationError`/`DeserializationError`,
+`SseStreamError`, `CancellationError`. Exactly one sanctioned third level: `TransportFailureError
+extends IoError`, so `catch (e) { if (e instanceof IoError) }` still catches a transport failure
+(`docs/deviations.md` item 17). Wrap-and-rethrow always passes `{cause}`.
 
 ## Building a pipeline yourself
 

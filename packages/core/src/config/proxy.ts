@@ -46,9 +46,10 @@ export interface ProxyCredentials {
  * host glob list, optional credentials, an optional challenge-handler slot, and an explicit
  * bypass-all flag.
  *
- * This phase ships the type and the resolution logic only. No concrete `Transport` consumes a
- * `ProxyOptions` until the first one exists, mirroring the `Serde<T>`-before-`codec-json` precedent:
- * the contract lands with the model, the wiring lands with the consumer.
+ * `@dexpace/transport-undici` is the only consumer: it hands `credentials` to undici's `ProxyAgent`
+ * constructor and probes `challengeHandler` for the two TRANSPORT-30 warnings. `transport-fetch`
+ * ships no `proxy` option at all, because Node's bare global `fetch` exposes no proxy hook -- a
+ * deliberate scope boundary, audited as `docs/deviations.md` item 13.
  *
  * CFG-22's credential-masking string rendering is {@link formatProxyOptions}, a free function rather
  * than a `toString(): string` member: every object satisfies such a member through
@@ -77,8 +78,32 @@ export interface ProxyOptions {
   /** Proxy credentials, when the configuration supplied them. */
   readonly credentials?: ProxyCredentials | undefined;
   /**
-   * A slot with no protocol behind it yet (CFG-22's field list). Nothing dispatches through it until
-   * a real transport owns a proxy connection to be challenged over.
+   * The optional challenge-handler slot CFG-22's field list requires (a MUST,
+   * `docs/product-spec/16-configuration.md`). **Nothing dispatches through it, and nothing is going
+   * to.** That disposition is settled.
+   *
+   * undici's `ProxyAgent` takes its credential solely from its own constructor and rejects a
+   * per-request `Proxy-Authorization` with `InvalidArgumentError`, a deliberate upstream security
+   * fix. The constructor runs before any challenge exists, so a handler-minted credential can never
+   * reach the exchange that provoked it. The full audit is `docs/deviations.md` item 13.
+   *
+   * `@dexpace/transport-undici` answers TRANSPORT-30's discoverability clause instead: a WARN at
+   * construction when a handler is configured, a second WARN on the first real 407, Basic proxy auth
+   * through `credentials` -- which that transport does pass to the `ProxyAgent` constructor -- and
+   * the 407 returned untouched for the caller's own auth layer.
+   *
+   * Typed `unknown` rather than a declared signature deliberately. The one concrete argument a
+   * handler could take is the native client's own response type -- undici's
+   * `Dispatcher.ResponseData`, which is what the Phase 8a plan sketched -- and SEAM-1's zero runtime
+   * dependencies forbid core from naming it. Inventing a transport-neutral challenge shape here
+   * would publish a contract with no implementation behind it and no way to validate one. `unknown`
+   * states honestly that the protocol is unspecified. The slot's only readers are the two
+   * `typeof x === 'function'` probes in `transport-undici`'s `challenge-handler.ts`, and those
+   * probes are what make both WARNs fire -- so the field is load-bearing for discoverability without
+   * anything dispatching through it.
+   *
+   * It stays for that reason and one more: removing it would break CFG-22's MUST and strand
+   * TRANSPORT-30's SHOULD-warn clause with no subject.
    */
   readonly challengeHandler?: unknown;
   /** When set, every host bypasses this proxy and is dialled directly (CFG-23, CFG-27). */
@@ -245,7 +270,11 @@ export interface ProxyOptionsInit {
   readonly nonProxyHosts?: readonly string[] | undefined;
   /** Proxy credentials, when there are any. */
   readonly credentials?: ProxyCredentials | undefined;
-  /** The challenge-handler slot CFG-22's field list carries; nothing dispatches through it yet. */
+  /**
+   * The optional challenge-handler slot CFG-22's field list requires, copied through to the built
+   * {@link ProxyOptions} unchanged. Nothing dispatches through it, by settled disposition rather
+   * than by omission; the reasoning is on {@link ProxyOptions.challengeHandler}.
+   */
   readonly challengeHandler?: unknown;
   /** Whether every host bypasses this proxy; defaults to `false` (CFG-27). */
   readonly bypassAll?: boolean | undefined;

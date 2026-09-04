@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/errors.test.ts
-// Exercises: HTTP-4 (field-named errors), HTTP-20 (no value echo, escaped name)
+// Exercises: HTTP-4 (field-named errors), HTTP-7 (body on a body-forbidding method),
+// HTTP-20 (no value echo, escaped name)
 import {describe, expect, test} from 'bun:test';
 import {
   DexpaceError,
-  DomainModelError,
+  isDomainModelError,
   RequiredFieldError,
   HeaderValidationError,
+  MediaTypeParseError,
+  ProtocolParseError,
+  UrlConstructionError,
+  RequestOptionsValidationError,
+  EtagParseError,
+  HttpRangeValidationError,
+  RequestConditionsValidationError,
   toError,
   RequestBodyNotAllowedError,
 } from './errors.js';
@@ -55,16 +63,40 @@ describe('RequestBodyNotAllowedError', () => {
   });
 });
 
-// Exercises: the Phase 2 retrofit — DexpaceError as the taxonomy root above DomainModelError
+// Exercises: the flattened taxonomy — DexpaceError is the single root, and `isDomainModelError` is
+// the group check that replaced the removed `DomainModelError` class tier
 describe('DexpaceError', () => {
   test('sets name to the concrete subclass name', () => {
     const error = new DexpaceError('boom');
     expect(error.name).toBe('DexpaceError');
   });
 
-  test('DomainModelError is a DexpaceError, and every existing leaf still narrows by DomainModelError', () => {
-    const error = new RequiredFieldError('url');
-    expect(error).toBeInstanceOf(DomainModelError);
-    expect(error).toBeInstanceOf(DexpaceError);
+  test('every domain-model leaf sits two levels down and isDomainModelError matches it', () => {
+    const leaves = [
+      new RequiredFieldError('url'),
+      new HeaderValidationError('name', 'X-Trace', undefined),
+      new MediaTypeParseError('bad media type'),
+      new ProtocolParseError('bad protocol'),
+      new UrlConstructionError('bad url'),
+      new RequestOptionsValidationError('bad options'),
+      new EtagParseError('bad etag'),
+      new HttpRangeValidationError('bad range'),
+      new RequestConditionsValidationError('bad conditions'),
+      new RequestBodyNotAllowedError('GET'),
+    ];
+    expect(leaves).toHaveLength(10);
+    for (const leaf of leaves) {
+      expect(leaf).toBeInstanceOf(DexpaceError);
+      expect(isDomainModelError(leaf)).toBe(true);
+      // Two levels, not three: the leaf's own superclass is DexpaceError itself, so a
+      // reintroduced tier fails here rather than passing silently through `instanceof`.
+      expect(Object.getPrototypeOf(leaf.constructor)).toBe(DexpaceError);
+    }
+  });
+
+  test('an error outside the domain model is not matched', () => {
+    expect(isDomainModelError(new DexpaceError('boom'))).toBe(false);
+    expect(isDomainModelError(new Error('boom'))).toBe(false);
+    expect(isDomainModelError(undefined)).toBe(false);
   });
 });

@@ -122,8 +122,10 @@ There is deliberately **no** way to append a handler to the built-in list. A `ha
 and was cut at review: it forced three types onto the public barrel and could not compose with the
 internal handlers, so it was replace-semantics masquerading as extension. The shape to ship, if a
 caller ever needs it, is an append field plus public `basicHandler`/`digestHandler` factories
-(`docs/deferred-items.md`, the *caller-supplied `ChallengeHandler` list on `AuthStepSettings`* row — still
-deferred, unscheduled until a second auth scheme needs one).
+(the *caller-supplied `ChallengeHandler` list on `AuthStepSettings`* row, still live and unscheduled
+until a second auth scheme needs one — archived under *Live deferrals* in
+[`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md)
+when the deferral register was dissolved on 2026-09-04).
 
 **Basic and Digest never stamp preemptively.** They react to a challenge. That is an interpretation of
 `§11` rather than a stated requirement, and it is ledgered as one.

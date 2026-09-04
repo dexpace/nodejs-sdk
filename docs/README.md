@@ -14,7 +14,7 @@ is the index; the rule is that nothing in `docs/` is unowned, and nothing is wri
 | [`work/`](./work/) | Process records: per-phase design, plan and checklist, one directory per phase under a unit of delivery | The phase that produced them; **collected** here by the skill | Yes — `git mv` only |
 | [`superpowers/`](./superpowers/) | Nothing, for long. The **inbox** the Superpowers skills write into | `brainstorming`, `writing-plans` | Yes — it drains it |
 | [`open-items.md`](./open-items.md) | Everything unmet, unverified, misreported, or surprising. Sixteen lettered sections, A through V with the emptied letters dropped; a letter is permanent and never reused | Every review | Yes — appends |
-| [`deferred-items.md`](./deferred-items.md) | One table: work a phase decided not to do yet and has not done. A discharged row is removed, not archived here — the ones discharged before 2026-09-04 are in [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md). Cite a row by its key, never by line | Every phase's brainstorm | Yes — appends, and retires |
+| [`first-release.md`](./first-release.md) | Release readiness: what the release path already does, the confirmed mechanics, and the blockers that must clear before a first publish. Was the `NFR-16` row of `deferred-items.md`, which was dissolved on 2026-09-04 — its five still-live rows are archived under *Live deferrals* in [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md) | The maintainer | Yes — edited as blockers clear |
 | [`deviations.md`](./deviations.md) | The as-built audit of §10, and the landing point for a deviation found outside a phase | An audit or review | Yes — appends |
 | [`assets/`](./assets/) | Vendored wordmark SVGs the root `README.md` renders | Copied from `dexpace/morphic` | Yes |
 
@@ -43,18 +43,23 @@ Each has its own reason:
 
 The boundary is **when** the item was created, not what it is about.
 
-- A **deferral** is a decision made *before* the work: "not this phase, that one." →
-  `deferred-items.md`
-- An **open item** is a discovery made *after*: "this is not what the checklist says it is." →
-  `open-items.md`
+- An **open item** is a discovery made *after* the work: "this is not what the checklist says it
+  is." → `open-items.md`
+- A **deferral** is a decision made *before* the work: "not this phase, that one." → `open-items.md`
+  too, from 2026-09-04, as an open item stating the trigger that would discharge it. The separate
+  `deferred-items.md` register was dissolved that day; the five deferrals still live at the time are
+  archived under *Live deferrals* in
+  [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md),
+  which is an archive of record and never an intake
 - A **deviation** is a place the port differs from the reference contract on purpose. → the owning
   phase's `## Deviation Ledger` section, consolidated into §10; `deviations.md` audits §10 and
   catches what has no owning phase.
 
-The same requirement ID can legitimately appear in two. `AUTH-37` was deferred to Phase 7b in
-`deferred-items.md` and recorded at `open-items.md` G12 as a live silent swallow; both rows are
-discharged now, the log half having landed on 2026-09-02, which is the shape a requirement takes as
-it moves between the two files.
+The same requirement ID could legitimately appear in two, back when there were three files. `AUTH-37`
+was deferred to Phase 7b in the deferral register and recorded at `open-items.md` G12 as a live silent
+swallow; both rows are discharged now, the log half having landed on 2026-09-02, which is the shape a
+requirement took as it moved between them. With the deferral register gone, a requirement in that
+position now carries one open item that states both halves.
 
 Register letters and item numbers in `open-items.md` are **permanent**: they are cited across the
 repository from source comments, tests, changesets and this tree. A new review appends the next

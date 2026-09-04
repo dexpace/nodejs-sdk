@@ -123,7 +123,7 @@ implementation; you pass it in. `SEAM-5`–`SEAM-10` describe a classpath-style 
 conflict resolution, and this port will never build it — a permanent simplification, recorded as an entry
 that is explicitly *not* a deferral in the `SEAM-5`–`SEAM-10` row of
 [`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
-where `docs/deferred-items.md`'s discharged rows went. `Tracer`, `Span`, `Meter`,
+where the dissolved deferral register's rows went. `Tracer`, `Span`, `Meter`,
 `Counter`, `Histogram` and `Clock` are the same shape: duck-typed, so an OpenTelemetry object
 satisfies them with no adapter.
 
