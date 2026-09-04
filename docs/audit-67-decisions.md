@@ -118,9 +118,21 @@ fields and dropping the message (leaves the raw message reachable through `cause
 - `docs/sdk-documentation/auth.md`'s credential-shape example is rewritten here (#68 left it).
 *Constrains #74:* it edits `auth-step.ts` next wave on top of this; the guard site moves.
 
+**D8 outcome (2026-09-04, #70, PR #85).** Both messages built from `redactUrl()`; raw URLs stay on
+`targetUrl` / `fromUrl` / `toUrl`; `http.redirect.rejected` gained `url.full` (redacted) like the sibling
+events. A non-URL string handed to either public constructor now renders `[malformed url]` in the message
+(OBS-15 totality read as the safe default; pinned). New fixture route `/redirect-secret-target` in
+`tests/conformance/xcut/fixtures/server.ts` (307 to `/echo?access_token=<?secret=>`), reusable.
+*Constrains #74:* build any URL-naming message from `redactUrl()` at the constructor. *Constrains #72, #78:*
+`docs/sdk-documentation/errors.md` redirect section was edited here.
+
+**Trap for later subtasks (api-extractor).** `{@link SomeError.message}` does not resolve (`message` is
+inherited from `Error`; `ae-unresolved-link`). Write it as backticked prose.
+
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
 |---|---|
 | #68 / PR #83 | patch notes for `@dexpace/core` and `@dexpace/codec-json`: shipped `.d.ts` prose changed for `Deserializer`, `jsonSerde()`, `InstrumentationBundle.tracerFactory`, `buildRequest`, `RequestConditions.applyTo` |
 | #68 / PR #83 | `docs/first-release.md:117` claims `serde.ts:99,170` cite `H15` — `H15` appears nowhere in `serde.ts`; `:159` puts `deserializeFrom` at `:162` and `serializeTo` at `:96` (actual `:221`, `:104`). File suspended under D1 |
+| #70 / PR #85 | patch changeset for `@dexpace/core`: redirect error messages now carry redacted URLs (and `[malformed url]` for unparseable input); `http.redirect.rejected` gained `url.full` |
 | #69 / PR #84 | patch changeset for `@dexpace/core`: `noopInstrumentationBundle.activeSpan` changed from `undefined` to `NOOP_SPAN` (documented default of a `@public` interface) |
