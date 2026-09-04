@@ -56,6 +56,15 @@ every leading comment of a declaration, line comments included. A module header 
 the failure surfaces one package later as an unresolved name in core's own `dist/`. Do not write that tag in
 a file-level comment.
 
+**#68 outcome (2026-09-04, PR #83).** Round 1 corrected the TSDoc and guides; round 2 requested because
+five `docs/deviations.md` anchors it found stale (items 2, 3, 4, 8, 11) were left unfixed as "outside the
+partition" — they are the issue's own acceptance criterion. The false "nothing consumes either yet" claim at
+`context/instrumentation.ts:8-13` was assigned to #68 in round 2. *Constrains #78:* item 17 now states the
+cause-walk matches `IoError` and `TransportFailureError` only, and names #78 as the decider. *Constrains
+#80:* the OBS-29 row is marked in progress with the 1:1 binding recorded as met at `pipeline/runtime.ts`;
+the open part is caller-reachability of the operation span. *Constrains #71:* `auth.md`'s credential-shape
+example is untouched and is #71's.
+
 ### D4 — PIPE-37: ledger the gap, do not implement in M1
 No `PRE_REDIRECT` status-mapping pipeline step exists; `statusMappingStep` is a `ResponseStep`. Recorded
 as a row in `deviations.md` naming the gap, the Phase 4→5 hand-off that dropped it, and the petstore
@@ -84,4 +93,6 @@ already done and does not re-ledger it.
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
 |---|---|
+| #68 / PR #83 | patch notes for `@dexpace/core` and `@dexpace/codec-json`: shipped `.d.ts` prose changed for `Deserializer`, `jsonSerde()`, `InstrumentationBundle.tracerFactory`, `buildRequest`, `RequestConditions.applyTo` |
+| #68 / PR #83 | `docs/first-release.md:117` claims `serde.ts:99,170` cite `H15` — `H15` appears nowhere in `serde.ts`; `:159` puts `deserializeFrom` at `:162` and `serializeTo` at `:96` (actual `:221`, `:104`). File suspended under D1 |
 | #69 / PR #84 | patch changeset for `@dexpace/core`: `noopInstrumentationBundle.activeSpan` changed from `undefined` to `NOOP_SPAN` (documented default of a `@public` interface) |
