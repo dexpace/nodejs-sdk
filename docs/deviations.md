@@ -96,8 +96,9 @@ Items **7**, **11**, and the `NFR-12` half of **14** are absent from this list o
 **Verified.** `Transport.send()` is `Promise`-only, one method satisfying `SEAM-11` and `SEAM-16` at once
 (`packages/core/src/seams/transport.ts:49`). `ContextStore` holds a plain `Map<symbol, ExecutionContext>`
 (`packages/core/src/context/store.ts:24`) with a fresh `Symbol()` per call
-(`packages/core/src/context/context.ts:104,125,149`). `Next` is `(request?) => Promise<Response>` with no sync
-twin (`packages/core/src/pipeline/step.ts:23`). `wrapCancellation` degenerates to `failure(error)` and says so
+(`packages/core/src/context/context.ts:112`, defaulted per flavor at `:128` and `:149`). `Next` is
+`(request?) => Promise<Response>` with no sync twin (`packages/core/src/pipeline/step.ts:23`).
+`wrapCancellation` degenerates to `failure(error)` and says so
 (`packages/core/src/recovery/cancellation.ts:31`). `ASYNC-18` holds: SSE parses `retryMs`
 (`packages/core/src/sse/parser.ts:131`) but never acts on it — reconnection is caller-owned, so no adapter
 schedules a delay outside the retry engine.
@@ -133,7 +134,7 @@ non-bridge clause survives and is enforced as an ordinary obligation on `send()`
 
 ## 3. Two retry stacks collapse into one, with the total-timeout budget explicitly opt-in
 
-**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:354`) — with exactly two thin
+**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:358`) — with exactly two thin
 callers: the pillar step (`packages/core/src/retry/retry-step.ts:142`) and the dispatch adapter
 (`packages/core/src/retry/retry-dispatch.ts:53`). `totalTimeoutMs` is `readonly totalTimeoutMs?: number |
 undefined` and undefined by default (`packages/core/src/retry/settings.ts:27`), pinned by a test named for
@@ -160,9 +161,9 @@ language-level ceiling.
 
 > **Corrected in the ledger 2026-08-29 — the text was wrong, the deviation is not.** Item 4's stated mitigation — "exporting only
 > concrete classes, never bare structural interfaces, from each package's public entry point" — is false as
-> written. `packages/core/etc/core.api.md` exports **61 interfaces** against 58 classes, and at least one is
-> a builder-built, validated, frozen type: `Configuration` is `export interface Configuration`
-> (`packages/core/src/config/configuration.ts:72`) returned from `ConfigurationBuilder.build()`, and
+> written. `packages/core/etc/core.api.md` exports interfaces and classes in comparable numbers, and at least
+> one interface is a builder-built, validated, frozen type: `Configuration` is `export interface Configuration`
+> (`packages/core/src/config/configuration.ts:100`) returned from `ConfigurationBuilder.build()`, and
 > `setGlobalConfiguration()` / `resolveProxyOptions()` accept any hand-rolled object of that shape. Most
 > other exported interfaces are seams (`Transport`, `Serde`, `Logger`) or options records, where structural
 > typing is the point. The *deviation* is real and uncorrectable; the *mitigation sentence* overstated what
@@ -258,8 +259,8 @@ configuration file would be empty by construction. The structurally equivalent J
 `Object.defineProperty` statement** — a top-level side effect — in four files across three packages that all
 declare `"sideEffects": false` (`packages/core/src/sse/stream.ts:209`,
 `packages/core/src/pagination/page.ts:114`, `packages/transport-fetch/src/fetch-transport.ts:314`,
-`packages/transport-undici/src/undici-transport.ts:566`; the manifest field at `packages/core/package.json:20`,
-`packages/transport-fetch/package.json:21`, `packages/transport-undici/package.json:21`). That field entitles a
+`packages/transport-undici/src/undici-transport.ts:566`; the manifest field at `packages/core/package.json:25`,
+`packages/transport-fetch/package.json:26`, `packages/transport-undici/package.json:26`). That field entitles a
 bundler to drop a module whose exports go unused, and nothing forbids a future one from also dropping a
 top-level statement it judges inert — which would silently un-install disposal in the shipped artifact while
 every type still checks, the same failure shape this guard already exists for. `fixture-app.ts`'s
@@ -279,10 +280,13 @@ bundle from 16,671 to 17,689 bytes against a 24 KiB budget (`packages/shrink-tes
 ## 12. The redirect/auth cross-origin marker is a real header, not a `WeakSet`
 
 **Verified.** `CROSS_ORIGIN_MARKER_HEADER` is set, cleared, and tested per hop
-(`packages/core/src/redirect/cross-origin.ts:80,93,104,118`). The auth step reads it before deciding whether
-to react to a challenge, not just whether to stamp (`packages/core/src/auth/auth-step.ts:387-390`). An
-independent `POST_AUTH` backstop strips it even in a pipeline with no auth step
-(`packages/core/src/redirect/strip-marker-step.ts`), satisfying `REDIR-11(c)`'s porter caveat.
+(`packages/core/src/redirect/cross-origin.ts:80,93,104,118`). The auth step reads it once on the outbound
+pass (`packages/core/src/auth/auth-step.ts:395`) and gates both branches on the answer — preemptive stamping
+at `:401`, and whether to react to a challenge at all at `:786`, not merely whether to stamp. The answer
+rides across the dispatch on `OutboundPlan.crossOrigin` (`:375`, and `:370-372` for why), because the marker
+itself is cleared from the request before it reaches the wire. An independent `POST_AUTH` backstop strips it
+even in a pipeline with no auth step (`packages/core/src/redirect/strip-marker-step.ts`), satisfying
+`REDIR-11(c)`'s porter caveat.
 
 **Why it cannot be corrected.** The reference's in-process marker was tried and withdrawn during Phase 5b's
 own drafting: retry's attempt-stamping sits between redirect and auth and produces a **fresh `Request`
