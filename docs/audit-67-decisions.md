@@ -95,6 +95,12 @@ PR #83 (#68) and PR #84 (#69) merged into the umbrella at `840f355`. One conflic
 `deviations.md`): kept #68's "in progress, see #80" text and carried #69's moved `span.ts` citation. Merged
 tree preflighted before the merge in a throwaway worktree (byte-identical result): all 20 steps passed.
 
+## Wave 2 — landed 2026-09-05
+PR #85 (#70) and PR #86 (#71) merged into the umbrella. One conflict (the import list of
+`tests/conformance/xcut/security-by-default.conformance.test.ts`), unioned. Merged tree preflighted in a
+throwaway worktree before the merge (byte-identical result): all 20 steps passed. Run paused here by the
+maintainer; wave 3 (#72, #74, #75) not yet cut.
+
 ## Decisions taken for wave 2 (M2)
 
 ### D8 — #70: redact inside the error messages, and keep the raw URLs on the error properties
