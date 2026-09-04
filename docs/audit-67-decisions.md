@@ -90,6 +90,34 @@ Pin with a test and ledger the reading. *Rejected:* adding an ad-hoc "looks unpa
 All six are recorded as rows (evidence + reading). `reasonPhrase` sits beside §10 item 13; #82 reads it as
 already done and does not re-ledger it.
 
+## Wave 1 — landed 2026-09-04
+PR #83 (#68) and PR #84 (#69) merged into the umbrella at `840f355`. One conflict (the OBS-29 row of
+`deviations.md`): kept #68's "in progress, see #80" text and carried #69's moved `span.ts` citation. Merged
+tree preflighted before the merge in a throwaway worktree (byte-identical result): all 20 steps passed.
+
+## Decisions taken for wave 2 (M2)
+
+### D8 — #70: redact inside the error messages, and keep the raw URLs on the error properties
+`SchemeDowngradeError` and `NonReplayableBodyError` build their messages from `redactUrl(url)`; `fromUrl` /
+`toUrl` stay raw for program use. Reason: the message is what every logger, `cause` chain and consumer
+`console.error` renders, so redacting at the source protects paths this SDK does not own, not only
+`http.redirect.rejected`. If `emitRejected` can also carry the redacted URL fields the other redirect events
+carry, add them — but the message fix is the required one. *Rejected as sole fix:* logging `error.name` plus
+fields and dropping the message (leaves the raw message reachable through `cause` on the thrown error).
+*Constrains:* none.
+
+### D9 — #71: credential classes, and "once guarded, always guarded" for the replay
+- `BasicCredential` and `DigestCredential` become classes with `#password`, `toString` and the
+  `nodejs.util.inspect.custom` override, following whatever shape `auth/credential.ts` already uses for
+  `ApiKeyCredential` / `BearerToken` (class plus `createX()` factory if that is the pattern there). Public
+  shape change, free before the first version bump; `api:local` on core.
+- Replay guard: if the original request required HTTPS (the step guarded it), `requireHttps` runs on the
+  replacement request unconditionally, regardless of which header names it carries. *Rejected:* building the
+  set of credential-carrying header names from configuration (misses a `challengeHook` that invents a
+  header). AUTH-8 names bearer, API-key and name-key only; the wider reading is a `deviations.md` row (D0).
+- `docs/sdk-documentation/auth.md`'s credential-shape example is rewritten here (#68 left it).
+*Constrains #74:* it edits `auth-step.ts` next wave on top of this; the guard site moves.
+
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
 |---|---|
