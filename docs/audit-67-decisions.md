@@ -149,6 +149,92 @@ than its letter. `scripts/verify-consumer-types.mjs`'s fixture changed because n
 **Trap for later subtasks (api-extractor).** `{@link SomeError.message}` does not resolve (`message` is
 inherited from `Error`; `ae-unresolved-link`). Write it as backticked prose.
 
+## Decisions taken for wave 3 (M3) — pre-taken 2026-09-05, before dispatch
+
+### D10 — #72: the final typed error is surfaced as-is; the trail rides in a side table, read through `retryAttempts()`
+The surfaced error of `retryStep` / `dispatchWithRetry` is the final attempt's own error, class untouched:
+`instanceof TransportFailureError` holds for `maxAttempts` 1 and 3 alike, and an abort during backoff surfaces
+the `CancellationError` that `abortToSdkError` built (`retry/engine.ts:385`), which `withTrail` at `:386` was
+undoing. Earlier attempts' errors are reachable through a new `@public` accessor exported from core,
+`retryAttempts(error: unknown): readonly unknown[]` — oldest first, the surfaced instance itself excluded
+(RETRY-34's skip-self clause), `[]` for an error that carries no trail — backed by a module-private `WeakMap`
+that the engine writes once per terminal failure. **Not a deviation, a correction:** RETRY-34 says the prior
+failures are "attached to the surfaced exception as suppressed", which is Java's `addSuppressed` — the
+surfaced exception stays what it is and grows a list. Wrapping it in `SuppressedError` made the surfaced
+*type* a function of how many attempts ran, which is what XCUT-1's "assert the surfaced error is the
+cancellation type" clause catches. No `deviations.md` row. `suppress()` stays for its RECOV-12 job.
+*Rejected:* an own property (`attempts` / `errors` / `suppressed`) defined on the surfaced error — a foreign
+error may be frozen or non-extensible, so `defineProperty` in the engine's failure path can itself throw; a
+primitive thrown value cannot carry one at all; and `.suppressed` already means "the one secondary" on
+`SuppressedErrorLike`. *Rejected:* a `RetryExhaustedError` wrapper (hides `CancellationError`, the row XCUT-1
+is about). *Rejected:* threading the trail through `cause` (`cause` is already the raw abort reason at
+`:383`, and it means "why", not "before"). A primitive surfaced value is passed through unchanged with no
+trail entry rather than wrapped. Update the `retryStep` TSDoc, `retry-dispatch.ts:45`'s `@throws` prose,
+`docs/sdk-documentation/pipelines.md`'s retry section, the "suppressed trail" wording at
+`docs/sdk-documentation/errors.md:188`, and `write-a-response-handler.md` so the RECOV-12 wrapper is documented
+as the *only* place a `SuppressedError` is built. `api:local` on core. *Constrains #78:* the classify
+cause-walk sees the typed error directly now, never through a `SuppressedError.error` hop. *Constrains #73:*
+the trail accessor is the shape it layers on.
+
+### D11 — #74: parse every challenge header; emit `cnonce` for `-sess` regardless of `qop`; empty `realm`/`nonce` are unsatisfiable
+- **Repeated `WWW-Authenticate` / `Proxy-Authenticate`.** `pickChallengeHeader` reads `headers.getAll(name)`
+  and parses each value with `parseChallenges`, concatenating the lists in wire order — parse-each rather
+  than comma-join, so a malformed later value cannot poison the parse of an earlier one. `rank` selects across
+  the concatenation. Conformance row in `packages/transport-conformance` (`run-suite.ts` + `fixtures.ts`): a
+  fixture route sending two `WWW-Authenticate` headers, asserting the *parsed challenge list* is identical
+  through both transports — `getAll` legitimately returns one comma-joined entry through fetch and two entries
+  through undici, and the list after parsing is the only thing the transport is answerable for. Fix the
+  `Set-Cookie`-only comment at `undici-transport.ts:334`; touch nothing else in that file (#81 owns it).
+- **`-sess` without `qop`: emit `cnonce`.** RFC 7616 §3.4 says of `cnonce` "This parameter MUST be used by all
+  implementations", and §3.4.2 folds it into A1 for every `-sess` algorithm; a `-sess` response without it is
+  unverifiable by construction, which is what the port sends today (`digest.ts:337-343` hashes a cnonce the
+  header at `:386-387` omits). `nc` and `qop` stay conditional on a negotiated `qop`. AUTH-22's "emit
+  cnonce/nc/qop only when qop is negotiated" is RFC 2617's RFC 2069-compatibility form, which predates
+  `-sess`. Departure from AUTH-22's letter: one `deviations.md` row (D0). *Rejected:* declining the challenge —
+  it turns every `-sess`-without-`qop` server into a guaranteed 401 for no security gain, and the value is
+  already computed. `computeDigestResponse` vector for `MD5-sess` with no `qop`.
+- **Empty `realm` or `nonce`** is unsatisfiable: `parseDigestChallenge` requires non-empty strings, the
+  challenge is declined and the next one tried (AUTH-25's "return no header when it cannot satisfy any"). No
+  row; AUTH-12's verbatim storage is unchanged, the check sits at selection.
+- No new core exports. `api:local` on core only if a `@public` TSDoc changes. No changeset (D1).
+*Constraints inherited:* D9 (the `auth-step.ts` surface #71 reshaped: `buildHandlers`, `OutboundPlan`,
+`planOutbound`, `guardReplayScheme`, `ChallengeDrive`; `credential.ts` imports `./digest.js` type-only, so no
+edge from `digest.ts` back into `credential.ts`); D8 (any URL-naming message is built from `redactUrl()`).
+
+### D12 — #75: keep the ownership transfer, and ledger it
+`sseEvents$` / `typedSse$` keep passing `() => stream.close()` as `fromAsyncIterable`'s `release`. The
+issue's "spec-faithful one-line change" is neither: (1) `SseStream` self-releases on **any** iterator
+termination by SSE-30's own design — `#iterate`'s `finally` runs `#releaseQuietly()` when the runtime calls
+`return()` (`packages/core/src/sse/stream.ts:136-138`), and `fromAsyncIterable` must call `iterator.return()`
+exactly once (ASYNC-6), so the socket closes with or without the callback; a `for await` with `break` closes it
+the same way. ASYNC-21's "MUST NOT close the caller-owned source" presumes a source whose iterator return does
+not release, which this port's `SseStream` deliberately is not. (2) The release-*before*-`return()` ordering
+is what settles an in-flight pull on unsubscribe (`packages/rx/src/from-async-iterable.ts:44-48`): an async
+generator's `return()` queues behind a suspended `next()`, so dropping the callback would leave an unsubscribe
+during a stalled read pending until the server sends a byte. Pagination passes no release because its pulls
+are bounded HTTP exchanges; SSE's are not. Removing the callback would change only the failure channel and the
+ordering, not whether the source closes — and it would reintroduce the hang. **Recorded as a deviation** from
+ASYNC-21's non-closing clause: one `deviations.md` row (D0) naming `sse.ts:35,57-59`, `from-async-iterable.ts:103-108`,
+the two reasons above, and the Phase 8b checklist gist at
+`docs/work/mvp/phase8/phase8b/2026-07-28-phase8b-async-runtime-checklist.md:67` that dropped the clause (a
+dated record; not retro-edited). Tests in `packages/rx/src/sse.test.ts`: early unsubscribe, source error, and
+end-of-source each close the underlying resource **exactly once** (count the resource's `close`, not the
+facade's — `SseStream.close()` is idempotent by SSE-28, so the facade count proves nothing); plus the
+unsubscribe-during-suspended-pull case settles. TSDoc on both functions states the transfer outright
+("subscribing hands the stream to the adapter; do not call `close()` yourself, and do not iterate it
+afterwards"), and `packages/rx/README.md` says the same beside its `for await` guidance. `api:local` on rx.
+*Rejected:* dropping `release` (above). *Rejected:* a caller-facing `{ownership}` option (two behaviours to
+document for a case with one correct answer). No changeset (D1).
+
+### Wave 3 partition
+| Task | Owns | Shared, append-only |
+|---|---|---|
+| #72 | `packages/core/src/retry/**`, the retry exports in `packages/core/src/index.ts`, `packages/core/etc/core.api.md` (retry names), `docs/sdk-documentation/pipelines.md` retry section, `errors.md:188`, `write-a-response-handler.md`, `tests/conformance/xcut/retry-safety.*` and `cancellation-and-timeout.*` | — |
+| #74 | `packages/core/src/auth/{digest,auth-step,challenge}.ts` and tests, `undici-transport.ts:334` comment only, `packages/transport-conformance/src/{run-suite,fixtures}.ts`, `docs/sdk-documentation/auth.md` | `docs/deviations.md` (one row at table end) |
+| #75 | `packages/rx/**` | `docs/deviations.md` (one row at table end) |
+Known merge seams: the `deviations.md` table tail (#74 + #75), and `core.api.md` if #74 changes a `@public`
+TSDoc beside #72's new export. Supervisor resolves both, as in waves 1 and 2.
+
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
 |---|---|
