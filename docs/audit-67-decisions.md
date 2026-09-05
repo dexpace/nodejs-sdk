@@ -548,6 +548,38 @@ Known merge seams: `deviations.md` (item 17 section vs OBS-29 row — disjoint r
 PR #96 (#81) merged into the umbrella at `808f6b0`. Single branch on the umbrella tip, so its own preflight (all 20
 steps passed, at `ca682c5`; round 2 changed a README only) is the merged tree's. Identity checked.
 
+## Wave 6b — landed 2026-09-05; the run is complete
+PR #97 (#82) merged into the umbrella at `901b50e`. Single branch on the umbrella tip, so its own preflight (all
+20 steps passed) is the merged tree's. Identity checked. All fifteen subtasks of #67 are merged; milestones 1–5
+are done. The seven `file:line` citations in `deviations.md` item 13 and the §10 `sideEffects` item that #81
+and #82 shifted were re-anchored on the umbrella after this merge.
+
+**D20 outcome (2026-09-05, #82, PR #97).** Three new `transport-shared` modules: `dispatch-classification.ts`
+(allow-list of permanent recognitions — terminal argument codes, a cause-less `TypeError`, three known scheme
+messages; `'bad port'` deliberately excluded because Node's `fetch` reports TRANSPORT-20's own dead-port probe
+that way), `body-less.ts` (`body === null` for HEAD, 101/103/204/205/304, 2xx CONNECT; each adapter releases
+the handle it declines — **Bun's `fetch` also returned a live stream for these, so both adapters needed it**),
+`default-timeout.ts` (carried from #76; `TypeError` at both factories). `CONTROL_BYTE` now covers LF.
+`ForkedSignal` always returns a live signal and gains `abort(reason)`, so the producer-failure branch can
+cancel the native call; `producerFailure` classifies its own rejection as `TransportFailureError` so the shared
+table cannot read it as permanent. **One `deviations.md` row beyond the task's letter, accepted:** the
+classification departs from TRANSPORT-20's "*any* transport failure that produced no HTTP response", and
+`write-a-transport.md` now prescribes the reading to third-party transports. The producer race is proven by an
+instrumented-transport test, not a shared row (the suite cannot see the signal handed to the native call).
+*Correction to D19's outcome:* `ftp://` on undici was already terminal via `UND_ERR_INVALID_ARG`.
+
+## Closing state (2026-09-05)
+- Umbrella `audit/remediation-67`: fifteen task branches merged, PRs #83–#97 closed as merged, #67 checklist
+  fully ticked. Base `mvp` untouched at `1f48926`.
+- Every merged wave preflighted on its exact tree (all 20 steps) before the merge; every task-branch commit
+  authored as the repository's configured identity.
+- Left deliberately for the release pass: the "Deferred — release machinery" table below (fifteen changesets'
+  worth of notes), `docs/first-release.md`, the `ProxyType` union question, `packages/core/src/io/index.ts`'s
+  dead barrel, `packages/core/README.md`'s Observability pointer, the `bindAbort` second report in SSE, and the
+  unknown-length `pipeTo` path forwarding empty chunks.
+- Not done by this run, on purpose: opening a PR from the umbrella into `mvp`, and any `gh issue create` (D4's
+  PIPE-37 tracking issue). Both are the maintainer's.
+
 ## Decisions taken for wave 6 (M5: #81, then #82) — pre-taken 2026-09-05
 
 ### D19 — #81: degrade what undici cannot carry; one short-write detector; a typed refusal for SOCKS
@@ -630,3 +662,4 @@ the `fromWeb` leak sits in the producer-race code D20 edits; `ftp://` still reac
 | #79 / PR #94 | patch changesets for `@dexpace/core` (paginator closes on malformed `PageInfo`; SSE release failure reported once; splice surrogate typed) and `@dexpace/codec-json` (abortable reads/writes; `tristate` rejects present null) |
 | #80 / PR #95 | minor changeset for `@dexpace/core`: `PipelineOptions` (new public shape), `LoggingStepSettings.configKey`, context restored after `send()`; `.changeset/2026-09-04-per-operation-span.md`'s `createRuntime(...)` example is stale |
 | #81 / PR #96 | patch changesets for `@dexpace/transport-undici` (header degrade, file body via `writeTo`, SOCKS refusal, file framing change) and `@dexpace/transport-fetch` (three names added to the drop set); `ProxyType` narrowing declined — keep the union |
+| #82 / PR #97 | patch changesets for `@dexpace/transport-shared` (`CONTROL_BYTE`, classification table, body-less rule, `ForkedSignal.abort`, `requireValidDefaultTimeoutMs`), `@dexpace/transport-fetch` and `@dexpace/transport-undici` (permanent failures non-retryable; `body === null` for body-less responses; producer failure aborts the native call; `defaultTimeoutMs` validated) |
