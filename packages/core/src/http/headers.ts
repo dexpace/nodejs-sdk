@@ -1,26 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/headers.ts
-import type {Builder} from './builder.js';
+import {EMPTY_VALUE_LIST, type Builder} from './builder.js';
 import {HeaderValidationError} from './errors.js';
 import {
   hasForbiddenNameByte,
   hasForbiddenOutboundValueByte,
   hasForbiddenInboundValueByte,
 } from './ascii-validation.js';
-
-/**
- * The one frozen empty list this model's multi-value accessor returns for an absent name.
- *
- * Shared, not allocated per miss, and frozen for the same reason the present-name lists are:
- * HTTP-5's accessors "MUST NOT let a caller mutate the model through the returned value", and
- * `getAll`'s TSDoc promises a frozen list on every path. It returned a fresh `[]` on a miss, which
- * was neither (audit #67 / #76). Sharing is safe precisely because it is frozen — there is no
- * state in it to alias.
- *
- * Declared per model rather than shared with {@link QueryParams} through `builder.ts`: the two
- * models deliberately import nothing from each other, and a frozen empty array cannot drift.
- */
-const EMPTY_VALUE_LIST: readonly string[] = Object.freeze([]);
 
 function validateName(name: string): string {
   const trimmed = name.trim();
