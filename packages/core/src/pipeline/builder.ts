@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pipeline/builder.ts
+import type {InstrumentationBundle} from '../context/instrumentation.js';
 import {invariant} from '../invariant.js';
 import type {Transport} from '../seams/transport.js';
 import {
@@ -8,13 +9,44 @@ import {
   PillarCollisionError,
   ReservedStageError,
 } from './errors.js';
-import {createRuntime, type Runtime} from './runtime.js';
+import {createRuntime, pipelineOptionsOf, type Runtime} from './runtime.js';
 import {PILLAR_STAGES, STAGE_ORDER, type Stage} from './stage.js';
 import type {StepDescriptor} from './step.js';
 
 interface AnchorLocation {
   readonly stage: Stage;
   readonly index: number;
+}
+
+/**
+ * What a pipeline carries into every call it drives, as opposed to what a single call carries
+ * (`RequestOptions`) or what one step is configured with (a pillar's own settings).
+ *
+ * Both fields are per-pipeline by construction: `CTX-4` gives every `send()` its own context key, and
+ * the bundle is shared by reference across that call's three promotions (`CTX-2`/`CTX-3`), so a client
+ * that needs two operation names builds two pipelines — cheap, since `seedFrom(runtime, 'flatten')`
+ * derives the second from the first and carries these options with it.
+ *
+ * @public
+ */
+export interface PipelineOptions {
+  /**
+   * The correlation bundle every context of every call carries (`CTX-14`), and — through its
+   * `tracerFactory` — the source of the one `http.client.operation` span `Runtime.send()` opens per
+   * logical operation (`OBS-29`). Build one with `createInstrumentationBundle(tracerFactory)`.
+   *
+   * @defaultValue the disabled-tracing no-op bundle (`CTX-15`), which opens no span at all
+   */
+  readonly instrumentation?: InstrumentationBundle | undefined;
+  /**
+   * The advisory operation label (`CTX-16`) — a schema-defined operation id such as `'GetUser'`.
+   * Carried unchanged from the request context through every promotion, exposed to the tracing seam
+   * (the LOGGING pillar step names its per-attempt span with it), and never an input to the request,
+   * the dispatch decision or the store key.
+   *
+   * @defaultValue `undefined` — a raw request that belongs to no named operation
+   */
+  readonly operationName?: string | undefined;
 }
 
 /**
@@ -26,9 +58,19 @@ interface AnchorLocation {
 export class PipelineBuilder {
   readonly #buckets = new Map<Stage, StepDescriptor[]>();
   readonly #transport: Transport;
+  readonly #options: PipelineOptions;
 
-  constructor(transport: Transport) {
+  /**
+   * @param transport - the terminal transport the built pipeline dispatches to. Never closed by the
+   *   pipeline (PIPE-27).
+   * @param options - what the built pipeline carries into every call: the instrumentation bundle and
+   *   the advisory operation name. Optional, and optional in the second position deliberately — this
+   *   is the only public way to reach `OBS-29`'s per-operation span and `CTX-16`'s operation name,
+   *   and adding it must not break the one-argument construction every existing caller writes.
+   */
+  constructor(transport: Transport, options: PipelineOptions = {}) {
     this.#transport = transport;
+    this.#options = options;
   }
 
   /**
@@ -225,7 +267,15 @@ export class PipelineBuilder {
    */
   static seedFrom(runtime: Runtime, mode: 'flatten' | 'nest'): PipelineBuilder {
     if (mode === 'flatten') {
-      return new PipelineBuilder(runtime.transport).appendAll(runtime.steps);
+      // Flatten produces the pipeline that REPLACES `runtime`, so it inherits `runtime`'s
+      // `PipelineOptions` along with its steps: dropping them would silently un-trace a client that
+      // seeded from a traced preset, and there is no other way for the derived builder to recover
+      // them. `nest` needs no such carry -- `runtime` is still there, as the terminal transport,
+      // driving its own contexts with its own bundle.
+      return new PipelineBuilder(
+        runtime.transport,
+        pipelineOptionsOf(runtime),
+      ).appendAll(runtime.steps);
     }
     return new PipelineBuilder(runtime);
   }
@@ -238,7 +288,9 @@ export class PipelineBuilder {
       const bucket = this.#buckets.get(stage);
       if (bucket !== undefined) flattened.push(...bucket);
     }
-    return createRuntime(flattened, this.#transport); // Runtime copies and freezes -- PIPE-10/PIPE-25.
+    // Runtime copies and freezes -- PIPE-10/PIPE-25. `PipelineOptions` is structurally the public
+    // half of `ContextInit`; the `key` half stays in-package, because CTX-4 wants one key per call.
+    return createRuntime(flattened, this.#transport, this.#options);
   }
 
   #rejectReservedStage(stage: Stage, operation: string): void {

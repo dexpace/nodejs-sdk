@@ -157,6 +157,10 @@ export type {
   RequestContext,
 } from './context/context.js';
 export type {InstrumentationBundle} from './context/instrumentation.js';
+// `PipelineOptions` is what a caller passes to `new PipelineBuilder(transport, options)` and, by
+// extension, to `standardResilience`; it is the only public route to `OBS-29`'s per-operation span
+// and `CTX-16`'s operation name, so it is exported beside the bundle it carries.
+export type {PipelineOptions} from './pipeline/builder.js';
 export type {BackoffSettings} from './retry/backoff.js';
 export type {RetrySettings} from './retry/settings.js';
 export type {RetryStepOptions} from './retry/retry-step.js';

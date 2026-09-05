@@ -6,7 +6,11 @@
 // OBS-34 (granularity gates log events, not span/metrics), OBS-35 (level resolves from
 // Configuration, tolerant/case-insensitive), OBS-39 (stable http.request/http.response event names/keys,
 // url.full always redacted), OBS-20 (a throwing Logger is caught and re-surfaced as http.instrumentation.*;
-// a throwing tracer/meter propagates, NOT caught), OBS-36, OBS-37, OBS-38 (body previews).
+// a throwing tracer/meter propagates, NOT caught), OBS-36, OBS-37, OBS-38 (body previews), OBS-20's
+// body-drain half (a failed request-side probe or response-side drain emits
+// http.instrumentation.bodyCaptureFailed and the request still completes), OBS-35's "MUST NOT bake in a
+// default config key name" (the configKey setting), OBS-21 (the per-request span ends exactly once,
+// even when end() itself throws).
 import {afterEach, describe, expect, test} from 'bun:test';
 import {Headers} from '../http/headers.js';
 import {Protocol} from '../http/protocol.js';
@@ -21,6 +25,7 @@ import {
   ConfigurationBuilder,
   setGlobalConfiguration,
 } from '../config/configuration.js';
+import type {Body} from '../body/body.js';
 import {stringBody} from '../body/simple-bodies.js';
 import type {Logger, LogEvent} from './logger.js';
 import type {Meter} from './metrics.js';
@@ -614,5 +619,162 @@ describe('request body preview and validation (OBS-36, OBS-38)', () => {
     await send(loggingStep({logger, granularity: 'body'}), transport);
     const responseEvent = events.find(e => e.event === 'http.response');
     expect(responseEvent?.['http.response.body.preview']).toBeUndefined();
+  });
+});
+
+/** A declared-length response whose body errors on the first read -- a drain that cannot finish. */
+function failingResponse(error: Error): Response {
+  const failingStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(error);
+    },
+  });
+  return Response.newBuilder()
+    .request(Request.newBuilder().url('https://example.com').build())
+    .protocol(Protocol.HTTP_1_1)
+    .status(Status.of(200))
+    .headers(
+      Headers.newBuilder()
+        .set('content-type', 'text/plain')
+        .set('content-length', '100')
+        .build(),
+    )
+    .body(failingStream)
+    .build();
+}
+
+describe('body-drain diagnostics (OBS-20)', () => {
+  test('a failing response drain emits http.instrumentation.bodyCaptureFailed with the cause', async () => {
+    const {logger, events} = spyLogger();
+    const broke = new Error('stream broke');
+
+    const response = await send(
+      loggingStep({logger, granularity: 'body'}),
+      new FakeTransport([failingResponse(broke)]),
+    );
+
+    expect(response.status.code).toBe(200); // OBS-20: the request still completes
+    const diagnostic = events.find(
+      e => e.event === 'http.instrumentation.bodyCaptureFailed',
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.['http.message.direction']).toBe('response');
+    expect(diagnostic?.cause).toBe(broke);
+    const responseEvent = events.find(e => e.event === 'http.response');
+    expect(responseEvent?.['http.response.body.preview']).toBeUndefined();
+  });
+
+  test('a failing request-body probe emits the same diagnostic and still sends the request', async () => {
+    const {logger, events} = spyLogger();
+    const gone = new Error('ENOENT: the file went away');
+    // What `fileBody()` over a deleted file looks like to the step: replayable, so the tap probes
+    // it, and the probe is the thing that fails.
+    const brokenBody: Body = {
+      kind: 'file',
+      mediaType: 'application/octet-stream',
+      contentLength: 3,
+      replayable: true,
+      writeTo: () => Promise.reject(gone),
+    };
+    const request = Request.newBuilder()
+      .url('https://example.com/upload')
+      .method('POST')
+      .body(brokenBody)
+      .build();
+
+    const response = await send(
+      loggingStep({logger, granularity: 'body'}),
+      new FakeTransport([countingResponse(200).response]),
+      request,
+    );
+
+    expect(response.status.code).toBe(200);
+    const diagnostic = events.find(
+      e => e.event === 'http.instrumentation.bodyCaptureFailed',
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.['http.message.direction']).toBe('request');
+    expect(diagnostic?.cause).toBe(gone);
+    // The empty capture still ships, as it did before: the tap saw no bytes, and the preview field is
+    // what the tap holds. What changed is that the empty string is no longer the ONLY evidence -- the
+    // diagnostic above says which direction failed and why.
+    const requestEvent = events.find(e => e.event === 'http.request');
+    expect(requestEvent?.['http.request.body.preview']).toBe('');
+  });
+});
+
+describe('the config key the ambient granularity is read from (OBS-35)', () => {
+  test('configKey names the key, so the baked-in default is not the only one', async () => {
+    setGlobalConfiguration(
+      new ConfigurationBuilder()
+        .put('ACME_SDK_LOG_LEVEL', 'headers')
+        .put(CFG_KEY_LOG_LEVEL, 'none')
+        .build(),
+    );
+    const {logger, events} = spyLogger();
+
+    await send(
+      loggingStep({logger, configKey: 'ACME_SDK_LOG_LEVEL'}),
+      new FakeTransport([countingResponse(200).response]),
+    );
+
+    expect(events.map(e => e.event)).toEqual(['http.request', 'http.response']);
+  });
+
+  test('an explicit granularity still wins over the configured key (OBS-34)', async () => {
+    setGlobalConfiguration(
+      new ConfigurationBuilder().put('ACME_SDK_LOG_LEVEL', 'headers').build(),
+    );
+    const {logger, events} = spyLogger();
+
+    await send(
+      loggingStep({
+        logger,
+        configKey: 'ACME_SDK_LOG_LEVEL',
+        granularity: 'none',
+      }),
+      new FakeTransport([countingResponse(200).response]),
+    );
+
+    expect(events).toHaveLength(0);
+  });
+});
+
+describe('the per-request span ends exactly once (OBS-21, OBS-29)', () => {
+  test('an end() that throws on the success path is not called a second time', async () => {
+    const {logger} = spyLogger();
+    let ends = 0;
+    const endFailed = new Error('end failed');
+    const exceptions: unknown[] = [];
+    const span = {
+      isRecording: true,
+      setAttribute: () => span,
+      recordException: (error: unknown) => {
+        exceptions.push(error);
+        return span;
+      },
+      end: (): void => {
+        ends += 1;
+        throw endFailed;
+      },
+    };
+
+    let caught: unknown;
+    try {
+      await send(
+        loggingStep({
+          logger,
+          granularity: 'headers',
+          tracerFactory: () => ({startSpan: () => span}),
+        }),
+        new FakeTransport([countingResponse(200).response]),
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(endFailed);
+    expect(ends).toBe(1);
+    expect(exceptions).toEqual([]);
   });
 });

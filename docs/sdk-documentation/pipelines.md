@@ -144,6 +144,58 @@ All three carry the same `InstrumentationBundle`, so trace and span identity sur
 `AsyncLocalStorage`-based, which is why `@dexpace/rx` installs no RxJS scheduler — adding
 `observeOn`/`subscribeOn` downstream makes reinstating the context the caller's job.
 
+**What a call leaves behind is nothing.** `send()` scopes both async-scoped stores with
+`AsyncLocalStorage.run`, so the moment it settles — resolved or rejected — the active span and the
+diagnostic fields are what they were before it. That is a guarantee about *your* context, not only the
+pipeline's: an application log emitted after `await client.send(...)` carries no `trace.id` from it.
+Inside the call the usual rules apply, and a step that pushes fields with the handle form
+(`activateSpanForCorrelation`) should still close its scope in the same continuation that opened it.
+
+## Instrumenting a pipeline
+
+Both constructors take an options bag that the built pipeline carries into every call:
+
+```typescript
+import {
+  PipelineBuilder,
+  createInstrumentationBundle,
+  standardResilience,
+  type PipelineOptions,
+  type Runtime,
+  type Tracer,
+} from '@dexpace/core';
+import {fetchTransport} from '@dexpace/transport-fetch';
+
+declare const otelTracer: Tracer; // whatever your tracing library hands you
+
+const instrumented: PipelineOptions = {
+  instrumentation: createInstrumentationBundle(() => otelTracer),
+  operationName: 'GetUser',
+};
+
+// `StandardResilienceOptions` extends `PipelineOptions`, so the preset takes the same two fields
+// beside its per-pillar ones.
+export const preset: Runtime = standardResilience(fetchTransport(), instrumented);
+export const handBuilt: Runtime = new PipelineBuilder(
+  fetchTransport(),
+  instrumented,
+).build();
+```
+
+- **`instrumentation`** is the bundle every context of the call carries, and its `tracerFactory` is
+  what opens spans. `send()` asks it for `'http.client.operation'` once per call and opens **one**
+  span there (`OBS-29`), outside every pillar — a retry attempt and a redirect hop stay inside it. The
+  LOGGING pillar asks again per transmission, and those spans are its children. Omitted, the pipeline
+  carries the no-op bundle (`CTX-15`) and opens no span at all.
+- **`operationName`** is `CTX-16`'s advisory label. It is carried unchanged across every promotion,
+  readable from a custom step as `ctx.context.operationName`, and used to name the tracer the LOGGING
+  pillar asks for. It never influences the request, the dispatch decision, or the store key.
+
+Both are per-pipeline, not per-call: build a second pipeline for a second operation name.
+`PipelineBuilder.seedFrom(runtime, 'flatten')` carries them over, since the flattened builder replaces
+the runtime it seeded from; `'nest'` does not need to, because the seeded runtime is still there,
+driving its own contexts as the terminal transport.
+
 ## The four shipped pillars
 
 | Pillar | Factory | Key settings |
@@ -151,7 +203,7 @@ All three carry the same `InstrumentationBundle`, so trace and span identity sur
 | Retry | `retryStep(options?)` | `maxAttempts`, `retryableStatuses`, `totalTimeoutMs`, `attemptHeaderName`, backoff (`initialDelayMs`, `multiplier`, `maxDelayMs`, `jitter`, `fixedDelayMs`), injectable `clock`/`random` |
 | Redirect | `redirectStep(overrides?)` | `maxHops`, `allowedMethods`, `allow303`, `allowSchemeDowngrade`, `locationHeader`, `predicate` |
 | Auth | `authStep(settings)` | `credentials`, `tiers`, `challengeHook`, `bearerMarginMs` — see [`auth.md`](./auth.md) |
-| Logging | `loggingStep(settings?)` | `granularity`, `severity`, `previewSizeBytes`, `droppedHeaderPolicy`, `logger`, `meter`, `tracerFactory` |
+| Logging | `loggingStep(settings?)` | `granularity`, `configKey`, `severity`, `previewSizeBytes`, `droppedHeaderPolicy`, `logger`, `meter`, `tracerFactory` |
 
 Retry and redirect are worth a few notes each, because both surprise people:
 
@@ -210,6 +262,47 @@ Retry and redirect are worth a few notes each, because both surprise people:
   the pipeline is the single redirect authority (`TRANSPORT-1`/`TRANSPORT-2`).
 - **A non-replayable body ends a redirect.** `PIPE-40` and `REDIR-22` disagree about what should
   happen; this port closes the response and throws (`docs/work/mvp/2026-09-04-open-items-dissolution.md` G1).
+
+### Turning logging on from the environment
+
+`loggingStep()` with no `granularity` resolves one from layered configuration (`OBS-35`), and the
+default is `'none'`. What it reads is the process-wide configuration slot — **which starts empty**.
+`CFG-13` makes that slot last-write-wins with no ambient default, so nothing in this SDK reads
+`process.env` until you say so, and `DEXPACE_LOG_LEVEL=headers` on its own changes nothing:
+
+```typescript
+import {
+  defaultConfiguration,
+  loggingStep,
+  setGlobalConfiguration,
+  standardResilience,
+  type Runtime,
+} from '@dexpace/core';
+import {fetchTransport} from '@dexpace/transport-fetch';
+
+// Once, at start-up. `defaultConfiguration()` is the production wiring: its environment seam reads
+// the live `process.env` on every lookup, and its property seam finds nothing (Node has no ambient
+// key/value store distinct from the environment).
+setGlobalConfiguration(defaultConfiguration());
+
+// Now `DEXPACE_LOG_LEVEL=headers` reaches the step. `configKey` renames the variable it reads —
+// `OBS-35` says an SDK must not bake a key name in, and `DEXPACE_LOG_LEVEL` is only the default.
+export const client: Runtime = standardResilience(fetchTransport(), {
+  logging: {configKey: 'ACME_HTTP_LOG_LEVEL'},
+});
+export const step = loggingStep({configKey: 'ACME_HTTP_LOG_LEVEL'});
+```
+
+Parsing is tolerant either way: `'  Headers  '` and `'HEADERS'` both resolve to `'headers'`, and an
+absent, empty or unrecognised value falls back to `'none'`. An explicit `granularity` in the settings
+wins over both, and is the right choice for a library that does not want to read a host application's
+environment at all.
+
+Body-preview capture is best-effort and says so when it fails: a request body that cannot be probed
+or a response body that errors mid-drain emits `http.instrumentation.bodyCaptureFailed`, carrying the
+direction and the cause, and the request still completes (`OBS-20`). Like every
+`http.instrumentation.*` diagnostic it emits at `verbose`, so a logger that filters that level will
+not show it.
 
 ## Testing a pipeline
 
