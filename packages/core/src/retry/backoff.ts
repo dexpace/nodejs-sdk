@@ -49,6 +49,17 @@ function applyJitter(
  * Overflow-safe by construction (RETRY-11): a large attempt makes `**` return `Infinity`, which
  * `Math.min` absorbs into the cap. It saturates; it never throws.
  *
+ * Except at a zero base, where the saturation does not hold and the guard below is what supplies it.
+ * `0 * Infinity` is `NaN`, and `Math.min` propagates `NaN` rather than clamping it -- so
+ * `initialDelayMs: 0` with any multiplier above 1 produced a `NaN` delay at the attempt where the
+ * power overflows (`multiplier: 2` reaches it at attempt 1100; `multiplier: 1e200` at attempt 3).
+ * `retrySettings()` accepts both configurations. Downstream, `NaN` is worse than a large number: it
+ * fails every comparison, so the engine's budget check, its overshoot check and its `delayMs <= 0`
+ * short-circuit all read false and it arrives at `Clock.sleep`, which rejects with a `RangeError`
+ * that replaces the failure being retried. Short-circuiting the zero base before the power is taken
+ * is exact rather than a repair: the schedule's value there is `0` at every attempt, and jitter
+ * around `0` is `0` for any sample (audit #67 / #78).
+ *
  * `random` is injected so jitter is assertable rather than statistical -- the same determinism seam
  * CFG-15 wants for the clock.
  *
@@ -71,6 +82,8 @@ export function computeDelay(
     `retry attempt must be 1-indexed and >= 1, got ${String(attempt)}`,
   );
   if (settings.fixedDelayMs !== undefined) return settings.fixedDelayMs;
+  // Before the power, not after: `0 * Infinity` is the one product `Math.min` cannot absorb.
+  if (settings.initialDelayMs === 0) return 0;
   const growth = settings.initialDelayMs * settings.multiplier ** (attempt - 1);
   return applyJitter(
     Math.min(growth, settings.maxDelayMs),

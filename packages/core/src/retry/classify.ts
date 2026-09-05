@@ -53,6 +53,22 @@ function causeOf(value: unknown): unknown {
  * surfaces as an `IoError` subclass and is therefore retryable unconditionally at this level
  * (RETRY-4).
  *
+ * **The I/O branch tests `instanceof IoError`, not `isIoError`, and the difference is the rule.**
+ * `io/errors.ts` groups six classes under `isIoError`, but only two of them descend from `IoError`:
+ * `IoError` itself, and `TransportFailureError` -- the class TRANSPORT-20 requires a send that
+ * produced no response to surface, and the reason that `extends` is a requirement rather than a
+ * modelling choice (`docs/deviations.md` item 17). Those two mean "the wire failed", and RETRY-2's
+ * "an I/O error" is read as exactly that boundary. The other four -- `EndOfStreamError`,
+ * `SourceContractViolationError`, `ClosedResourceError`, `AllocationLimitError` -- extend
+ * `DexpaceError` directly and are deliberately outside it: they are this package's own contract and
+ * lifecycle failures and are deterministic on re-send. A closed resource or a violated source
+ * contract is a caller programming error, an allocation cap is a limit the same request hits again,
+ * and `EndOfStreamError` is the exact-length-copy contract inside `io/` -- a *wire* truncation is the
+ * transport's to report, as a `TransportFailureError`. Widening this branch to `isIoError` would
+ * retry all four. Decided by audit #67 / #78; one case per class in `classify.test.ts` pins the
+ * answer, so a later re-parenting of any leaf under `IoError` changes a test rather than passing
+ * silently.
+ *
  * @param error - whatever was thrown; any value, not necessarily an `Error`.
  * @param statuses - the CONFIGURED set, authoritative on its own -- it both widens and narrows
  *   relative to `RETRYABLE_STATUSES`, and the built-in classifier is not AND-ed in (RETRY-37).
@@ -70,6 +86,7 @@ export function isRetryableFailure(
     seen.add(current);
     // RETRY-3: derived from the carried status at classification time, never a stored per-subclass flag.
     if (current instanceof HttpStatusError) return statuses.has(current.status);
+    // Deliberately `instanceof IoError`, never `isIoError` -- see the boundary paragraph above.
     if (current instanceof IoError) return true;
     if (isTimeoutAbort(current)) return true;
     current = causeOf(current);

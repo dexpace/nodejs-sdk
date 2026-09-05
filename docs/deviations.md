@@ -433,22 +433,38 @@ extend `DexpaceError` **directly** (lines 29, 51, 67, 83) and are grouped by the
 three-level branch.
 
 **Why it cannot be corrected.** `TRANSPORT-20` requires `TransportFailureError` to *be* an `IoError` — the
-subtyping is the requirement, not an artifact of modelling. It is also load-bearing: `classify.ts`'s
-cause-walk tests `current instanceof IoError` (`packages/core/src/retry/classify.ts:73`), so the `extends`
-is what makes a no-response transport failure retryable with zero edits to the retry layer. A flat sibling
+subtyping is the requirement, not an artifact of modelling. It is also load-bearing, and **what it bears is
+a boundary, not a category**: `classify.ts`'s cause-walk tests `current instanceof IoError`
+(`packages/core/src/retry/classify.ts:90`), and because the tree is flat that branch matches exactly two of
+the six classes in `io/errors.ts` — `IoError` itself and `TransportFailureError`. It does **not** match the
+four leaves `isIoError` groups. That is the intended reading, decided by audit #67 / #78 and stated here
+because it is this deviation's own consequence: the branch means "the wire failed". A send that produced no
+response is `RETRY-4`'s unconditionally-retryable condition, `TRANSPORT-20` names `TransportFailureError` as
+what carries it, and the `extends` is what routes it to the retry layer with no edit there. A flat sibling
 would have to be enumerated by hand in the retry classifier, and again for every transport added later —
 trading one level of depth for an open-ended maintenance obligation that the styleguide's own rule exists
 to prevent. Held at exactly three; a fourth level is not sanctioned by this entry.
 
-> **Anchor correction 2026-09-04 (audit #67 / #68); the rule itself is not decided here.** The line
-> numbers above were stale and are re-derived. The substantive point this paragraph used to make — "the
-> cause-walk returns retryable for any `IoError`" — reads as covering all five I/O classes, and it does
-> not: because the tree is flat, `instanceof IoError` at `classify.ts:73` matches `IoError` itself and
-> `TransportFailureError` only. `EndOfStreamError`, `SourceContractViolationError`,
-> `ClosedResourceError` and `AllocationLimitError` are **not** retryable through that branch. Whether
-> they should be — and therefore whether the classifier tests `instanceof IoError` or the `isIoError`
-> predicate — is decided by audit subtask #78, and this row's rationale is rewritten there. Nothing in
-> the deviation itself (the three-level branch, and why it stays) turns on that answer.
+**What the other four leaves are, and why they stay outside the branch.** `EndOfStreamError`,
+`SourceContractViolationError`, `ClosedResourceError` and `AllocationLimitError` are this package's own
+contract and lifecycle failures, and every one of them is deterministic on re-send: a closed resource
+(`IO-42`) and a source that returned zero bytes for a positive read (`IO-17`) are caller programming errors,
+an allocation cap (`IO-9`) is a limit the same request hits again, and `EndOfStreamError` is the
+exact-length-copy contract inside `io/` — a *wire* truncation is the transport's to report, as a
+`TransportFailureError`, which is the layer that can tell one from a complete short body. `RETRY-2`'s "an
+I/O error" is read as that boundary. Widening the branch to `isIoError` would retry all four; only
+`EndOfStreamError` was ever a candidate, and `io/` is the wrong layer to decide whether a stream ended early
+because the wire broke. Six cases in `packages/core/src/retry/classify.test.ts` pin one answer per class,
+each asserting both what `isIoError` says and what the classifier says, so the disagreement is recorded as a
+decision rather than an oversight — and re-parenting any leaf under `IoError` turns four of them red.
+
+> **Anchor correction 2026-09-04 (audit #67 / #68), rule supplied 2026-09-05 (audit #67 / #78).** The line
+> numbers in this section were stale on 2026-09-04 and were re-derived then; `classify.ts`'s branch moved
+> from `:73` to `:90` on 2026-09-05 when the paragraph above it was written. The substantive point this
+> section used to make — "the cause-walk returns retryable for any `IoError`" — read as covering all five
+> classes `isIoError` names, and it never did. #68 recorded the gap and left the answer to #78; #78 chose to
+> keep `instanceof IoError` and to say what it means, which is the two paragraphs above. Nothing in the
+> deviation itself (the three-level branch, and why it stays) ever turned on that answer.
 
 ## Deviations recorded outside a phase
 

@@ -13,10 +13,20 @@
 // U9 pass promoted `EndOfStreamError` — it was the subject of four `@throws` tags on public symbols
 // with no class a caller could catch. `1f48926` finished the set: `isIoError`,
 // `AllocationLimitError`, `ClosedResourceError` and `SourceContractViolationError` are exported as
-// well, so every error symbol re-exported below is also on `packages/core/src/index.ts:39-47` and in
+// well, so every error symbol re-exported below is also on `packages/core/src/index.ts:39-48` and in
 // `packages/core/etc/core.api.md`. Nothing in this file's error block is internal any more
 // (docs/work/mvp/2026-09-04-open-items-dissolution.md H8, whose remaining sub-item was the category
 // catch `isIoError` now provides).
+//
+// "Load-bearing on it" is narrower than it sounds, and the difference is a decision rather than an
+// accident. The cause-walk at `../retry/classify.ts:90` tests `instanceof IoError`, so it matches
+// `IoError` and `TransportFailureError` — and NOT the four leaves below, which extend `DexpaceError`
+// directly and are grouped only by `isIoError`. That branch means "the wire failed": a send that
+// produced no response is retryable (RETRY-4, TRANSPORT-20), while a violated source contract, a
+// closed resource, an allocation cap and a short exact-length copy are this package's own failures
+// and repeat identically on the next attempt. Audit #67 / #78 decided it; `docs/deviations.md`
+// item 17 carries the rationale and `../retry/classify.test.ts` pins one answer per class. Do not
+// re-parent a leaf under `IoError` to tidy the tree — that silently makes it retryable.
 export {BufferedSink} from './buffered-sink.js';
 export {BufferedSource} from './buffered-source.js';
 export {ByteQueue, copyBytes} from './byte-queue.js';

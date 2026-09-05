@@ -2,7 +2,8 @@
 // packages/core/src/retry/backoff.test.ts
 // Exercises: RETRY-9 (initialDelay * multiplier^(attempt-1), 1-indexed, capped), RETRY-10 (symmetric
 // jitter bounds, midpoint, j=0 identity, negative floors to zero), RETRY-11 (attempt < 1 rejected,
-// overflow saturates), RETRY-43 (fixed delay disables backoff AND jitter).
+// overflow saturates -- INCLUDING at a zero initial delay, where `0 * Infinity` used to give NaN;
+// audit #67 / #78), RETRY-43 (fixed delay disables backoff AND jitter).
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {computeDelay, type BackoffSettings} from './backoff.js';
@@ -38,6 +39,69 @@ describe('exponential schedule', () => {
   test('attempt < 1 is a programmer error (RETRY-11)', () => {
     expect(() => computeDelay(0, SETTINGS, never)).toThrow();
     expect(() => computeDelay(-1, SETTINGS, never)).toThrow();
+  });
+});
+
+/**
+ * RETRY-11's "saturating rather than throwing" has one hole, and it is the zero base. Every other
+ * accepted setting overflows into `Math.min`'s cap; `0 * Infinity` overflows into `NaN`, which
+ * `Math.min` propagates. Audit #67 / #78.
+ */
+describe('a zero initial delay (RETRY-11)', () => {
+  test('stays zero where the power overflows', () => {
+    // Downstream, NaN is worse than a large number: `overshootsBudget` reads false for it, the
+    // engine's `delayMs <= 0` guard reads false for it, and it lands in `Clock.sleep` as a
+    // RangeError that replaces the failure being retried. `retrySettings()` accepts both settings
+    // below (`initialDelayMs >= 0`, finite `multiplier >= 1`), so RETRY-11 covers them.
+    const hugeMultiplier: BackoffSettings = {
+      ...SETTINGS,
+      initialDelayMs: 0,
+      multiplier: 1e200,
+    };
+    expect(computeDelay(3, hugeMultiplier, never)).toBe(0);
+
+    const manyAttempts: BackoffSettings = {...SETTINGS, initialDelayMs: 0};
+    // 2 ** 1099 is Infinity: the first attempt at which the doubling schedule overflows a double.
+    expect(computeDelay(1100, manyAttempts, never)).toBe(0);
+  });
+
+  test('stays zero under jitter too (RETRY-10)', () => {
+    const jitteredZero: BackoffSettings = {
+      ...SETTINGS,
+      initialDelayMs: 0,
+      multiplier: 1e200,
+      jitter: 1,
+    };
+    expect(computeDelay(4, jitteredZero, () => 0)).toBe(0);
+    expect(computeDelay(4, jitteredZero, () => 1)).toBe(0);
+  });
+
+  test('property: every accepted schedule is finite and non-negative (RETRY-11)', () => {
+    // The ranges are exactly what `retrySettings()` admits, so a passing property means no
+    // configuration a caller can build reaches the engine as a non-finite delay. `initialDelayMs`
+    // is drawn through an explicit `constant(0)` arm: the failing region needs a zero base AND an
+    // overflowing power together, and 100 runs of an unbiased double never produced the pair.
+    const accepted = fc.record({
+      initialDelayMs: fc.oneof(
+        fc.constant(0),
+        fc.double({min: 0, max: 1e9, noNaN: true}),
+      ),
+      multiplier: fc.double({min: 1, max: 1e300, noNaN: true}),
+      maxDelayMs: fc.double({min: 0, max: 1e9, noNaN: true}),
+      jitter: fc.double({min: 0, max: 1, noNaN: true}),
+    });
+
+    fc.assert(
+      fc.property(
+        fc.integer({min: 1, max: 5000}),
+        accepted,
+        (attempt, settings) => {
+          const delay = computeDelay(attempt, settings, never);
+          expect(Number.isFinite(delay)).toBe(true);
+          expect(delay).toBeGreaterThanOrEqual(0);
+        },
+      ),
+    );
   });
 });
 
