@@ -12,13 +12,16 @@
 //
 // Exercises: TRANSPORT-1 (redirects not followed), TRANSPORT-4/20 (timeout and no-response classification),
 // TRANSPORT-17 (a single-use body written once, its bytes on the wire), TRANSPORT-24 (vendor status codes),
-// TRANSPORT-28/BODY-11 (a real fileBody() over the wire, whole and ranged),
+// TRANSPORT-11/12 (a header the native layer refuses is dropped, not a failed send -- Node's undici-backed
+// `fetch` rejects three names Bun's forwards),
+// TRANSPORT-28/BODY-11 (a real fileBody() over the wire, whole and ranged), BODY-13 (a truncate-after-stat
+// short write fails the send on the streamed path, which only this runtime can assert),
 // TRANSPORT-25 (the response body is a lazily-read stream and close releases it), TRANSPORT-29/SEAM-12
 // (concurrent sends), SEAM-16 (an abort after delivery must not close the delivered body).
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {after, before, describe, it} from 'node:test';
-import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -135,6 +138,42 @@ describe('the transport adapters on the Node runtime', () => {
           assert.equal(response.status.code, 302);
           assert.equal(response.headers.get('location'), '/echo');
           await response.close();
+        } finally {
+          await transport.close();
+        }
+      });
+
+      it('drops the headers the native layer refuses rather than failing the send (TRANSPORT-11/12)', async () => {
+        // The one case in this file where Bun and Node disagree about the *outcome*, not merely the
+        // implementation. `Expect`, `Keep-Alive` and `Upgrade` are undici's three unconditional
+        // rejections, and Node's global `fetch` is undici-backed, so on this runtime an undropped
+        // one rejects the send: `TypeError: fetch failed` through transport-fetch, which can only
+        // be classified as the RETRYABLE TransportFailureError, and a terminal TypeError through
+        // transport-undici. Bun's `fetch` instead forwards `Expect`/`Keep-Alive` to the wire and
+        // hangs on `Upgrade`, so the Bun conformance rows for these names prove a weaker claim than
+        // this one does (audit #67 / #81, measured 2026-09-05).
+        const transport = makeTransport();
+        try {
+          const response = await transport.send(
+            Request.newBuilder()
+              .url(`${origin}/echo`)
+              .headers(
+                Headers.newBuilder()
+                  .set('Expect', '100-continue')
+                  .set('Keep-Alive', 'timeout=5')
+                  .set('Upgrade', 'websocket')
+                  .set('X Custom', 'model-valid, non-token')
+                  .set('X-Pass-Through', 'survives')
+                  .build(),
+              )
+              .build(),
+            RequestOptions.newBuilder().timeoutMs(2_000).build(),
+          );
+          const echoed = JSON.parse(await response.text());
+          for (const name of ['expect', 'keep-alive', 'upgrade', 'x custom']) {
+            assert.equal(echoed.headers[name], undefined, name);
+          }
+          assert.equal(echoed.headers['x-pass-through'], 'survives');
         } finally {
           await transport.close();
         }
@@ -343,6 +382,62 @@ describe('the transport adapters on the Node runtime', () => {
             );
           } finally {
             await transport.close();
+          }
+        });
+
+        // BODY-13's short-write clause on the STREAMED request-body path, which is this tree's to
+        // hold for two independent reasons. The shared conformance row
+        // (`run-suite.ts`'s "a file body truncated after its length was captured") drives the
+        // buffered path only: above the adapters' 1,000,000-byte materialize bound the producer
+        // failure aborts a `TransformStream` mid-pull, and Bun 1.3.14's `Readable.fromWeb` leaks
+        // that abort reason as unhandled rejections, which `bun:test` scores against an unrelated
+        // row. Node's bridge does not. And this is the only layer where a real `fileBody()` — whose
+        // `transferred === count` invariant is the thing under test — meets a real transport.
+        //
+        // Until audit #67 / #81 the undici transport handed `createReadStream(path, …)` to undici
+        // and never called `writeTo` at all, so this case reported 200 with ten bytes on the wire
+        // while transport-fetch raised. `content-length` is dropped outbound, so the framing cannot
+        // catch it either.
+        it('fails a send whose file was truncated after its length was captured (BODY-13)', async () => {
+          const declared = 1_100_000;
+          const shortDir = await mkdtemp(
+            join(tmpdir(), 'dexpace-filebody-short-'),
+          );
+          const shortPath = join(shortDir, 'payload.bin');
+          const transport = makeTransport();
+          try {
+            await writeFile(shortPath, fixtureBytes(declared));
+            const body = fileBody(shortPath);
+            assert.equal(body.contentLength, declared);
+            await truncate(shortPath, 10);
+            await assert.rejects(
+              transport.send(
+                Request.newBuilder()
+                  .method('POST')
+                  .url(`${origin}/echo`)
+                  .body(body)
+                  .build(),
+              ),
+              error => {
+                assert.equal(error.name, 'TransportFailureError');
+                // BODY-13 names transferred-of-total. The streamed path rethrows the producer's own
+                // message; the buffered one carries it as a cause, so both are searched.
+                const chain = [];
+                for (let at = error; at instanceof Error; at = at.cause) {
+                  chain.push(at.message);
+                }
+                assert.ok(
+                  chain.some(message =>
+                    message.includes(`transferred 10 of ${declared} bytes`),
+                  ),
+                  `no transferred-of-total in ${JSON.stringify(chain)}`,
+                );
+                return true;
+              },
+            );
+          } finally {
+            await transport.close();
+            await rm(shortDir, {recursive: true, force: true});
           }
         });
       });

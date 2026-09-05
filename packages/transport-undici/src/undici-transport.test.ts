@@ -11,7 +11,7 @@
 // TRANSPORT-19 (a header-mapping throw leaves no started body producer stranded), SEAM-30 (so no
 // producer rejection reaches Node's default unhandledRejection policy)
 import {createRequire} from 'node:module';
-import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {createServer, type Server} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -348,25 +348,41 @@ describe('undiciTransport disposal (TRANSPORT-15/16)', () => {
   });
 });
 
+/**
+ * A `Dispatcher` that records every `request()` it is handed and answers 200 with an empty body, so
+ * a row can assert what reached undici's argument validation rather than what reached the wire.
+ * Returns the recording array; the caller builds the transport around it.
+ */
+function recordingDispatcher(sink: Dispatcher.RequestOptions[]): Dispatcher {
+  return {
+    request: (options: Dispatcher.RequestOptions) => {
+      sink.push(options);
+      return Promise.resolve({
+        statusCode: 200,
+        headers: {},
+        body: {
+          destroy: () => undefined,
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({done: true, value: undefined}),
+          }),
+        },
+      } as unknown as Dispatcher.ResponseData);
+    },
+    close: () => Promise.resolve(),
+  } as unknown as Dispatcher;
+}
+
+/** The flat `[name, value, ...]` array one recorded dispatch carried. */
+function dispatchedHeaders(
+  sent: Dispatcher.RequestOptions | undefined,
+): string[] {
+  return (sent?.headers ?? []) as string[];
+}
+
 describe('undiciTransport dispatch', () => {
   test('TRANSPORT-2/11: redirects are pinned off and Connection is forwarded, not dropped', async () => {
     const dispatched: Dispatcher.RequestOptions[] = [];
-    const recorder = {
-      request: (options: Dispatcher.RequestOptions) => {
-        dispatched.push(options);
-        return Promise.resolve({
-          statusCode: 200,
-          headers: {},
-          body: {
-            destroy: () => undefined,
-            [Symbol.asyncIterator]: () => ({
-              next: () => Promise.resolve({done: true, value: undefined}),
-            }),
-          },
-        } as unknown as Dispatcher.ResponseData);
-      },
-      close: () => Promise.resolve(),
-    } as unknown as Dispatcher;
+    const recorder = recordingDispatcher(dispatched);
 
     const transport = undiciTransport({dispatcher: recorder});
     const request = Request.newBuilder()
@@ -383,79 +399,174 @@ describe('undiciTransport dispatch', () => {
     const sent = dispatched[0];
     expect(sent?.maxRedirections).toBe(0);
     expect(sent?.path).toBe('/anything?q=1');
-    const headers = sent?.headers as string[];
+    const headers = dispatchedHeaders(sent);
     expect(headers).toContain('Connection');
     expect(headers).not.toContain('Content-Length');
   });
 });
 
-describe('undiciTransport body and adaptation paths', () => {
-  test('TRANSPORT-28: a file body dispatches exactly its declared byte range', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'undici-file-body-'));
+describe('undiciTransport outbound header degradation (TRANSPORT-11/12)', () => {
+  test('every header undici refuses is dropped before dispatch, and logged by name', async () => {
+    const dispatched: Dispatcher.RequestOptions[] = [];
+    const transport = undiciTransport({
+      dispatcher: recordingDispatcher(dispatched),
+      headerDropLogging: 'all',
+    });
+    const capture = captureDroppedHeaders();
     try {
-      const path = join(dir, 'payload.bin');
-      await writeFile(path, 'ABCDEFGH');
-      // The structural recognition contract, built by hand: this package must narrow on
-      // `kind === 'file'` alone, never on an instanceof against @dexpace/body-file, which it
-      // deliberately does not depend on.
-      const descriptor: FileBodyDescriptor = {
-        kind: 'file',
-        mediaType: 'application/octet-stream',
-        contentLength: 4,
-        replayable: true,
-        path,
-        start: 2,
-        count: 4,
-        writeTo: () =>
-          Promise.reject(new Error('the transport must not call writeTo here')),
-      };
+      const request = Request.newBuilder()
+        .url(`${origin}/anything`)
+        .headers(
+          Headers.newBuilder()
+            .set('Expect', '100-continue')
+            .set('Keep-Alive', 'timeout=5')
+            .set('Upgrade', 'websocket')
+            .set('X Custom', 'model-valid, non-token')
+            .set('X-Pass-Through', 'survives')
+            .build(),
+        )
+        .build();
+      await (await transport.send(request)).close();
+      await transport.close();
+      const headers = dispatchedHeaders(dispatched[0]);
+      // Asserted against the argument array, not the wire: undici validates in `new Request(...)`,
+      // so a name that reaches this array is a name that would have thrown (audit #67 / #81).
+      expect(headers).toEqual(['X-Pass-Through', 'survives']);
+      for (const name of ['expect', 'keep-alive', 'upgrade', 'x custom']) {
+        expect(capture.dropped).toContain(name);
+      }
+    } finally {
+      capture.restore();
+    }
+  });
+
+  test('a Connection value undici cannot carry is dropped, close and keep-alive are not', async () => {
+    const carried: string[] = [];
+    const dropped: string[] = [];
+    for (const value of ['close', 'Keep-Alive', 'upgrade']) {
+      const dispatched: Dispatcher.RequestOptions[] = [];
+      const transport = undiciTransport({
+        dispatcher: recordingDispatcher(dispatched),
+        headerDropLogging: 'all',
+      });
+      const capture = captureDroppedHeaders();
+      try {
+        const request = Request.newBuilder()
+          .url(`${origin}/anything`)
+          .headers(Headers.newBuilder().set('Connection', value).build())
+          .build();
+        await (await transport.send(request)).close();
+        await transport.close();
+        if (dispatchedHeaders(dispatched[0]).includes('Connection')) {
+          carried.push(value);
+        }
+        // `createDropLogger` lower-cases the name it logs, so the field is `connection`.
+        if (capture.dropped.includes('connection')) dropped.push(value);
+      } finally {
+        capture.restore();
+      }
+    }
+    // `Keep-Alive` mixed-cased on purpose: undici lower-cases the value before comparing
+    // (`lib/core/request.js:401`), so this transport must too or it would drop a header undici
+    // would have carried.
+    expect(carried).toEqual(['close', 'Keep-Alive']);
+    expect(dropped).toEqual(['upgrade']);
+  });
+});
+
+/**
+ * A `kind: 'file'` descriptor over a real path whose `writeTo` streams its own declared range and
+ * counts its calls -- the shape `@dexpace/body-file`'s `fileBody()` produces. Built by hand because
+ * TRANSPORT-28's recognition contract is structural: this package narrows on `kind` alone and must
+ * never `instanceof` against a package it does not depend on.
+ */
+function fileDescriptor(
+  path: string,
+  range: {start: number; count: number},
+  writes: {count: number},
+): FileBodyDescriptor {
+  return {
+    kind: 'file',
+    mediaType: 'application/octet-stream',
+    contentLength: range.count,
+    replayable: true,
+    path,
+    start: range.start,
+    count: range.count,
+    async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
+      writes.count += 1;
+      const writer = sink.getWriter();
+      if (range.count === 0) {
+        writer.releaseLock();
+        return;
+      }
+      const bytes = (await readFile(path)).subarray(
+        range.start,
+        range.start + range.count,
+      );
+      await writer.write(new Uint8Array(bytes));
+      writer.releaseLock();
+    },
+  };
+}
+
+/** Runs `body` against a fresh temporary file holding `ABCDEFGH`, and removes the directory after. */
+async function withPayloadFile<T>(
+  run: (path: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'undici-file-body-'));
+  try {
+    const path = join(dir, 'payload.bin');
+    await writeFile(path, 'ABCDEFGH');
+    return await run(path);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+}
+
+describe('undiciTransport body and adaptation paths', () => {
+  test('TRANSPORT-28/BODY-13: a file body dispatches its declared range THROUGH its own writeTo', async () => {
+    await withPayloadFile(async path => {
+      const writes = {count: 0};
       const transport = undiciTransport();
       const request = Request.newBuilder()
         .method('POST')
         .url(`${origin}/upload`)
-        .body(descriptor)
+        .body(fileDescriptor(path, {start: 2, count: 4}, writes))
         .build();
       received.length = 0;
       await (await transport.send(request)).close();
       await transport.close();
       expect(received[0]).toBe('CDEF');
-    } finally {
-      await rm(dir, {recursive: true, force: true});
-    }
+      // The `writes` count is the whole point of the row. Until audit #67 / #81 this transport
+      // handed `createReadStream(path, {start, end})` to undici and left `writeTo` uncalled, so the
+      // same four bytes reached the wire with BODY-13's `transferred === count` invariant --
+      // the only thing that can see a file truncated after its length was captured -- never run.
+      expect(writes.count).toBe(1);
+    });
   });
 
   test('a zero-count file body dispatches as an empty body, not a stream error', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'undici-empty-file-body-'));
-    try {
-      const path = join(dir, 'payload.bin');
-      await writeFile(path, 'ABCDEFGH');
-      // createReadStream throws ERR_OUT_OF_RANGE the moment `end` falls below `start`, which is what
-      // `start + count - 1` computes for count 0 -- the empty range needs its own branch.
-      const descriptor: FileBodyDescriptor = {
-        kind: 'file',
-        mediaType: 'application/octet-stream',
-        contentLength: 0,
-        replayable: true,
-        path,
-        start: 4,
-        count: 0,
-        writeTo: () => Promise.resolve(),
-      };
+    await withPayloadFile(async path => {
+      // `isMaterializable` admits `contentLength === 0`, and `materializeBody` returns an empty
+      // buffer without opening anything, so the empty range needs no branch of its own. It did when
+      // the file body went to `createReadStream`, which throws ERR_OUT_OF_RANGE the moment `end`
+      // (start + count - 1) falls below `start`.
+      const writes = {count: 0};
       const transport = undiciTransport();
       received.length = 0;
       const response = await transport.send(
         Request.newBuilder()
           .method('POST')
           .url(`${origin}/upload`)
-          .body(descriptor)
+          .body(fileDescriptor(path, {start: 4, count: 0}, writes))
           .build(),
       );
       await response.close();
       await transport.close();
       expect(received[0]).toBe('');
-    } finally {
-      await rm(dir, {recursive: true, force: true});
-    }
+      expect(writes.count).toBe(1);
+    });
   });
 });
 
@@ -576,6 +687,35 @@ describe('undiciTransport failure classification (TRANSPORT-20)', () => {
 });
 
 describe('undiciTransport proxy dispatch (TRANSPORT-30)', () => {
+  test('TRANSPORT-30: a SOCKS proxy is refused at the factory, before any Agent is built', () => {
+    // Both SOCKS values `ProxyType` admits, because core resolves both from the environment
+    // (`socks4`/`socks4a` and `socks:`/`socks5`/`socks5h`, `config/proxy.ts:372-380`) and undici's
+    // `ProxyAgent` carries neither -- it is an HTTP CONNECT tunnel and reads its `uri` as a URL.
+    const {agents, restore} = captureOwnedAgents();
+    try {
+      for (const type of ['socks4', 'socks5'] as const) {
+        let thrown: unknown;
+        try {
+          undiciTransport({
+            proxy: createProxyOptions({type, host: '127.0.0.1', port: 1080}),
+          });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(TypeError);
+        // TRANSPORT-30's "discoverable": the refusal names the type, and it is not the raw
+        // `InvalidArgumentError: Invalid URL protocol: socks5:` undici used to let escape.
+        expect((thrown as Error).message).toContain(type);
+        expect(thrown).not.toBeInstanceOf(IoError);
+      }
+      // The check runs before `new undici.Agent(...)`, so a refused construction leaks nothing --
+      // there is no transport for the caller to have called `close()` on.
+      expect(agents.length).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   test('a per-request Proxy-Authorization is dropped when a proxy is configured', async () => {
     // ProxyAgent.dispatch throws InvalidArgumentError on ANY per-request Proxy-Authorization -- a
     // deliberate undici security fix -- so forwarding one would turn every proxied send into a hard

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/fixtures.ts
+import {createReadStream} from 'node:fs';
 import {
   createServer,
   type IncomingMessage,
   type Server,
   type ServerResponse,
 } from 'node:http';
+import type {FileBodyDescriptor} from '@dexpace/core';
 
 /** A running fixture server, addressable by URL and shut down through {@link TestServer.close}. */
 export interface TestServer {
@@ -166,5 +168,79 @@ export function startFixtureServer(): Promise<TestServer> {
           }),
       });
     });
+  });
+}
+
+/** What {@link fileBodyFixture} needs beyond the path; mirrors `fileBody()`'s own option bag. */
+export interface FileBodyFixtureOptions {
+  /** The byte offset the descriptor declares; defaults to 0. */
+  readonly start?: number;
+  /** The byte count the descriptor declares, captured as `fileBody()` captures it from `stat`. */
+  readonly count: number;
+  /** Incremented on every `writeTo` call, so a row can assert the transport used it. */
+  readonly writes?: {count: number};
+}
+
+/**
+ * A `kind: 'file'` request body over a real path, carrying BODY-13's `transferred === count` check
+ * itself — the shape `@dexpace/body-file`'s `fileBody()` produces, minus the construction-time
+ * validation no row here needs.
+ *
+ * **Deliberately a stand-in, not the real factory.** `@dexpace/transport-conformance` is `private`,
+ * resolves unbuilt, and depends on `@dexpace/core` alone; taking `@dexpace/body-file` would put a
+ * ninth entry in the root `build:deps` chain for one row. A real `fileBody()` crossing a real
+ * transport already has a home — `tests/node-conformance/transport.test.mjs`, which is the only
+ * layer that can host it. What a *transport* is answerable for is narrower, and is exactly what this
+ * exercises: TRANSPORT-28's structural recognition on `kind` alone, and that the declared length is
+ * honoured by calling the descriptor's own `writeTo` rather than by reading `path` behind its back.
+ *
+ * @param path - the file to stream; read fresh on every `writeTo`, as BODY-11 requires.
+ * @param options - the declared range, and an optional write counter.
+ * @returns a frozen descriptor a transport must recognise structurally.
+ */
+export function fileBodyFixture(
+  path: string,
+  options: FileBodyFixtureOptions,
+): FileBodyDescriptor {
+  const start = options.start ?? 0;
+  const {count} = options;
+  return Object.freeze({
+    kind: 'file' as const,
+    mediaType: 'application/octet-stream',
+    contentLength: count,
+    replayable: true,
+    path,
+    start,
+    count,
+    async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
+      if (options.writes !== undefined) options.writes.count += 1;
+      const writer = sink.getWriter();
+      if (count === 0) {
+        writer.releaseLock();
+        return;
+      }
+      const stream = createReadStream(path, {start, end: start + count - 1});
+      let transferred = 0;
+      try {
+        for await (const chunk of stream) {
+          const bytes = chunk as Buffer;
+          await writer.write(new Uint8Array(bytes));
+          transferred += bytes.byteLength;
+        }
+        if (transferred !== count) {
+          // BODY-13's exact sentence, and its exact wording in `@dexpace/body-file`: the error names
+          // transferred-of-total, so a row can assert the numbers rather than only the class.
+          throw new Error(
+            `short write: transferred ${String(transferred)} of ${String(count)} bytes`,
+          );
+        }
+      } catch (error) {
+        await writer.abort(error);
+        throw error;
+      } finally {
+        stream.destroy();
+        writer.releaseLock();
+      }
+    },
   });
 }

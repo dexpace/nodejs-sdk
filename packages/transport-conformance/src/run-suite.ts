@@ -1,21 +1,29 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
-// drift. Exercises: TRANSPORT-1..9, TRANSPORT-14..17, TRANSPORT-20..21, TRANSPORT-23..27,
-// TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
+// drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..29, BODY-13,
+// SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
-// @dexpace/transport-shared, and the rows here cover only what each adapter decides for itself.
-// TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
-// full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
+// @dexpace/transport-shared; the rows here cover what each adapter decides for itself, which since
+// audit #67 / #81 includes TRANSPORT-11/12's per-header degrade, because the two adapters had four
+// different answers for the same model-valid header and only a shared row could say so.
+// TRANSPORT-18's collapse is a Deviation Ledger row, as is TRANSPORT-28's zero-copy SHOULD, whose two
+// MUSTs the file-body rows do assert; TRANSPORT-30's
+// full proxy-challenge flow is transport-undici's challenge-handler.test.ts, and only its
+// unsupported-type refusal is a row here. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
-// undici-transport.test.ts:503).
+// undici-transport.test.ts:614).
+import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {afterAll, beforeAll, describe, expect, test} from 'bun:test';
 import {
   getBuildInfo,
   getGlobalLogger,
   Headers,
+  isIoError,
   Request,
   RequestOptions,
   setGlobalLogger,
@@ -24,10 +32,26 @@ import {
   type Transport,
 } from '@dexpace/core';
 import {
+  fileBodyFixture,
   REPEATED_CHALLENGES,
   startFixtureServer,
   type TestServer,
 } from './fixtures.js';
+
+/**
+ * A proxy configuration the transport under test cannot honour, so TRANSPORT-30's
+ * "discoverable rather than silently misbehaving" clause has something to be asserted against.
+ *
+ * Supplied by the adapter because only the adapter knows which of `ProxyType`'s values its native
+ * client refuses — `@dexpace/core` resolves `socks4`/`socks5` from `ALL_PROXY` (CFG-22) and neither
+ * shipped transport can carry either.
+ */
+export interface UnsupportedProxy {
+  /** The `ProxyOptions.type` the native client cannot honour; the refusal must name it. */
+  readonly type: string;
+  /** Builds a transport configured with that type. Expected to throw rather than return one. */
+  build(): Transport;
+}
 
 /**
  * The clauses `docs/product-spec/17-transport-adapter-conformance-contract.md` scopes to only one
@@ -43,6 +67,12 @@ export interface TransportCapabilities {
   readonly supportsProxy: boolean;
   /** TRANSPORT-11: whether `Connection` is in this transport's outbound drop set. */
   readonly dropsConnectionHeader: boolean;
+  /**
+   * TRANSPORT-30: a proxy type this transport's configuration can express and its native client
+   * cannot honour. Omit it when the transport takes no proxy at all, or honours every type it can
+   * be handed — the row then asserts that omission is the truth rather than skipping.
+   */
+  readonly unsupportedProxy?: UnsupportedProxy;
 }
 
 /** What every row below needs: a transport factory, the live fixture origin, and the capability flags. */
@@ -539,6 +569,200 @@ function registerHeaderRows(ctx: SuiteContext): void {
 }
 
 /**
+ * Headers every model layer in this SDK accepts and at least one shipped native client refuses
+ * outright, paired with the value that provokes the refusal.
+ *
+ * `expect`, `keep-alive` and `upgrade` are `undici`'s three unconditional rejections
+ * (`lib/core/request.js:398,409` in 6.28.0 — `InvalidArgumentError` for the first two,
+ * `NotSupportedError` for `expect`), and Node's global `fetch` is undici-backed, so both adapters
+ * meet them. `X Custom` is the non-token name: `@dexpace/core` admits any printable ASCII byte in
+ * a header name (`http/ascii-validation.ts:29-33`), while both native layers require RFC 9110
+ * `token`.
+ *
+ * TRANSPORT-12 is what makes these one table rather than four transport-specific quirks: whatever
+ * the native client refuses, the transport drops *that header only* and still dispatches.
+ */
+const NATIVE_REJECTED_HEADERS: readonly (readonly [string, string])[] = [
+  ['Expect', '100-continue'],
+  ['Keep-Alive', 'timeout=5'],
+  ['Upgrade', 'websocket'],
+  ['X Custom', 'model-valid, non-token'],
+];
+
+function registerNativeRejectionRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-11/12/13: a header the native client refuses degrades to a logged drop', () => {
+    for (const [name, value] of NATIVE_REJECTED_HEADERS) {
+      test(`${name} is dropped and logged, and the rest of the request still dispatches`, async () => {
+        let echoed: Record<string, string> = {};
+        const dropped = await captureDroppedHeaders(async () => {
+          await withTransport(ctx.makeTransport, async transport => {
+            const request = Request.newBuilder()
+              .url(ctx.url('/echo-headers'))
+              .headers(
+                Headers.newBuilder()
+                  .set(name, value)
+                  .set('X-Pass-Through', 'survives')
+                  .build(),
+              )
+              .build();
+            echoed = await readEchoedHeaders(transport, request);
+          });
+        });
+        // The send resolved at all, which is TRANSPORT-12's "the resulting native exception MUST NOT
+        // escape the send contract"; the two header assertions are its "the bad header is absent,
+        // the normal header present".
+        expect(echoed[name.toLowerCase()]).toBeUndefined();
+        expect(echoed['x-pass-through']).toBe('survives');
+        // TRANSPORT-13: the drop is discoverable by name, never silent.
+        expect(dropped).toContain(name.toLowerCase());
+      });
+    }
+
+    test('a Connection value the native client cannot carry is dropped on both transports', async () => {
+      // `Connection` is the one name whose drop set legitimately differs (TRANSPORT-11's own note,
+      // and `registerDropSetRows` below), so this row asserts the intersection: `upgrade` is neither
+      // `close` nor `keep-alive`, undici rejects it outright (`request.js:400-404`), and the WHATWG
+      // layer forbids the name entirely. Both must drop it, whichever reason applies.
+      //
+      // Asserted through the log rather than the echo for the same reason `registerDropSetRows`
+      // does: both clients set a `Connection` header of their own, so the wire cannot tell a
+      // forwarded caller header from the client's.
+      const dropped = await captureDroppedHeaders(async () => {
+        await withTransport(ctx.makeTransport, async transport => {
+          const request = Request.newBuilder()
+            .url(ctx.url('/echo-headers'))
+            .headers(Headers.newBuilder().set('Connection', 'upgrade').build())
+            .build();
+          const response = await transport.send(request);
+          expect(response.status.code).toBe(200);
+          await response.close();
+        });
+      });
+      expect(dropped).toContain('connection');
+    });
+  });
+}
+
+/**
+ * The declared length of the truncate-after-stat file body, deliberately **below** both shipped
+ * adapters' 1,000,000-byte materialize bound, so this row drives the buffered path.
+ *
+ * The streamed path is asserted in `tests/node-conformance/transport.test.mjs` instead, and that is
+ * not a preference. Bun 1.3.14's `Readable.fromWeb` leaks the abort reason as two or three unhandled
+ * rejections when the web readable behind it is aborted mid-pull, which is exactly what a producer
+ * failure on the streamed path does; `bun:test` then fails whichever row happens to be running.
+ * Isolated to sixteen lines with no SDK code in them, and clean under `node --test` on both
+ * transports (measured 2026-09-05, audit #67 / #81). Raising this constant past 1,000,000 will make
+ * the row red for that reason and no other.
+ */
+const TRUNCATED_FILE_BYTES = 64;
+
+/** How far a truncate-after-stat cuts the file back; small enough that no read can be a full one. */
+const TRUNCATED_TO_BYTES = 10;
+
+/** The intact file-body fixture's size, and the byte range the ranged row asks for inside it. */
+const INTACT_FILE_BYTES = 64;
+const INTACT_RANGE = {start: 10, count: 20} as const;
+
+/** Distinguishable bytes, so a misaligned send fails on content and not merely on length. */
+function fileFixtureBytes(size: number): Uint8Array {
+  const bytes = new Uint8Array(size);
+  for (let index = 0; index < size; index += 1) {
+    bytes[index] = 33 + ((index * 7) % 94);
+  }
+  return bytes;
+}
+
+/** Writes `size` fixture bytes to a fresh temporary file, runs `body`, and removes the directory. */
+async function withFixtureFile<T>(
+  size: number,
+  body: (path: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'dexpace-conformance-file-'));
+  try {
+    const path = join(dir, 'payload.bin');
+    await writeFile(path, fileFixtureBytes(size));
+    return await body(path);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+}
+
+/**
+ * Every message on `error` and its `cause` chain, joined.
+ *
+ * BODY-13's transferred-of-total text surfaces at a different depth per path: the streamed path
+ * rethrows the producer's own failure as the message, while the buffered path wraps it as a cause
+ * under a fixed "request body could not be written". Both satisfy the requirement; asserting on the
+ * chain is what lets one row cover both without pinning either transport's wrapper wording.
+ */
+function messageChain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    parts.push(current.message);
+    current = current.cause;
+  }
+  return parts.join(' <- ');
+}
+
+function registerFileBodyRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-28, BODY-13: a file body is dispatched through its own writeTo', () => {
+    test('an intact ranged file body puts exactly its declared bytes on the wire', async () => {
+      await withFixtureFile(INTACT_FILE_BYTES, async path => {
+        const writes = {count: 0};
+        await withTransport(ctx.makeTransport, async transport => {
+          const response = await transport.send(
+            Request.newBuilder()
+              .method('POST')
+              .url(ctx.url('/echo-body'))
+              .body(fileBodyFixture(path, {...INTACT_RANGE, writes}))
+              .build(),
+          );
+          // TRANSPORT-28's "assert exactly that byte range reaches the wire".
+          expect([...(await response.bytes())]).toEqual([
+            ...fileFixtureBytes(INTACT_FILE_BYTES).slice(
+              INTACT_RANGE.start,
+              INTACT_RANGE.start + INTACT_RANGE.count,
+            ),
+          ]);
+        });
+        // TRANSPORT-17's counterpart for a replayable body: a transport that reads `path` itself
+        // rather than calling `writeTo` would put the same bytes on the wire and leave this at 0.
+        expect(writes.count).toBe(1);
+      });
+    });
+
+    test('a file body truncated after its length was captured fails the send', async () => {
+      await withFixtureFile(TRUNCATED_FILE_BYTES, async path => {
+        // The descriptor is built first, exactly as `fileBody()` captures `count` from `stat`, and
+        // the file shrinks underneath it afterwards. `content-length` is dropped outbound, so the
+        // wire cannot detect this either — BODY-13's check inside `writeTo` is the only thing that
+        // can, and a transport that hands the path to its native client never runs it
+        // (audit #67 / #81, where undici POSTed the ten surviving bytes and resolved 200).
+        const body = fileBodyFixture(path, {count: TRUNCATED_FILE_BYTES});
+        await truncate(path, TRUNCATED_TO_BYTES);
+        const error = await withTransport(ctx.makeTransport, transport =>
+          rejection(
+            transport.send(
+              Request.newBuilder()
+                .method('POST')
+                .url(ctx.isolatedUrl('/echo-body'))
+                .body(body)
+                .build(),
+            ),
+          ),
+        );
+        expect(error).toMatchObject({name: 'TransportFailureError'});
+        expect(messageChain(error)).toContain(
+          `transferred ${String(TRUNCATED_TO_BYTES)} of ${String(TRUNCATED_FILE_BYTES)} bytes`,
+        );
+      });
+    });
+  });
+}
+
+/**
  * The fixture's challenge list, recovered from however this transport chose to split it.
  *
  * Scoped to `/repeated-challenge` on purpose, and deliberately NOT a general RFC 7235 parser: the two
@@ -599,6 +823,37 @@ function registerDropSetRows(ctx: SuiteContext): void {
       expect(dropped.includes('connection')).toBe(
         ctx.capabilities.dropsConnectionHeader,
       );
+    });
+  });
+}
+
+function registerProxyRefusalRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-30: a proxy the native client cannot honour is refused, not attempted', () => {
+    test('an unsupported proxy type fails at construction with a typed, naming error', () => {
+      const unsupported = ctx.capabilities.unsupportedProxy;
+      if (unsupported === undefined) {
+        // The row still runs here rather than being skipped, and asserts the only thing left to
+        // assert: that there is genuinely no proxy surface to mis-set. `@dexpace/transport-fetch`
+        // is this leg — it ships no `proxy` option at all, deliberately (design doc §6), so
+        // TRANSPORT-30 has no subject on it and a silent skip would look the same as a gap.
+        expect(ctx.capabilities.supportsProxy).toBe(false);
+        return;
+      }
+      let thrown: unknown;
+      try {
+        // A transport that returns instead of throwing has deferred the failure to the first send,
+        // where it arrives as whatever the native client raises — the shape TRANSPORT-30 rules out.
+        void unsupported.build();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(TypeError);
+      // Not an `IoError`: `retry/classify.ts` is an allow-list, so a misconfiguration no retry can
+      // fix is non-retryable for free (RETRY-2). An undici `InvalidArgumentError` escaping raw
+      // would fail this too, being neither a `TypeError` nor documented.
+      expect(isIoError(thrown)).toBe(false);
+      // "Discoverable": the message names the type that was refused, not merely that something was.
+      expect((thrown as Error).message).toContain(unsupported.type);
     });
   });
 }
@@ -687,8 +942,11 @@ export function runTransportConformanceSuite(
     registerCancellationRows(ctx);
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);
+    registerNativeRejectionRows(ctx);
+    registerFileBodyRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
+    registerProxyRefusalRows(ctx);
     registerScopedRows(ctx);
   });
 }

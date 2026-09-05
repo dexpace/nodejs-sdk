@@ -38,15 +38,29 @@ import {
 const REDIRECT_MODE = 'manual' as const;
 
 /**
- * TRANSPORT-11's outbound drop set for this transport. `connection` is in it because WHATWG `fetch`
- * treats it as a forbidden request header and would strip it silently — dropping it here makes the
- * removal observable through the drop log instead.
+ * TRANSPORT-11's outbound drop set for this transport.
+ *
+ * `connection` is in it because WHATWG `fetch` treats it as a forbidden request header and would
+ * strip it silently — dropping it here makes the removal observable through the drop log instead.
+ *
+ * `expect`, `keep-alive` and `upgrade` are in it because the *implementations* do not honour the
+ * WHATWG forbidden-header list at all. Node's global `fetch` is undici-backed and undici's `Headers`
+ * deliberately does not implement forbidden names in a non-browser environment, so the three reach
+ * `lib/core/request.js:398,409` and reject the dispatch; `fetch()` then rejects with a bare
+ * `TypeError: fetch failed`, which this transport can only classify as the **retryable**
+ * `TransportFailureError` — a permanent misconfiguration that spends the caller's whole retry budget
+ * re-proving itself. Bun 1.3.14 diverges again: it forwards `expect` and `keep-alive` to the wire
+ * and hangs indefinitely on `upgrade`. Measured on both, 2026-09-05, audit #67 / #81. Neither
+ * outcome is TRANSPORT-12's, and a name in the drop set is the one behaviour that is.
  */
 const FETCH_FORBIDDEN_HEADERS = [
   'content-length',
   'host',
   'transfer-encoding',
   'connection',
+  'expect',
+  'keep-alive',
+  'upgrade',
 ] as const;
 
 /**
