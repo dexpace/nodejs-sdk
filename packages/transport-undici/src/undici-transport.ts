@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-undici/src/undici-transport.ts
-import {createReadStream} from 'node:fs';
 import {createRequire} from 'node:module';
 import {Readable} from 'node:stream';
 import type {ReadableStream as NodeReadableStream} from 'node:stream/web';
@@ -13,7 +12,6 @@ import {
   Status,
   TransportFailureError,
   type Body,
-  type FileBodyDescriptor,
   type ProxyOptions,
   type Request,
   type RequestOptions,
@@ -309,33 +307,28 @@ interface PreparedBody {
 }
 
 /**
- * TRANSPORT-28's recognition contract, in one named place: a plain string-literal check, never a
- * cross-package `instanceof` against `@dexpace/body-file` (which this package does not depend on).
- * `Body.kind` is a union on one interface rather than a discriminated union of interfaces, so the
- * narrowing has to be spelled out as a predicate.
+ * Prepares one request body for dispatch. Identical in shape to the fetch twin's, and deliberately
+ * so: there is **no** `kind === 'file'` branch here.
+ *
+ * There was one until 2026-09-05. It handed `createReadStream(path, {start, end})` to undici, which
+ * is a genuinely shorter path to the wire — one fewer userspace copy — and it bypassed the
+ * descriptor's own `writeTo`, so `@dexpace/body-file`'s `transferred === count` invariant never ran
+ * (BODY-13). `content-length` is dropped outbound, so undici framed the body chunked and the wire
+ * could not detect the short write either: a file truncated between `stat` and `send` POSTed its
+ * remaining bytes and resolved 200, where the fetch transport raised `TransportFailureError`
+ * (audit #67 / #81). A file body is now written through `writeTo` like any other, which is what
+ * makes BODY-13 hold on both transports and what the shared conformance row asserts.
+ *
+ * TRANSPORT-28's SHOULD is not thereby abandoned so much as re-described: no user-space path in
+ * either client reaches `sendfile(2)`, which `docs/deviations.md` item 13 has recorded since Phase
+ * 8a, and the clause's MUST — a file body is replayable, and exactly its declared byte range reaches
+ * the wire — is honoured by the descriptor itself, on both transports, by the same code.
+ *
+ * The zero-count case needs no branch either: `isMaterializable` admits `contentLength === 0`, and
+ * `materializeBody` returns an empty buffer without ever opening a read stream.
  */
-function isFileBody(body: Body): body is FileBodyDescriptor {
-  return body.kind === 'file';
-}
-
 async function prepareBody(body: Body | undefined): Promise<PreparedBody> {
   if (body === undefined) return {init: null, pump: undefined};
-  if (isFileBody(body)) {
-    // An empty range is not a degenerate read stream: `createReadStream` throws ERR_OUT_OF_RANGE the
-    // moment `end` (start + count - 1) falls below `start`, so a zero-count file body has to become
-    // an explicit empty body rather than a stream nobody can open.
-    if (body.count === 0) return {init: new Uint8Array(0), pump: undefined};
-    // TRANSPORT-28: dispatch straight off the file, honoring start/count, rather than routing the
-    // bytes through a userspace TransformStream first. The closest available approximation of the
-    // reference's zero-copy path -- see the Deviation Ledger for why a literal one does not exist.
-    return {
-      init: createReadStream(body.path, {
-        start: body.start,
-        end: body.start + body.count - 1,
-      }),
-      pump: undefined,
-    };
-  }
   if (isMaterializable(body, MAX_MATERIALIZED_BODY_BYTES)) {
     try {
       return {init: await materializeBody(body), pump: undefined};

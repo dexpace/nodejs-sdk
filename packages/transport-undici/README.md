@@ -79,11 +79,17 @@ silently misbehaving (`TRANSPORT-30`):
 
 ## Behavior worth knowing
 
-- File bodies (`body.kind === 'file'`, e.g. `@dexpace/body-file`'s `fileBody()`) dispatch straight
-  off the file honoring `start`/`count`, one fewer userspace copy than the `fetch` transport
-  (`TRANSPORT-28`; a literal kernel zero-copy path does not exist on Node — see the Deviation
-  Ledger). Recognition is structural, on `kind` alone: this package does not depend on
-  `@dexpace/body-file`.
+- File bodies (`body.kind === 'file'`, e.g. `@dexpace/body-file`'s `fileBody()`) are written
+  through the descriptor's own `writeTo`, exactly as in the `fetch` transport — buffered below
+  1 MB, streamed above it. Until 2026-09-05 this transport instead handed
+  `createReadStream(path, {start, end})` to undici: one fewer userspace copy, and no `writeTo`, so
+  `BODY-13`'s `transferred === count` check never ran and a file truncated between `stat` and
+  `send` uploaded its remaining bytes and returned 200. `content-length` is dropped outbound, so
+  the framing could not catch it either. `TRANSPORT-28`'s zero-copy clause is a SHOULD that no
+  user-space path in either client can honour anyway (Deviation Ledger item 13); its MUSTs — a file
+  body is replayable, and exactly its declared byte range reaches the wire — are honoured by the
+  descriptor. Recognition, where it is still needed, stays structural: this package does not depend
+  on `@dexpace/body-file`.
 - Redirects are pinned off (`maxRedirections: 0`) even behind a bring-your-own dispatcher that may
   carry a redirect interceptor. The pipeline is the single redirect authority.
 - `Connection` is **not** dropped outbound — §17's own note is that an undici-class transport

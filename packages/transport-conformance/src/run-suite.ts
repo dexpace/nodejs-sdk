@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
-// drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..27,
-// TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
+// drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..29, BODY-13,
+// SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
 // @dexpace/transport-shared; the rows here cover what each adapter decides for itself, which since
 // audit #67 / #81 includes TRANSPORT-11/12's per-header degrade, because the two adapters had four
 // different answers for the same model-valid header and only a shared row could say so.
-// TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
+// TRANSPORT-18's collapse is a Deviation Ledger row, as is TRANSPORT-28's zero-copy SHOULD, whose two
+// MUSTs the file-body rows do assert; TRANSPORT-30's
 // full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
 // undici-transport.test.ts:503).
+import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {afterAll, beforeAll, describe, expect, test} from 'bun:test';
 import {
   getBuildInfo,
@@ -26,6 +30,7 @@ import {
   type Transport,
 } from '@dexpace/core';
 import {
+  fileBodyFixture,
   REPEATED_CHALLENGES,
   startFixtureServer,
   type TestServer,
@@ -615,6 +620,117 @@ function registerNativeRejectionRows(ctx: SuiteContext): void {
 }
 
 /**
+ * The declared length of the truncate-after-stat file body, deliberately **below** both shipped
+ * adapters' 1,000,000-byte materialize bound, so this row drives the buffered path.
+ *
+ * The streamed path is asserted in `tests/node-conformance/transport.test.mjs` instead, and that is
+ * not a preference. Bun 1.3.14's `Readable.fromWeb` leaks the abort reason as two or three unhandled
+ * rejections when the web readable behind it is aborted mid-pull, which is exactly what a producer
+ * failure on the streamed path does; `bun:test` then fails whichever row happens to be running.
+ * Isolated to sixteen lines with no SDK code in them, and clean under `node --test` on both
+ * transports (measured 2026-09-05, audit #67 / #81). Raising this constant past 1,000,000 will make
+ * the row red for that reason and no other.
+ */
+const TRUNCATED_FILE_BYTES = 64;
+
+/** How far a truncate-after-stat cuts the file back; small enough that no read can be a full one. */
+const TRUNCATED_TO_BYTES = 10;
+
+/** Distinguishable bytes, so a misaligned send fails on content and not merely on length. */
+function fileFixtureBytes(size: number): Uint8Array {
+  const bytes = new Uint8Array(size);
+  for (let index = 0; index < size; index += 1) {
+    bytes[index] = 33 + ((index * 7) % 94);
+  }
+  return bytes;
+}
+
+/** Writes `size` fixture bytes to a fresh temporary file, runs `body`, and removes the directory. */
+async function withFixtureFile<T>(
+  size: number,
+  body: (path: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'dexpace-conformance-file-'));
+  try {
+    const path = join(dir, 'payload.bin');
+    await writeFile(path, fileFixtureBytes(size));
+    return await body(path);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+}
+
+/**
+ * Every message on `error` and its `cause` chain, joined.
+ *
+ * BODY-13's transferred-of-total text surfaces at a different depth per path: the streamed path
+ * rethrows the producer's own failure as the message, while the buffered path wraps it as a cause
+ * under a fixed "request body could not be written". Both satisfy the requirement; asserting on the
+ * chain is what lets one row cover both without pinning either transport's wrapper wording.
+ */
+function messageChain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    parts.push(current.message);
+    current = current.cause;
+  }
+  return parts.join(' <- ');
+}
+
+function registerFileBodyRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-28, BODY-13: a file body is dispatched through its own writeTo', () => {
+    test('an intact ranged file body puts exactly its declared bytes on the wire', async () => {
+      await withFixtureFile(64, async path => {
+        const writes = {count: 0};
+        await withTransport(ctx.makeTransport, async transport => {
+          const response = await transport.send(
+            Request.newBuilder()
+              .method('POST')
+              .url(ctx.url('/echo-body'))
+              .body(fileBodyFixture(path, {start: 10, count: 20, writes}))
+              .build(),
+          );
+          expect([...(await response.bytes())]).toEqual([
+            ...fileFixtureBytes(64).slice(10, 30),
+          ]);
+        });
+        // TRANSPORT-17's counterpart for a replayable body: a transport that reads `path` itself
+        // rather than calling `writeTo` would put the same bytes on the wire and leave this at 0.
+        expect(writes.count).toBe(1);
+      });
+    });
+
+    test('a file body truncated after its length was captured fails the send', async () => {
+      await withFixtureFile(TRUNCATED_FILE_BYTES, async path => {
+        // The descriptor is built first, exactly as `fileBody()` captures `count` from `stat`, and
+        // the file shrinks underneath it afterwards. `content-length` is dropped outbound, so the
+        // wire cannot detect this either — BODY-13's check inside `writeTo` is the only thing that
+        // can, and a transport that hands the path to its native client never runs it
+        // (audit #67 / #81, where undici POSTed the ten surviving bytes and resolved 200).
+        const body = fileBodyFixture(path, {count: TRUNCATED_FILE_BYTES});
+        await truncate(path, TRUNCATED_TO_BYTES);
+        const error = await withTransport(ctx.makeTransport, transport =>
+          rejection(
+            transport.send(
+              Request.newBuilder()
+                .method('POST')
+                .url(ctx.isolatedUrl('/echo-body'))
+                .body(body)
+                .build(),
+            ),
+          ),
+        );
+        expect(error).toMatchObject({name: 'TransportFailureError'});
+        expect(messageChain(error)).toContain(
+          `transferred ${String(TRUNCATED_TO_BYTES)} of ${String(TRUNCATED_FILE_BYTES)} bytes`,
+        );
+      });
+    });
+  });
+}
+
+/**
  * The fixture's challenge list, recovered from however this transport chose to split it.
  *
  * Scoped to `/repeated-challenge` on purpose, and deliberately NOT a general RFC 7235 parser: the two
@@ -764,6 +880,7 @@ export function runTransportConformanceSuite(
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);
     registerNativeRejectionRows(ctx);
+    registerFileBodyRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerScopedRows(ctx);
