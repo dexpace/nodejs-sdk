@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
-// drift. Exercises: TRANSPORT-1..9, TRANSPORT-15..17, TRANSPORT-20..21, TRANSPORT-23..27,
-// TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15. TRANSPORT-10..14 are asserted at their source in
-// @dexpace/transport-shared; TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
+// drift. Exercises: TRANSPORT-1..9, TRANSPORT-14..17, TRANSPORT-20..21, TRANSPORT-23..27,
+// TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
+// answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
+// outbound header pass both adapters call -- is asserted at its source in
+// @dexpace/transport-shared, and the rows here cover only what each adapter decides for itself.
+// TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
 // full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
@@ -20,7 +23,11 @@ import {
   type Logger,
   type Transport,
 } from '@dexpace/core';
-import {startFixtureServer, type TestServer} from './fixtures.js';
+import {
+  REPEATED_CHALLENGES,
+  startFixtureServer,
+  type TestServer,
+} from './fixtures.js';
 
 /**
  * The clauses `docs/product-spec/17-transport-adapter-conformance-contract.md` scopes to only one
@@ -531,6 +538,45 @@ function registerHeaderRows(ctx: SuiteContext): void {
   });
 }
 
+/**
+ * The fixture's challenge list, recovered from however this transport chose to split it.
+ *
+ * Scoped to `/repeated-challenge` on purpose, and deliberately NOT a general RFC 7235 parser: the two
+ * fixture challenges are `Digest`-schemed and carry no comma inside a quoted value, so a split at each
+ * `, Digest ` boundary recovers exactly what the server wrote. `@dexpace/core`'s real parser is
+ * `@internal` and unreachable from here — the core-side rows for it live in
+ * `packages/core/src/auth/auth-step.test.ts`.
+ */
+function challengeList(values: readonly string[]): readonly string[] {
+  return values.join(', ').split(/,\s+(?=Digest )/u);
+}
+
+function registerInboundHeaderRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-14, AUTH-12/AUTH-25: a repeated inbound header keeps every value', () => {
+    test('two WWW-Authenticate lines reach the pipeline as the same challenge list', async () => {
+      // The two transports split this differently and both are right: WHATWG `Headers` comma-joins
+      // every name but `Set-Cookie`, so `@dexpace/transport-fetch` yields ONE `getAll` entry, while
+      // undici arrays any repeated header and `@dexpace/transport-undici` yields TWO. RFC 9110 5.3
+      // makes the two wire shapes equivalent, so the entry count is not what either adapter is
+      // answerable for — the challenge list after the split is, and it must be identical.
+      //
+      // What this row guards is the loss: before audit #67 / #74 the auth step read
+      // `headers.get(...)`, saw only the first line, and left a 401 offering an answerable SHA-256
+      // challenge unanswered through undici while the identical offer authenticated through fetch.
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/repeated-challenge')).build(),
+        );
+        expect(response.status.code).toBe(401);
+        expect(
+          challengeList(response.headers.getAll('WWW-Authenticate')),
+        ).toEqual([...REPEATED_CHALLENGES]);
+        await response.close();
+      });
+    });
+  });
+}
+
 function registerDropSetRows(ctx: SuiteContext): void {
   describe('TRANSPORT-11/13: the transport-specific drop set', () => {
     test('the Connection header follows this transport’s documented drop set', async () => {
@@ -641,6 +687,7 @@ export function runTransportConformanceSuite(
     registerCancellationRows(ctx);
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);
+    registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerScopedRows(ctx);
   });

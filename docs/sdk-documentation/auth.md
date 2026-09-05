@@ -161,6 +161,23 @@ when the deferral register was dissolved on 2026-09-04).
 **Basic and Digest never stamp preemptively.** They react to a challenge. That is an interpretation of
 `§11` rather than a stated requirement, and it is ledgered as one.
 
+**Every challenge the response offered is considered, not just the first.** A server may send
+`WWW-Authenticate` (or `Proxy-Authenticate`) once with several comma-separated challenges, or once per
+challenge — RFC 9110 §5.3 permits both, and RFC 7616 §3.3 recommends the repeated form for Digest
+algorithm discovery. Which of the two shapes reaches the step is partly the transport's accident:
+`@dexpace/transport-fetch` comma-joins repeated values because WHATWG `Headers` does,
+`@dexpace/transport-undici` keeps them apart. The step reads *every* value and parses each on its own,
+so the offer is the same list either way, and `@dexpace/transport-conformance` carries a row asserting
+that. A challenge the SDK cannot answer — an unsupported algorithm, an `auth-int`-only `qop`, a realm
+this client cannot echo back, an empty `realm` or `nonce` — is declined and the next one is tried; a
+`401` offering nothing answerable surfaces unchanged and unclosed.
+
+**Digest `-sess` sends `cnonce` whether or not `qop` was negotiated.** `MD5-sess` and `SHA-256-sess`
+fold the client nonce into HA1 (RFC 7616 §3.4.2), so a server handed a `-sess` response without one
+cannot verify it. `nc` and `qop` stay conditional on a negotiated `qop`. `AUTH-22`'s literal wording
+says all three are conditional; the departure is a row in
+[`deviations.md`](../deviations.md).
+
 ## Redirects and credentials
 
 Credentials are attached at an origin and must not follow a request to a different one. The redirect

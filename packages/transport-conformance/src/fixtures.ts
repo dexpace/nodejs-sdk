@@ -21,6 +21,18 @@ const SLOW_RESPONSE_MS = 5_000;
 const DRIP_INTERVAL_MS = 50;
 const DRIP_CHUNKS = 20;
 
+/**
+ * `/repeated-challenge`'s two `WWW-Authenticate` lines, in wire order. Exported so the suite asserts
+ * against what the server actually sent rather than against a second copy that can drift from it.
+ *
+ * The first algorithm is deliberately one no SDK handler supports, so a transport that keeps only the
+ * first value produces a challenge nothing can answer — the shape audit #67 / #74 found.
+ */
+export const REPEATED_CHALLENGES: readonly string[] = [
+  'Digest realm="conformance", nonce="n1", algorithm=SHA-512-256',
+  'Digest realm="conformance", nonce="n1", algorithm=SHA-256, qop="auth"',
+];
+
 function route(
   pathname: string,
   req: IncomingMessage,
@@ -100,6 +112,21 @@ function route(
         res.writeHead(200);
         res.end('done');
       }, SLOW_RESPONSE_MS).unref();
+      return;
+    case '/repeated-challenge':
+      // AUTH-12/AUTH-25: the same challenge header sent TWICE, which RFC 9110 5.3 permits for any
+      // list-valued field and RFC 7616 3.3 recommends for Digest algorithm discovery -- one challenge
+      // per algorithm, strongest first. The two transports legitimately surface it differently:
+      // WHATWG `Headers` comma-joins every name but `Set-Cookie`, so `@dexpace/transport-fetch`
+      // delivers one entry, while undici arrays any repeated header and `@dexpace/transport-undici`
+      // keeps two. Neither may LOSE one, which is what the row asserts.
+      //
+      // An array value in `writeHead`, not two `setHeader` calls: `setHeader` on the same name
+      // replaces, which would make the fixture single-valued and the row vacuous. Spread into a
+      // MUTABLE copy -- `OutgoingHttpHeader` is `string | string[]`, so a `readonly string[]` does
+      // not satisfy it, and handing the exported constant itself to `node:http` would alias it.
+      res.writeHead(401, {'www-authenticate': [...REPEATED_CHALLENGES]});
+      res.end();
       return;
     case '/redirect':
       res.writeHead(302, {location: '/echo-headers'});

@@ -5,11 +5,14 @@
 // (the client nonce is drawn from a CSPRNG with >= 128 bits of entropy, never a non-cryptographic RNG),
 // AUTH-15 (exactly {MD5, MD5-sess, SHA-256, SHA-256-sess}, qop=auth or absent, declines
 // auth-int and unsupported algorithms), AUTH-16 (satisfiability: scheme/realm/nonce/qop/algorithm,
-// and configured-preference order over wire order), AUTH-17 (HA1/HA2/response per RFC 7616/2069,
+// and configured-preference order over wire order -- realm and nonce must carry a VALUE, so a
+// truncated `nonce=` is declined rather than echoed back as `nonce=""`), AUTH-17 (HA1/HA2/response per RFC 7616/2069,
 // verified against independently-computed vectors), AUTH-18/AUTH-19 (nonce count: starts at 1,
 // increments only on nonce reuse, 8 lower-case hex digits, bounded and drained to the cap),
 // AUTH-20 (client nonce from crypto.getRandomValues, >=128 bits), AUTH-21 (UTF-8 vs ISO-8859-1 by
-// charset), AUTH-22 (quoting, and cnonce/nc/qop emitted only when qop negotiated), AUTH-25
+// charset), AUTH-22 (quoting, and nc/qop emitted only when qop negotiated -- with cnonce emitted for
+// every -sess algorithm whatever qop says, a recorded departure from AUTH-22's letter: RFC 7616 3.4.2
+// folds cnonce into a -sess HA1, so a server cannot verify a -sess response that omits it), AUTH-25
 // (Authorization vs Proxy-Authorization is the CALLER's job -- stamp() returns only the value).
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
@@ -89,6 +92,20 @@ describe('computeDigestResponse (verified against RFC 2617/7616 vectors)', () =>
         hasQopAuth: true,
       }),
     ).toBe('8e3825c57e897f5a0dec6c2d4e5059d0');
+  });
+
+  test('MD5-sess, no qop -- cnonce still folds into HA1 (RFC 7616 3.4.2)', async () => {
+    // The vector the `-sess`-without-`qop` fix is pinned on. HA1 is
+    // H(H(user:realm:pass):nonce:cnonce) for every `-sess` algorithm, whatever `qop` the server
+    // offered, and the response is then RFC 2069's H(HA1:nonce:HA2) because no qop was negotiated.
+    // Recomputed independently from the same RFC 2617 3.5 inputs the vectors above use.
+    expect(
+      await computeDigestResponse({
+        ...BASE,
+        algorithm: 'MD5-sess',
+        hasQopAuth: false,
+      }),
+    ).toBe('4726bc10c33fa6cb357eb27807b1cce8');
   });
 
   test('SHA-256, qop=auth', async () => {
@@ -239,6 +256,33 @@ describe('digestHandler: credential validation (AUTH-9/AUTH-22)', () => {
     expect(
       handler.canHandle(digestChallenge({realm: REALM, nonce: 'nö'})),
     ).toBe(false);
+  });
+});
+
+describe('digestHandler: a realm or nonce with no value (AUTH-16)', () => {
+  test('canHandle declines an EMPTY realm or nonce, not only an absent one (AUTH-16)', () => {
+    // A truncated `WWW-Authenticate: Digest realm="r", nonce=` parses to `nonce: ''` -- AUTH-12 stores
+    // values verbatim after unquoting and AUTH-13 keeps what it parsed before the malformed tail, both
+    // correctly. The `=== undefined` test downstream then read that as present, and the client sent
+    // `nonce=""` back: a response computed over an empty nonce, which no server can have issued
+    // (audit #67 / #74). AUTH-16's "carries realm and nonce" is read as carrying a VALUE.
+    const handler = digestHandler('u', 'p');
+    expect(handler.canHandle(digestChallenge({realm: REALM, nonce: ''}))).toBe(
+      false,
+    );
+    expect(handler.canHandle(digestChallenge({realm: '', nonce: NONCE}))).toBe(
+      false,
+    );
+  });
+
+  test('rank is worst-possible for an empty realm or nonce, so a sibling wins', () => {
+    // The declining half is only useful if the composer can still get past it: `rank` and `canHandle`
+    // must agree, or a challenge that cannot be stamped would still sort first (AUTH-25's "return no
+    // header when it cannot satisfy any" applies per challenge, not per response).
+    const handler = digestHandler('u', 'p');
+    expect(handler.rank?.(digestChallenge({realm: REALM, nonce: ''}))).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
   });
 });
 
@@ -421,9 +465,55 @@ describe('digestHandler opaque and qop emission (AUTH-22)', () => {
   });
 });
 
-describe('digestHandler nonce-count sequencing (AUTH-18)', () => {
-  test('stamp() omits cnonce/nc/qop when the challenge negotiated no qop (AUTH-22)', async () => {
+describe('digestHandler -sess without qop (AUTH-17/AUTH-22)', () => {
+  test('stamp() emits cnonce -- and only cnonce -- for a -sess algorithm with no qop', async () => {
+    // A `-sess` HA1 is H(H(u:r:p):nonce:cnonce). Hashing a fresh random cnonce and then leaving it
+    // off the wire made every such response unverifiable by construction, and AUTH-30 bounds the
+    // replay to one 401, so the request simply failed (audit #67 / #74). RFC 7616 3.4: "cnonce: This
+    // parameter MUST be used by all implementations". `nc` and `qop` stay conditional on a negotiated
+    // qop -- a `deviations.md` row records the departure from AUTH-22's letter.
     const handler = digestHandler('u', 'p');
+    const value = await handler.stamp(
+      digestChallenge({realm: REALM, nonce: NONCE, algorithm: 'MD5-sess'}),
+      REQUEST_CONTEXT,
+    );
+    expect(value).toContain('cnonce="');
+    expect(value).not.toContain('qop=');
+    expect(value).not.toContain('nc=');
+  });
+
+  test('the emitted cnonce is the one the response was computed with (-sess, no qop)', async () => {
+    // The row that makes the header VERIFIABLE rather than merely populated: a cnonce emitted from a
+    // second draw would satisfy the assertion above and still be worthless to the server. Recomputing
+    // HA1 from the header's own cnonce has to reproduce the header's own response.
+    const handler = digestHandler('Mufasa', 'Circle Of Life');
+    const value = await handler.stamp(
+      digestChallenge({realm: REALM, nonce: NONCE, algorithm: 'MD5-sess'}),
+      REQUEST_CONTEXT,
+    );
+    const cnonce = /cnonce="(?<value>[0-9a-f]+)"/u.exec(value)?.groups?.value;
+    const response = /response="(?<value>[0-9a-f]+)"/u.exec(value)?.groups
+      ?.value;
+    expect(cnonce).toBeDefined();
+    expect(response).toBe(
+      await computeDigestResponse({
+        ...BASE,
+        isUtf8: false, // no charset on the challenge -- AUTH-21's ISO-8859-1 branch
+        algorithm: 'MD5-sess',
+        hasQopAuth: false,
+        cnonce: cnonce ?? '',
+        nc: '',
+      }),
+    );
+  });
+});
+
+describe('digestHandler nonce-count sequencing (AUTH-18)', () => {
+  test('stamp() omits cnonce/nc/qop for a NON-sess algorithm with no qop (AUTH-22)', async () => {
+    const handler = digestHandler('u', 'p');
+    // No `algorithm` parameter, so AUTH-16's default applies: plain MD5, whose HA1 does not involve
+    // the client nonce at all. AUTH-22's "emit cnonce/nc/qop only when qop is negotiated" is exactly
+    // right here, and this is the branch it was written for.
     const challenge = digestChallenge({realm: REALM, nonce: NONCE});
     const value = await handler.stamp(challenge, REQUEST_CONTEXT);
     expect(value).not.toContain('qop=');
