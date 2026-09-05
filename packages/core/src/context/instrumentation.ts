@@ -10,9 +10,9 @@ import {NOOP_SPAN} from '../observability/span.js';
  * `activeSpan` and `tracerFactory` are `unknown` rather than a `Span`/`Tracer`. The original reason —
  * "nothing in the package consumes either yet, pending Phase 7a" — expired when Phase 7a landed
  * (`bd37a08`) and shipped `Span` and `Tracer` in `observability/tracing.ts`. That phase did not narrow
- * these two: `tracerFactory` is consumed, by `pipeline/runtime.ts:52` and
- * `observability/logging-step.ts:263`, both of which reach a `Tracer` through a cast;
- * `createInstrumentationBundle` fills `activeSpan` (`observability/tracing.ts:222`), and nothing in
+ * these two: `tracerFactory` is consumed, by `pipeline/runtime.ts:60-65` and
+ * `observability/logging-step.ts:305-312`, both of which reach a `Tracer` through a cast;
+ * `createInstrumentationBundle` fills `activeSpan` (`observability/tracing.ts:191`), and nothing in
  * this package reads it back.
  *
  * They stay `unknown` because narrowing a published member is a breaking change rather than a
@@ -46,10 +46,23 @@ export interface InstrumentationBundle {
   /**
    * Returns the tracer to open `operationName`'s span from — a **tracer**, not a started span. Every
    * consumer in this package narrows the result and calls `startSpan()` on it itself
-   * (`packages/core/src/pipeline/runtime.ts:52-57`, `observability/logging-step.ts:263-269`), and
+   * (`packages/core/src/pipeline/runtime.ts:60-65`, `observability/logging-step.ts:305-312`), and
    * `createInstrumentationBundle` supplies a `(operationName: string) => Tracer`
-   * (`observability/tracing.ts:212,223`). A no-op returning `undefined` when tracing is disabled;
+   * (`observability/tracing.ts:180,191`). A no-op returning `undefined` when tracing is disabled;
    * both consumers substitute `NOOP_TRACER` for that `undefined`.
+   *
+   * **It is asked twice per call, for two different scopes.** `Runtime.send()` asks for
+   * `'http.client.operation'`'s tracer once per call and opens `OBS-29`'s one-per-operation span from
+   * it, outside every pillar, so a retry attempt and a redirect hop stay inside it. The LOGGING pillar
+   * step asks again per transmission, under `CTX-16`'s operation name when the pipeline was built with
+   * one and `'http.client.request'` otherwise, and its spans are children of the first. Returning one
+   * shared tracer for both is fine; `OBS-29`'s 1:1 clause is about the operation *span*, which
+   * `send()` opens exactly once whatever this returns.
+   *
+   * A consumer reaches this by building a bundle with `createInstrumentationBundle(tracerFactory)` and
+   * passing it as `PipelineOptions.instrumentation` — to `new PipelineBuilder(transport, options)` or
+   * to `standardResilience(transport, options)`. Before 2026-09-05 there was no public route: every
+   * pipeline a consumer could build carried the no-op bundle (audit #67 / #80).
    *
    * PROVISIONAL: the return type is `unknown`, and narrowing it is a version-bump decision — see this
    * interface's own note for why Phase 7a landing did not settle it.

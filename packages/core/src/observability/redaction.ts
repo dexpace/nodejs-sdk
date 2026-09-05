@@ -52,6 +52,16 @@ function hasHashDelimiter(input: URL | string): boolean {
 /**
  * Redacts sensitive components from a URL according to spec rules (OBS-11..15).
  *
+ * **The result is a re-rendered URL, not the caller's string with holes in it.** Every input goes
+ * through WHATWG `URL`, and the output is assembled from its parsed components, so the normalisations
+ * parsing performs come with it: the host is lower-cased, a default port for the scheme
+ * (`https://h:443/`) is dropped, a missing path becomes `/`, and percent-encoding is canonicalised.
+ * A log line therefore need not match the request line byte for byte. That is inherent to parsing and
+ * is left as is deliberately (audit #67 / #80): re-rendering the original authority by hand would mean
+ * a second URL renderer in this package, maintained against WHATWG, for no gain in what OBS-11..15
+ * actually asks for — that userinfo, non-allow-listed query values and fragment values do not reach a
+ * log. Compare identity elsewhere; this is for humans and log pipelines.
+ *
  * @param input - the URL or string to redact.
  * @param queryAllowList - set of allowed query parameter names (default: \{api-version\}).
  * @returns the redacted URL string, or '[malformed url]' if parsing fails.
