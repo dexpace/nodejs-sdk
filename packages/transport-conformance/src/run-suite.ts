@@ -2,6 +2,7 @@
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
 // drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..29, BODY-13,
+// RETRY-2 (a permanent misconfiguration is outside the retryable IoError tree),
 // SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
@@ -345,6 +346,41 @@ function registerProducerRows(ctx: SuiteContext): void {
         await response.close();
         // Outlives the producer, so the rejection has actually happened by the time the row ends.
         await new Promise(resolve => setTimeout(resolve, POST_DELIVERY_MS * 3));
+      });
+    });
+  });
+}
+
+/**
+ * A scheme every runtime under test refuses and `@dexpace/core` accepts.
+ *
+ * `Request` validates a URL by handing it to WHATWG `URL`, which parses `ftp:` perfectly well and
+ * gives it a real origin — so an `ftp://` request reaches the native client, which refuses it.
+ * `foo://` would be refused too, but its `origin` is the string `"null"`, which changes what undici
+ * is even asked; `ftp:` keeps the two adapters answering the same question.
+ */
+const UNSUPPORTED_SCHEME_URL = 'ftp://example.com/anything';
+
+function registerPermanentFailureRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-20, RETRY-2: a permanent misconfiguration is not a retryable failure', () => {
+    test('an unsupported URL scheme fails outside the IoError tree', async () => {
+      // The two adapters answered this oppositely until audit #67 / #82. undici's dispatcher
+      // rejects `ftp://` with `UND_ERR_INVALID_ARG`, which `transport-undici` already mapped to a
+      // TypeError; `fetch` rejects with a TypeError whose shape depends on the runtime -- Node's
+      // undici-backed one says `fetch failed` with an `unknown scheme` cause, Bun 1.3.14 says
+      // `protocol must be http:, https: or s3:` with `code: ERR_INVALID_ARG_VALUE` -- and
+      // `transport-fetch` classified all of it as the RETRYABLE TransportFailureError.
+      //
+      // `classify.ts` returns true for every IoError, so that verdict spends the caller's entire
+      // retry budget re-proving a URL no retry can fix. `isIoError(e) === false` is the assertion
+      // because it is exactly what the retry engine asks.
+      await withTransport(ctx.makeTransport, async transport => {
+        const request = Request.newBuilder()
+          .url(UNSUPPORTED_SCHEME_URL)
+          .build();
+        const error = await rejection(transport.send(request));
+        expect(isIoError(error)).toBe(false);
+        expect(error).toBeInstanceOf(TypeError);
       });
     });
   });
@@ -939,6 +975,7 @@ export function runTransportConformanceSuite(
     registerBodyRows(ctx);
     registerProducerRows(ctx);
     registerFailureRows(ctx);
+    registerPermanentFailureRows(ctx);
     registerCancellationRows(ctx);
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);

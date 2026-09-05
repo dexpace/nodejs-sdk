@@ -28,6 +28,7 @@ import {
   materializeBody,
   producerFailure,
   pumpBody,
+  toDispatchFailure,
   type BodyPump,
   type ForkedSignal,
   type HeaderDropLogging,
@@ -276,34 +277,21 @@ const NATIVE_CANCEL_CODES: ReadonlySet<string> = new Set([
   'UND_ERR_CLOSED',
 ]);
 
-/**
- * undici's codes for "these arguments can never work", as opposed to "this exchange failed". Both are
- * raised by argument validation and are perfectly reproducible, so classifying them as
- * `TransportFailureError` would hand `classify.ts` an always-retryable verdict (it returns `true` for
- * every `IoError`) and spend a caller's whole retry budget re-proving a permanent misconfiguration.
- * The commonest way to reach one is a bring-your-own `ProxyAgent` plus a per-request
- * `Proxy-Authorization`: `UNDICI_PROXIED_FORBIDDEN_HEADERS` only drops that header when this
- * transport constructed the proxy itself, so with a BYO dispatcher it reaches `dispatch` and is
- * rejected outright.
- */
-const TERMINAL_ARGUMENT_CODES: ReadonlySet<string> = new Set([
-  'UND_ERR_INVALID_ARG',
-  'UND_ERR_NOT_SUPPORTED',
-]);
-
-function errorCode(error: unknown): string | undefined {
-  const code = (error as {code?: unknown} | null | undefined)?.code;
-  return typeof code === 'string' ? code : undefined;
-}
-
 function isNativeCancel(error: unknown): boolean {
-  const code = errorCode(error);
-  return code !== undefined && NATIVE_CANCEL_CODES.has(code);
+  const code = (error as {code?: unknown} | null | undefined)?.code;
+  return typeof code === 'string' && NATIVE_CANCEL_CODES.has(code);
 }
 
 /**
- * Maps one dispatch failure onto the SDK's error vocabulary. Extracted from `#dispatch` so the four
+ * Maps one dispatch failure onto the SDK's error vocabulary. Extracted from `#dispatch` so the
  * branches read as one classification table rather than as control flow wrapped around a call.
+ *
+ * Only the first two branches are this transport's own. The permanent-versus-retryable question the
+ * third asks is `@dexpace/transport-shared`'s {@link toDispatchFailure}, because the two shipped
+ * adapters answered it oppositely for the same condition until audit #67 / #82: `ftp://` is
+ * `UND_ERR_INVALID_ARG` here and a `fetch failed` with an `unknown scheme` cause over there, and
+ * only this transport treated it as permanent. A shared table is what keeps that from recurring —
+ * the same reason `abort-mapping.ts` exists.
  *
  * @param error - whatever the dispatch rejected with.
  * @param signal - the forked signal the dispatch was given, if any.
@@ -321,22 +309,7 @@ function toDispatchError(
       cause: error,
     });
   }
-  const code = errorCode(error);
-  if (code !== undefined && TERMINAL_ARGUMENT_CODES.has(code)) {
-    // Deliberately outside the IoError tree: `classify.ts` is an allow-list, so anything that is not
-    // an IoError, a timeout, or a retryable status is non-retryable for free (RETRY-2). `TypeError`
-    // matches `selectDispatchers`, which already reports a caller misconfiguration that way.
-    return new TypeError(
-      error instanceof Error
-        ? error.message
-        : 'undici rejected the request arguments',
-      {cause: error},
-    );
-  }
-  return new TransportFailureError(
-    error instanceof Error ? error.message : 'undici dispatch failed',
-    {cause: error},
-  );
+  return toDispatchFailure(error, 'undici dispatch failed');
 }
 
 /** What undici accepts as a request body; `undefined` is not one of them, `null` is. */

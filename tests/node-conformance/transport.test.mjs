@@ -11,6 +11,8 @@
 // `fileBody()` crossing a real transport has no home inside either package's own suite.
 //
 // Exercises: TRANSPORT-1 (redirects not followed), TRANSPORT-4/20 (timeout and no-response classification),
+// TRANSPORT-20 with RETRY-2 (an unsupported URL scheme is a permanent misconfiguration outside the IoError
+// tree -- Node and Bun report it with entirely different error shapes),
 // TRANSPORT-17 (a single-use body written once, its bytes on the wire), TRANSPORT-24 (vendor status codes),
 // TRANSPORT-11/12 (a header the native layer refuses is dropped, not a failed send -- Node's undici-backed
 // `fetch` rejects three names Bun's forwards),
@@ -25,7 +27,7 @@ import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {Headers, Request, RequestOptions} from '@dexpace/core';
+import {Headers, isIoError, Request, RequestOptions} from '@dexpace/core';
 import {fileBody} from '@dexpace/body-file';
 import {fetchTransport} from '@dexpace/transport-fetch';
 import {undiciTransport} from '@dexpace/transport-undici';
@@ -237,6 +239,38 @@ describe('the transport adapters on the Node runtime', () => {
             ),
             error => {
               assert.equal(error.name, 'TransportFailureError');
+              return true;
+            },
+          );
+        } finally {
+          await transport.close();
+        }
+      });
+
+      it('classifies an unsupported URL scheme as permanent, not retryable (TRANSPORT-20, RETRY-2)', async () => {
+        // Runtime-divergent in the strongest sense: the two runtimes do not merely word this
+        // differently, they use different error shapes. Node's undici-backed `fetch` rejects
+        // `ftp://` with `TypeError: fetch failed` carrying `Error: unknown scheme` as its cause --
+        // byte-identical, at the top level, to a DNS or connect failure -- while Bun 1.3.14 rejects
+        // with `TypeError [ERR_INVALID_ARG_VALUE]: protocol must be http:, https: or s3:` and no
+        // cause at all. The Bun conformance row therefore proves nothing about this runtime, which
+        // is the runtime the SDK ships to. undici's dispatcher agrees with itself on both
+        // (`UND_ERR_INVALID_ARG`) and is here for the pairing (audit #67 / #82).
+        const transport = makeTransport();
+        try {
+          await assert.rejects(
+            transport.send(
+              Request.newBuilder().url('ftp://example.com/anything').build(),
+            ),
+            error => {
+              // `classify.ts` is an allow-list over `IoError`, so the class IS the retry verdict:
+              // a `TransportFailureError` here would spend the caller's whole budget re-proving a
+              // URL no retry can fix.
+              assert.ok(
+                error instanceof TypeError,
+                `expected a TypeError, got ${error?.constructor?.name}`,
+              );
+              assert.equal(isIoError(error), false);
               return true;
             },
           );

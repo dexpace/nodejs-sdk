@@ -58,6 +58,11 @@ export type HeaderDropLogging = 'all' | 'first-per-name' | 'quiet';
 // @internal
 export function isMaterializable(body: Body_2, maxBytes: number): boolean;
 
+// Warning: (ae-internal-missing-underscore) The name "isPermanentDispatchFailure" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function isPermanentDispatchFailure(error: unknown): boolean;
+
 // Warning: (ae-internal-missing-underscore) The name "mapOutboundHeaders" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal
@@ -87,6 +92,11 @@ export function producerFailure(done: Promise<void> | undefined): Promise<never>
 //
 // @internal
 export function pumpBody(body: Body_2): BodyPump;
+
+// Warning: (ae-internal-missing-underscore) The name "toDispatchFailure" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function toDispatchFailure(error: unknown, fallbackMessage: string): Error;
 
 // (No @packageDocumentation comment for this package)
 

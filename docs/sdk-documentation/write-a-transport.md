@@ -44,7 +44,7 @@ export function echoTransport(): Transport {
 Note `setInbound`, not `set`: values a server sent are accepted leniently. Using the strict setter on
 a real server's headers means a response with an obs-text byte in it becomes unreadable.
 
-## Eleven rules a real transport must follow
+## Twelve rules a real transport must follow
 
 The full contract is `docs/product-spec/17-transport-adapter-conformance-contract.md`, thirty
 `TRANSPORT-N` clauses. These are the ones that are easy to get wrong.
@@ -73,24 +73,43 @@ does not look like a bug in your transport — it looks like a retryable network
 the caller's whole retry budget re-proving a permanent misconfiguration. The shared suite has a row
 per name.
 
-**4. Map aborts to exactly two errors** (`TRANSPORT-3`/`TRANSPORT-4`/`TRANSPORT-8`). A timeout is the
+**4. Classify a native rejection with the shared table, not by hand** (`TRANSPORT-20`, `RETRY-2`).
+There are two kinds, and they are not the same kind of thing. An *exchange* that failed — connection
+refused, DNS, TLS, peer reset, read timeout — is the retryable `TransportFailureError`, which
+`TRANSPORT-20` makes a MUST. A *request* the client refused before dispatching — an unsupported
+scheme, a forbidden method, an argument its own validation rejects — can never succeed on a retry,
+and `retry/classify.ts` is an allow-list over `IoError`, so reporting it as anything outside that
+tree makes it non-retryable for free. Both shipped transports report it as a bare `TypeError` with
+the native error as `cause`, matching the `TypeError` they already raise for a misconfiguration
+caught at construction.
+
+Telling the two apart is runtime-specific enough that you should not: call
+`toDispatchFailure(error, fallbackMessage)` from `@dexpace/transport-shared`. Node's global `fetch`
+reports an unsupported scheme as `TypeError: fetch failed` with an `unknown scheme` *cause* — the
+same top-level shape as a DNS failure — while Bun 1.3.14 reports it as
+`TypeError [ERR_INVALID_ARG_VALUE]` with no cause, and undici's dispatcher as
+`UND_ERR_INVALID_ARG`. The two shipped transports disagreed about `ftp://` until audit #67 / #82 for
+exactly that reason. The default is retryable, so a shape the table does not recognize keeps
+`TRANSPORT-20`'s MUST.
+
+**5. Map aborts to exactly two errors** (`TRANSPORT-3`/`TRANSPORT-4`/`TRANSPORT-8`). A timeout is the
 retryable `TransportFailureError`; a caller abort is the terminal `CancellationError`. A raw
 `DOMException` must never surface. `isTimeoutSignal(signal)` is how you tell them apart.
 
-**5. An abort after delivery must not close the delivered body** (`SEAM-16`). Both native clients tie
+**6. An abort after delivery must not close the delivered body** (`SEAM-16`). Both native clients tie
 a response body's lifetime to the signal they were given, so dispatch over a **fork** of the signal
 and detach it at delivery. Get this wrong and a caller who aborts a moment after `send()` resolves
 finds the body they already own torn out from under them.
 
-**6. The caller owns the response body** (`BODY-15`). Return it live and unread. Do not buffer it, do
+**7. The caller owns the response body** (`BODY-15`). Return it live and unread. Do not buffer it, do
 not close it.
 
-**7. Ownership decides who closes what** (`SEAM-14`). A dispatcher or client the caller supplied is
+**8. Ownership decides who closes what** (`SEAM-14`). A dispatcher or client the caller supplied is
 never touched by your `close()`. One you constructed is yours to close. Make that decision once, at
 construction, and make supplying both a caller-owned client *and* an option that would build one a
 construction-time `TypeError` rather than a silent win for one of them.
 
-**8. `close()` must be idempotent, concurrent-safe, and non-blocking** (`TRANSPORT-15`/`TRANSPORT-16`).
+**9. `close()` must be idempotent, concurrent-safe, and non-blocking** (`TRANSPORT-15`/`TRANSPORT-16`).
 No unbounded await — a graceful drain would stall teardown for as long as one in-flight send against
 a slow peer takes. Destroying is the sanctioned choice; in-flight sends then reject with
 `CancellationError`, and so does a `send()` issued after `close()`, because it cannot succeed over a
@@ -98,7 +117,7 @@ dispatcher that no longer exists and so is not a retryable failure. Declare your
 (`SEAM-15`) either way: `@dexpace/transport-fetch`'s `close()` is a documented no-op over a runtime
 global it does not own, and `send()` keeps working after it.
 
-**9. Recognize a file body structurally, and still write it through `writeTo`**
+**10. Recognize a file body structurally, and still write it through `writeTo`**
 (`TRANSPORT-28`, `BODY-13`). `body.kind === 'file'` widens the body to `FileBodyDescriptor` —
 `path`, `start`, `count`. Never `instanceof` against `@dexpace/body-file`: a transport must not
 depend on it.
@@ -112,14 +131,14 @@ path, treat a file body as an ordinary `Body` and let `writeTo` produce the byte
 zero-copy clause is a SHOULD, and its MUSTs — replayable, and exactly the declared range on the
 wire — are the descriptor's to keep, not yours.
 
-**10. Refuse a proxy you cannot honour, at construction** (`TRANSPORT-30`). `ProxyType` admits
+**11. Refuse a proxy you cannot honour, at construction** (`TRANSPORT-30`). `ProxyType` admits
 `socks4` and `socks5`, and core resolves both from `ALL_PROXY`, so a configuration can hand you a
 proxy your client cannot build. Reject it in the factory with a typed error that names the type,
 before you allocate anything — not on the first send, where it arrives as whatever the native
 client raises. Keep it outside the `IoError` tree: `retry/classify.ts` is an allow-list, so a
 misconfiguration no retry can fix is then non-retryable for free. Declare it in `@throws`.
 
-**11. Send a real `User-Agent`** (`NFR-15`), never a placeholder. `getBuildInfo()` supplies the tokens.
+**12. Send a real `User-Agent`** (`NFR-15`), never a placeholder. `getBuildInfo()` supplies the tokens.
 
 ## Prove it
 
@@ -152,15 +171,16 @@ The package is `private` and its `exports` name `./src/index.ts`, so it resolves
 
 `@dexpace/transport-shared` exists so the algorithm both adapters need exists once. Its exports are
 `@internal` and it is not a package to install directly, but reading it is the fastest way to see
-what a correct implementation of rules 2, 3, 4, 5 and 7 looks like:
+what a correct implementation of rules 2, 3, 4, 5, 6 and 8 looks like:
 
 | Module | Concern |
 |---|---|
 | `header-mapping.ts` | Rules 2 and 3: the outbound drop-and-degrade pass, and the lenient inbound copy |
 | `drop-log.ts` | Bounded, case-insensitive, drain-to-cap dedup of already-logged drop names |
-| `abort-mapping.ts` | The single mapping from an aborted signal to `TransportFailureError` or `CancellationError` |
+| `dispatch-classification.ts` | Rule 4: the one table deciding permanent-versus-retryable for a native rejection |
+| `abort-mapping.ts` | Rule 5's single mapping from an aborted signal to `TransportFailureError` or `CancellationError` |
 | `body-pump.ts` | Turning a `Body` into a request stream the transport owns, plus idempotent teardown for an abandoned producer |
-| `signal-fork.ts` | Rule 5's fork-and-detach |
+| `signal-fork.ts` | Rule 6's fork-and-detach |
 
 ## Package it
 

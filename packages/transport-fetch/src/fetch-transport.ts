@@ -21,6 +21,7 @@ import {
   materializeBody,
   producerFailure,
   pumpBody,
+  toDispatchFailure,
   type ForkedSignal,
   type HeaderDropLogging,
 } from '@dexpace/transport-shared';
@@ -296,10 +297,12 @@ class FetchTransport implements Transport {
     } catch (error) {
       await prepared.abandon(error);
       if (signal?.aborted) throw abortToSdkError(signal, error);
-      throw new TransportFailureError(
-        error instanceof Error ? error.message : 'fetch failed',
-        {cause: error},
-      );
+      // TRANSPORT-20 versus RETRY-2, decided by the table in `@dexpace/transport-shared` rather
+      // than here: until audit #67 / #82 every native rejection became `TransportFailureError`,
+      // which `classify.ts` reports retryable for being an `IoError`, so an `ftp://` URL or a
+      // `CONNECT` method spent the caller's whole retry budget re-proving a permanent
+      // misconfiguration. The undici twin already refused those; the two must not disagree.
+      throw toDispatchFailure(error, 'fetch failed');
     }
   }
 
