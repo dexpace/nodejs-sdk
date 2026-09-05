@@ -10,7 +10,8 @@
 // different answers for the same model-valid header and only a shared row could say so.
 // TRANSPORT-18's collapse is a Deviation Ledger row, as is TRANSPORT-28's zero-copy SHOULD, whose two
 // MUSTs the file-body rows do assert; TRANSPORT-30's
-// full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
+// full proxy-challenge flow is transport-undici's challenge-handler.test.ts, and only its
+// unsupported-type refusal is a row here. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
 // undici-transport.test.ts:503).
@@ -22,6 +23,7 @@ import {
   getBuildInfo,
   getGlobalLogger,
   Headers,
+  isIoError,
   Request,
   RequestOptions,
   setGlobalLogger,
@@ -37,6 +39,21 @@ import {
 } from './fixtures.js';
 
 /**
+ * A proxy configuration the transport under test cannot honour, so TRANSPORT-30's
+ * "discoverable rather than silently misbehaving" clause has something to be asserted against.
+ *
+ * Supplied by the adapter because only the adapter knows which of `ProxyType`'s values its native
+ * client refuses — `@dexpace/core` resolves `socks4`/`socks5` from `ALL_PROXY` (CFG-22) and neither
+ * shipped transport can carry either.
+ */
+export interface UnsupportedProxy {
+  /** The `ProxyOptions.type` the native client cannot honour; the refusal must name it. */
+  readonly type: string;
+  /** Builds a transport configured with that type. Expected to throw rather than return one. */
+  build(): Transport;
+}
+
+/**
  * The clauses `docs/product-spec/17-transport-adapter-conformance-contract.md` scopes to only one
  * reference transport, plus the one drop-set entry that legitimately differs between the two.
  */
@@ -50,6 +67,12 @@ export interface TransportCapabilities {
   readonly supportsProxy: boolean;
   /** TRANSPORT-11: whether `Connection` is in this transport's outbound drop set. */
   readonly dropsConnectionHeader: boolean;
+  /**
+   * TRANSPORT-30: a proxy type this transport's configuration can express and its native client
+   * cannot honour. Omit it when the transport takes no proxy at all, or honours every type it can
+   * be handed — the row then asserts that omission is the truth rather than skipping.
+   */
+  readonly unsupportedProxy?: UnsupportedProxy;
 }
 
 /** What every row below needs: a transport factory, the live fixture origin, and the capability flags. */
@@ -795,6 +818,37 @@ function registerDropSetRows(ctx: SuiteContext): void {
   });
 }
 
+function registerProxyRefusalRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-30: a proxy the native client cannot honour is refused, not attempted', () => {
+    test('an unsupported proxy type fails at construction with a typed, naming error', () => {
+      const unsupported = ctx.capabilities.unsupportedProxy;
+      if (unsupported === undefined) {
+        // The row still runs here rather than being skipped, and asserts the only thing left to
+        // assert: that there is genuinely no proxy surface to mis-set. `@dexpace/transport-fetch`
+        // is this leg — it ships no `proxy` option at all, deliberately (design doc §6), so
+        // TRANSPORT-30 has no subject on it and a silent skip would look the same as a gap.
+        expect(ctx.capabilities.supportsProxy).toBe(false);
+        return;
+      }
+      let thrown: unknown;
+      try {
+        // A transport that returns instead of throwing has deferred the failure to the first send,
+        // where it arrives as whatever the native client raises — the shape TRANSPORT-30 rules out.
+        void unsupported.build();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(TypeError);
+      // Not an `IoError`: `retry/classify.ts` is an allow-list, so a misconfiguration no retry can
+      // fix is non-retryable for free (RETRY-2). An undici `InvalidArgumentError` escaping raw
+      // would fail this too, being neither a `TypeError` nor documented.
+      expect(isIoError(thrown)).toBe(false);
+      // "Discoverable": the message names the type that was refused, not merely that something was.
+      expect((thrown as Error).message).toContain(unsupported.type);
+    });
+  });
+}
+
 function registerScopedRows(ctx: SuiteContext): void {
   if (ctx.capabilities.supportsInternalCancel) {
     describe('TRANSPORT-8: an internal cancel is told apart from a timeout', () => {
@@ -883,6 +937,7 @@ export function runTransportConformanceSuite(
     registerFileBodyRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
+    registerProxyRefusalRows(ctx);
     registerScopedRows(ctx);
   });
 }

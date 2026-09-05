@@ -55,10 +55,17 @@ terminal `CancellationError`, and so does a `send()` issued after `close()` — 
 documented `SEAM-15` post-close mode. It cannot succeed over a dispatcher that no longer exists, so
 it is not reported as a retryable failure.
 
-## Proxy support and its one real limit
+## Proxy support and its two real limits
 
 `ProxyOptions` routes here in full: address, Basic credentials, and `NO_PROXY`/`nonProxyHosts`
 bypass globs, which route over a separate direct `Agent` rather than being tunnelled anyway.
+
+**`type` must be `http`.** undici's `ProxyAgent` is an HTTP `CONNECT` tunnel and reads its `uri` as
+a URL, so `socks4`/`socks5` — which `ProxyType` admits and core resolves from `ALL_PROXY`
+(`CFG-22`) — are refused at construction with a `TypeError` naming the type. Before 2026-09-05 they
+reached `new ProxyAgent({uri: 'socks5://…'})` and escaped this factory as an undici
+`InvalidArgumentError`, untyped and undocumented. Neither shipped transport can carry SOCKS;
+`docs/deviations.md` records the gap.
 
 **A custom `challengeHandler` cannot be dispatched**, and the limitation is surfaced rather than
 silently misbehaving (`TRANSPORT-30`):

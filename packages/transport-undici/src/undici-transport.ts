@@ -13,6 +13,7 @@ import {
   TransportFailureError,
   type Body,
   type ProxyOptions,
+  type ProxyType,
   type Request,
   type RequestOptions,
   type Transport,
@@ -98,7 +99,13 @@ export interface UndiciTransportOptions {
    * (SEAM-14); supplying it together with `proxy` is a construction-time error.
    */
   readonly dispatcher?: Dispatcher;
-  /** Proxy configuration; the transport constructs and owns the resulting `ProxyAgent`. */
+  /**
+   * Proxy configuration; the transport constructs and owns the resulting `ProxyAgent`.
+   *
+   * `type` must be `http`. undici's `ProxyAgent` is an HTTP `CONNECT` tunnel, so the `socks4` and
+   * `socks5` values `ProxyType` also admits — which core resolves from `ALL_PROXY` — are refused at
+   * construction rather than at the first send (TRANSPORT-30).
+   */
   readonly proxy?: ProxyOptions;
   /** How dropped header names are logged (TRANSPORT-13); defaults to `'first-per-name'`. */
   readonly headerDropLogging?: HeaderDropLogging;
@@ -116,6 +123,38 @@ interface DispatcherSet {
   readonly direct: Dispatcher;
   /** Dispatchers this transport constructed; empty for a caller-supplied one (SEAM-14). */
   readonly owned: readonly Dispatcher[];
+}
+
+/**
+ * The one `ProxyOptions.type` this transport can build a dispatcher for.
+ *
+ * undici's `ProxyAgent` is an HTTP `CONNECT` tunnel and takes its `uri` as a URL, so a `socks5://`
+ * or `socks4://` one throws `InvalidArgumentError('Invalid URL protocol: …')` out of its
+ * constructor. Core resolves `ALL_PROXY=socks5://host:1080` to `type: 'socks5'` quite legitimately
+ * (`config/proxy.ts:372-380`, CFG-22), so the configuration can express a proxy neither shipped
+ * transport can honour, and until 2026-09-05 the way you found out was an undici error escaping a
+ * public factory untyped and undocumented (audit #67 / #81, `docs/deviations.md`).
+ */
+const SUPPORTED_PROXY_TYPE: ProxyType = 'http';
+
+/**
+ * TRANSPORT-30's "make the limitation discoverable rather than silently misbehaving", applied at
+ * the earliest point that can: construction, before any dispatcher is allocated.
+ *
+ * A `TypeError`, matching {@link selectDispatchers}' other construction-time refusal and
+ * deliberately outside the `IoError` tree — `retry/classify.ts` is an allow-list, so a
+ * misconfiguration that no retry can fix is non-retryable for free (RETRY-2).
+ *
+ * @param proxy - the configured proxy.
+ * @throws `TypeError` when `proxy.type` is anything but `http`.
+ */
+function requireSupportedProxyType(proxy: ProxyOptions): void {
+  if (proxy.type === SUPPORTED_PROXY_TYPE) return;
+  throw new TypeError(
+    `unsupported proxy type \`${proxy.type}\`: undici's ProxyAgent is an HTTP CONNECT tunnel and ` +
+      'cannot carry a SOCKS proxy, and @dexpace/transport-fetch has no proxy support at all. ' +
+      'Configure an http proxy, or route SOCKS outside this SDK.',
+  );
 }
 
 /**
@@ -148,6 +187,9 @@ function selectDispatchers(options: UndiciTransportOptions): DispatcherSet {
     const byo = options.dispatcher;
     return {proxied: byo, direct: byo, owned: []};
   }
+  // Before anything is allocated: a refusal after `new undici.Agent(...)` would leak the direct
+  // agent on the way out, with no transport for the caller to close it through.
+  if (options.proxy !== undefined) requireSupportedProxyType(options.proxy);
   // Agent, not Pool: a Pool is bound to one origin at construction, but a general-purpose Transport
   // must reach whatever origin each Request names.
   const direct = new undici.Agent(options.agentOptions);
@@ -648,7 +690,9 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  *
  * @param options - optional transport settings.
  * @returns a transport ready to send; release it with `close()`.
- * @throws `TypeError` when both `dispatcher` and `proxy` are supplied.
+ * @throws `TypeError` when both `dispatcher` and `proxy` are supplied, or when `proxy.type` is
+ * anything but `http` — undici's `ProxyAgent` cannot carry a SOCKS proxy, and neither can
+ * `@dexpace/transport-fetch`, which has no proxy option at all.
  *
  * @public
  */

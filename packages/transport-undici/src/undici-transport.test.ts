@@ -687,6 +687,35 @@ describe('undiciTransport failure classification (TRANSPORT-20)', () => {
 });
 
 describe('undiciTransport proxy dispatch (TRANSPORT-30)', () => {
+  test('TRANSPORT-30: a SOCKS proxy is refused at the factory, before any Agent is built', () => {
+    // Both SOCKS values `ProxyType` admits, because core resolves both from the environment
+    // (`socks4`/`socks4a` and `socks:`/`socks5`/`socks5h`, `config/proxy.ts:372-380`) and undici's
+    // `ProxyAgent` carries neither -- it is an HTTP CONNECT tunnel and reads its `uri` as a URL.
+    const {agents, restore} = captureOwnedAgents();
+    try {
+      for (const type of ['socks4', 'socks5'] as const) {
+        let thrown: unknown;
+        try {
+          undiciTransport({
+            proxy: createProxyOptions({type, host: '127.0.0.1', port: 1080}),
+          });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(TypeError);
+        // TRANSPORT-30's "discoverable": the refusal names the type, and it is not the raw
+        // `InvalidArgumentError: Invalid URL protocol: socks5:` undici used to let escape.
+        expect((thrown as Error).message).toContain(type);
+        expect(thrown).not.toBeInstanceOf(IoError);
+      }
+      // The check runs before `new undici.Agent(...)`, so a refused construction leaks nothing --
+      // there is no transport for the caller to have called `close()` on.
+      expect(agents.length).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   test('a per-request Proxy-Authorization is dropped when a proxy is configured', async () => {
     // ProxyAgent.dispatch throws InvalidArgumentError on ANY per-request Proxy-Authorization -- a
     // deliberate undici security fix -- so forwarding one would turn every proxied send into a hard
