@@ -3,8 +3,10 @@
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
 // drift. Exercises: TRANSPORT-1..9, TRANSPORT-14..17, TRANSPORT-20..21, TRANSPORT-23..27,
 // TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
-// answerable for them (the repeated-challenge-header row). TRANSPORT-10..14 are asserted at their source in
-// @dexpace/transport-shared; TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
+// answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
+// outbound header pass both adapters call -- is asserted at its source in
+// @dexpace/transport-shared, and the rows here cover only what each adapter decides for itself.
+// TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
 // full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
