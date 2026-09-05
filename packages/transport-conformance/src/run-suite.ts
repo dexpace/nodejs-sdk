@@ -573,10 +573,11 @@ function registerHeaderRows(ctx: SuiteContext): void {
  * outright, paired with the value that provokes the refusal.
  *
  * `expect`, `keep-alive` and `upgrade` are `undici`'s three unconditional rejections
- * (`lib/core/request.js:398,409` — `InvalidArgumentError` for the first two, `NotSupportedError`
- * for `expect`), and Node's global `fetch` is undici-backed, so both adapters meet them. `X Custom`
- * is the non-token name: `@dexpace/core` admits any printable ASCII byte in a header name
- * (`http/ascii-validation.ts:29-33`), while both native layers require RFC 9110 `token`.
+ * (`lib/core/request.js:398,409` in 6.28.0 — `InvalidArgumentError` for the first two,
+ * `NotSupportedError` for `expect`), and Node's global `fetch` is undici-backed, so both adapters
+ * meet them. `X Custom` is the non-token name: `@dexpace/core` admits any printable ASCII byte in
+ * a header name (`http/ascii-validation.ts:29-33`), while both native layers require RFC 9110
+ * `token`.
  *
  * TRANSPORT-12 is what makes these one table rather than four transport-specific quirks: whatever
  * the native client refuses, the transport drops *that header only* and still dispatches.

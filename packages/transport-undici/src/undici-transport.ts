@@ -242,7 +242,7 @@ function isUnsendableHeader(name: string, value: string): boolean {
  * repeated (HTTP-14) -- with every header undici would refuse degraded to a logged drop.
  *
  * The per-header guard is the same degrade `@dexpace/transport-fetch` gets for free from wrapping
- * `Headers.append` in a `try`/`catch` (`fetch-transport.ts:146-152`): undici validates at dispatch
+ * `Headers.append` in a `try`/`catch` (`fetch-transport.ts:159-166`): undici validates at dispatch
  * rather than at construction, so this transport has to ask the question itself (TRANSPORT-12).
  */
 function toUndiciHeaders(
@@ -349,8 +349,9 @@ interface PreparedBody {
 }
 
 /**
- * Prepares one request body for dispatch. Identical in shape to the fetch twin's, and deliberately
- * so: there is **no** `kind === 'file'` branch here.
+ * Prepares one request body for dispatch: buffer it if it is small and replayable, stream it
+ * otherwise. Exactly the two decisions the fetch twin makes, in the same order, and deliberately so
+ * — there is **no** `kind === 'file'` branch here.
  *
  * There was one until 2026-09-05. It handed `createReadStream(path, {start, end})` to undici, which
  * is a genuinely shorter path to the wire — one fewer userspace copy — and it bypassed the
