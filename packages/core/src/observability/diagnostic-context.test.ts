@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/observability/diagnostic-context.test.ts
 // Exercises: OBS-10 (default allow-list {trace.id, span.id}, null allow-list folds all, null values skipped),
-// OBS-24 (immutable snapshot bridge: capture, reinstall, restore including on throw).
+// OBS-24 (immutable snapshot bridge: capture, reinstall, restore including on throw), OBS-22/OBS-23's
+// scoping mechanics (AsyncScopedStore.run unwinds across an await and over an enter() its callback made,
+// where the enter() handle alone does not).
 import {describe, expect, test} from 'bun:test';
 import {
   captureDiagnosticSnapshot,
@@ -156,6 +158,38 @@ describe('pushDiagnosticFields', () => {
 });
 
 describe('createAsyncScopedStore', () => {
+  test('run installs the value for the callback and restores across an await', async () => {
+    const store = createAsyncScopedStore<string>();
+    expect(store.get()).toBeUndefined();
+
+    await store.run('scoped', async () => {
+      expect(store.get()).toBe('scoped');
+      await Promise.resolve();
+      expect(store.get()).toBe('scoped');
+    });
+
+    expect(store.get()).toBeUndefined();
+  });
+
+  test('run unwinds an enter() its callback left open, and restores on a throw', () => {
+    const store = createAsyncScopedStore<string>();
+    store.run('outer', () => {
+      // The handle form, deliberately never closed -- what the LOGGING pillar's correlation scope
+      // effectively does once its close() lands in a later continuation.
+      store.enter('inner');
+      expect(store.get()).toBe('inner');
+    });
+    expect(store.get()).toBeUndefined();
+
+    expect(() => {
+      store.run('outer', () => {
+        store.enter('inner');
+        throw new Error('boom');
+      });
+    }).toThrow('boom');
+    expect(store.get()).toBeUndefined();
+  });
+
   test('enter installs value and returned restore function resets prior value', () => {
     const store = createAsyncScopedStore<string>();
     expect(store.get()).toBeUndefined();

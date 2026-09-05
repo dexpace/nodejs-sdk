@@ -84,17 +84,42 @@ export function getActiveSpan(): Span {
  * @public
  */
 export function activateSpan(span: Span): Scope {
-  invariant(
-    (span as unknown) !== null && (span as unknown) !== undefined,
-    'activateSpan: span is required',
-  );
-  invariant(
-    typeof span.end === 'function',
-    'activateSpan: span must implement end()',
-  );
+  requireSpan(span, 'activateSpan');
 
   const restore = spanStorage.enter(span);
   return {close: restore};
+}
+
+function requireSpan(span: Span, caller: string): void {
+  invariant(
+    (span as unknown) !== null && (span as unknown) !== undefined,
+    `${caller}: span is required`,
+  );
+  invariant(
+    typeof span.end === 'function',
+    `${caller}: span must implement end()`,
+  );
+}
+
+/**
+ * The callback form of {@link activateSpan}, for a scope that can be written as one function: `span` is
+ * active for the whole of `fn`, and whatever was active before is active again the moment `fn` returns.
+ *
+ * `activateSpan`'s handle cannot make that promise across an `await`. Its `close()` is an `enterWith` on
+ * whichever async resource happens to run it, so a scope opened before an `await` and closed after one
+ * leaves the span installed on the resource that opened it -- the caller's, when the opener is
+ * `Runtime.send`. This form is `AsyncLocalStorage.run`, which unwinds structurally instead. The handle
+ * stays because OBS-22 specifies one; this is what the runtime uses.
+ *
+ * @param span - the span to activate for the extent of `fn`.
+ * @param fn - the work to run with `span` active. Its result is passed through untouched.
+ * @returns whatever `fn` returned.
+ *
+ * @internal
+ */
+export function runWithActiveSpan<T>(span: Span, fn: () => T): T {
+  requireSpan(span, 'runWithActiveSpan');
+  return spanStorage.run(span, fn);
 }
 
 /** Extracts trace.id and span.id from OpenTelemetry-compatible spanContext() if present. */

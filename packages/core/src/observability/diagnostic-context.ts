@@ -77,6 +77,15 @@ export function runWithSnapshot<T>(
  * The scope-handle form of `withDiagnosticFields`, for callers that cannot express their scope as a single
  * callback -- OBS-23's span-correlation scope is one: a pipeline step pushes before `await next(...)` and
  * restores after, with the two halves in different statements. Returns the restore function.
+ *
+ * **The restore reaches only the continuation that called it.** `enterWith` installs the store on the
+ * *current* async resource and every resource created from it; the returned function does the same with
+ * the previous store. Call it after an `await` and it runs on a different resource, so the caller that
+ * pushed keeps the pushed fields for the rest of its own continuation -- which is a leak when that caller
+ * is a library entry point and the continuation is the application's. Use `withDiagnosticFields` whenever
+ * the scope CAN be written as one callback; that form is `AsyncLocalStorage.run`, which restores on exit
+ * by construction. `Runtime.send` used this handle until 2026-09-05 and leaked `trace.id`/`span.id` into
+ * every subsequent application log (audit #67 / #80).
  */
 export function pushDiagnosticFields(
   fields: Readonly<Record<string, string>>,
@@ -105,14 +114,37 @@ export function pushDiagnosticFields(
  */
 export interface AsyncScopedStore<T> {
   get(): T | undefined;
-  /** Installs `value` for the rest of this async context; the returned function restores the prior value. */
+  /**
+   * Installs `value` for the rest of this async context; the returned function restores the prior value.
+   *
+   * Carries `pushDiagnosticFields`' caveat verbatim: the restore is an `enterWith` of its own, so it takes
+   * effect only on the async resource that runs it. A handle closed after an `await` leaves `value`
+   * installed on the resource that entered it. Prefer {@link AsyncScopedStore.run} for any scope that can
+   * be written as one callback.
+   */
   enter(value: T): () => void;
+  /**
+   * Runs `fn` with `value` installed, restoring whatever was installed before when `fn` returns --
+   * including on a throw, and including for anything `fn` itself entered with the handle form. This is
+   * `AsyncLocalStorage.run`, so the restore is structural rather than a call a later continuation has to
+   * remember to make, and it is what a library entry point must use if the caller's context is to survive
+   * the call.
+   *
+   * `fn`'s return value is passed through untouched: an `async` callback hands back its promise, and the
+   * store is restored when the callback's synchronous prefix returns, not when the promise settles. That
+   * is the intended scoping -- everything the promise chain does inherits the store from the resource it
+   * was created on.
+   */
+  run<R>(value: T, fn: () => R): R;
 }
 
 export function createAsyncScopedStore<T>(): AsyncScopedStore<T> {
   const scoped = new AsyncLocalStorage<T>();
   return {
     get: () => scoped.getStore(),
+    run<R>(value: T, fn: () => R): R {
+      return scoped.run(value, fn);
+    },
     enter(value: T): () => void {
       const previous = scoped.getStore();
       scoped.enterWith(value);

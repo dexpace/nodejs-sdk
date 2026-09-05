@@ -11,9 +11,13 @@ import {
 } from '../context/context.js';
 import {contextStore} from '../context/store.js';
 import {
-  activateSpan,
+  captureDiagnosticSnapshot,
+  runWithSnapshot,
+} from '../observability/diagnostic-context.js';
+import {
   getActiveSpan,
   NOOP_TRACER,
+  runWithActiveSpan,
   type Span,
   type Tracer,
 } from '../observability/tracing.js';
@@ -24,8 +28,12 @@ import type {Transport} from '../seams/transport.js';
 import {Cursor} from './cursor.js';
 import type {StepDescriptor} from './step.js';
 
-/** What `Runtime.send()` passes to `createDispatchContext`; `operationName` is not a dispatch-stage concept. */
-type RuntimeContextInit = Omit<ContextInit, 'operationName'>;
+/**
+ * What a built pipeline carries into every drive. `createDispatchContext` takes the `instrumentation`
+ * and `key` halves -- `operationName` is not a dispatch-stage concept (CTX-16 introduces it at the
+ * request stage) -- and `send()` hands the name to `promoteToRequest` itself, one promotion later.
+ */
+type RuntimeContextInit = ContextInit;
 
 /** The advisory span name, matching what the LOGGING pillar step uses for its per-attempt spans. */
 const OPERATION_SPAN_NAME = 'http.client.operation';
@@ -56,6 +64,36 @@ function startOperationSpan(context: RequestContext): Span | undefined {
   const tracer = factory(OPERATION_SPAN_NAME) ?? NOOP_TRACER;
   const span = tracer.startSpan(OPERATION_SPAN_NAME);
   return span.isRecording ? span : undefined;
+}
+
+/**
+ * Runs `drive` as the body of `span` and ends that span EXACTLY once, whichever way it finishes
+ * (OBS-29: `operationSucceeded` and `operationFailed` are mutually exclusive and happen once each).
+ *
+ * The `ended` latch is not belt-and-braces. `end()` is caller-supplied through `tracerFactory`, and
+ * OBS-20 deliberately does not wrap tracer calls -- so a throwing `end()` on the success path lands
+ * in the `catch` below, which is obliged to `recordException` the failure it now has to surface.
+ * Without the latch that path called `end()` a second time on a span the tracer already closed.
+ */
+async function driveWithSpan(
+  span: Span,
+  drive: () => Promise<Response>,
+): Promise<Response> {
+  let ended = false;
+  const endOnce = (): void => {
+    if (ended) return;
+    ended = true;
+    span.end();
+  };
+  try {
+    const response = await drive();
+    endOnce();
+    return response;
+  } catch (error: unknown) {
+    span.recordException(error);
+    endOnce();
+    throw error;
+  }
 }
 
 /**
@@ -165,15 +203,45 @@ export class Runtime implements Transport {
       // PIPE-9: an empty pipeline dispatches directly to the terminal transport, no cursor allocated.
       return this.#transport.send(request, options, signal);
     }
+    // Every async-scoped store this call touches is RE-RUN around the drive rather than entered in
+    // place. `runWithSnapshot(captureDiagnosticSnapshot())` re-enters the caller's OWN diagnostic
+    // store under `AsyncLocalStorage.run`, which changes nothing a step can observe and everything
+    // about what survives the call: a `pushDiagnosticFields` below -- the LOGGING pillar's OBS-23
+    // correlation scope is the shipped one -- now unwinds when `send()` returns. `#drive` does the
+    // same for the span slot with `runWithActiveSpan`.
+    //
+    // Until 2026-09-05 both slots were `enterWith` plus a restore closure called from a `finally`.
+    // `enterWith` installs on the async resource running it, and that resource is the CALLER's --
+    // `send`'s synchronous prefix runs there -- while the `finally` runs on a resource created by
+    // the first `await` inside. So the restore reached nothing the caller could see: after
+    // `await send()` the ended operation span was still "active", suppressing the next call's span
+    // (OBS-29's 1:1 binding), and this call's `trace.id`/`span.id` rode into every subsequent
+    // application log through any core `Logger` (audit #67 / #80).
+    return runWithSnapshot(captureDiagnosticSnapshot(), () =>
+      this.#drive(request, options, signal),
+    );
+  }
+
+  /**
+   * One drive, inside the re-entered stores `send()` established. Split out so `send()` is the
+   * scoping statement and nothing else: the whole body has to sit inside the `run` callback for the
+   * unwind to cover it, and a body that long inline reads as if the callback were optional.
+   */
+  async #drive(
+    request: Request,
+    options: RequestOptions | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<Response> {
     const dispatchContext = createDispatchContext(this.#contextInit);
-    const requestContext = promoteToRequest(dispatchContext, request);
-    contextStore.install(requestContext); // CTX-17's positive half: the first store entry, at the first promotion.
+    // CTX-16: the operation name this pipeline was built with enters at the request stage and is
+    // carried unchanged by every promotion after it.
+    const requestContext = promoteToRequest(
+      dispatchContext,
+      request,
+      this.#contextInit.operationName,
+    );
     let currentContext: ExecutionContext = requestContext; // tracks the latest install for the finally below.
-    // OBS-29's 1:1 binding. Started before the drive and outside every pillar, so a retry's second
-    // attempt and a redirect's second hop are the same operation as the first.
-    const span = startOperationSpan(requestContext);
-    const scope = span === undefined ? undefined : activateSpan(span);
-    try {
+    const drive = async (): Promise<Response> => {
       const cursor = new Cursor({
         steps: this.#steps,
         transport: this.#transport,
@@ -190,16 +258,20 @@ export class Runtime implements Transport {
       );
       contextStore.install(exchangeContext); // install-or-replace under the same key (CTX-8).
       currentContext = exchangeContext;
-      span?.end();
       return response;
-    } catch (error: unknown) {
-      // OBS-29: `operationFailed` and `operationSucceeded` are mutually exclusive and happen once
-      // each. `end()` is reached from exactly one of these two paths, never both.
-      span?.recordException(error);
-      span?.end();
-      throw error;
+    };
+    // CTX-11/CTX-17: the install and everything that can throw after it are inside ONE try, so the
+    // `finally` evicts on every path. `startOperationSpan` calls a caller-supplied `tracerFactory`,
+    // which OBS-30 says must not throw and nothing enforces; installed outside the try, one throwing
+    // factory left an entry in the process-wide store per failed send.
+    try {
+      contextStore.install(requestContext); // CTX-17's positive half: the first store entry, at the first promotion.
+      // OBS-29's 1:1 binding. Started before the drive and outside every pillar, so a retry's second
+      // attempt and a redirect's second hop are the same operation as the first.
+      const span = startOperationSpan(requestContext);
+      if (span === undefined) return await drive();
+      return await runWithActiveSpan(span, () => driveWithSpan(span, drive));
     } finally {
-      scope?.close();
       contextStore.close(currentContext); // always the most recently installed context for this call.
     }
   }
@@ -253,9 +325,11 @@ export class Runtime implements Transport {
  *
  * @param steps - the flattened, stage-ordered step array. Copied and frozen.
  * @param transport - the terminal transport. Never closed by the pipeline (PIPE-27).
- * @param contextInit - what each drive's dispatch context is built from: the `instrumentation`
- *   bundle whose `tracerFactory` supplies `OBS-29`'s per-operation span, and an optional `key`
- *   pinning two contexts to one store slot (CTX-5). Defaults to the no-op bundle and a fresh key.
+ * @param contextInit - what each drive's context chain is built from: the `instrumentation` bundle
+ *   whose `tracerFactory` supplies `OBS-29`'s per-operation span, the advisory `operationName`
+ *   every promotion carries (CTX-16), and an optional `key` pinning two contexts to one store slot
+ *   (CTX-5). Defaults to the no-op bundle, no operation name, and a fresh key. `PipelineBuilder`'s
+ *   second constructor argument is the public way to supply the first two.
  * @returns the built, immutable runtime.
  *
  * @internal
