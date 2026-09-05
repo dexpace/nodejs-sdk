@@ -331,7 +331,12 @@ function adaptResponse(
   const raw: [string, string][] = [];
   for (const [name, value] of Object.entries(result.headers)) {
     if (value === undefined) continue;
-    // An array means a genuinely repeated header (Set-Cookie); keep each value its own entry.
+    // An array means a genuinely repeated header -- undici arrays ANY name it saw more than once,
+    // not just `Set-Cookie`. Keep each value its own entry: `WWW-Authenticate` and
+    // `Proxy-Authenticate` arrive this way from a server following RFC 7616 3.3, and collapsing them
+    // to the first would hide every challenge after it (audit #67 / #74). `@dexpace/transport-fetch`
+    // comma-joins the same response, which RFC 9110 5.3 makes equivalent; the conformance row
+    // `a repeated inbound header keeps every value` asserts the two agree on the list.
     if (Array.isArray(value)) for (const each of value) raw.push([name, each]);
     else raw.push([name, value]);
   }
