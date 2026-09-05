@@ -233,10 +233,17 @@ function isHeaderSafeEcho(info: {
 }
 
 /**
- * AUTH-16: satisfiable if and only if the scheme is `digest`, `realm` and `nonce` are both present,
- * `qop` is absent or contains `auth`, the algorithm (defaulting to `MD5`) is in the caller's
- * configured preference list, and every field AUTH-22 echoes back is header-safe
+ * AUTH-16: satisfiable if and only if the scheme is `digest`, `realm` and `nonce` both carry a
+ * non-empty value, `qop` is absent or contains `auth`, the algorithm (defaulting to `MD5`) is in the
+ * caller's configured preference list, and every field AUTH-22 echoes back is header-safe
  * ({@link isHeaderSafeEcho}).
+ *
+ * "Carries realm and nonce" is read as carrying a VALUE, not merely a key. A truncated header —
+ * `Digest realm="r", nonce=` — parses to `nonce: ''`, which is AUTH-12 and AUTH-13 both behaving
+ * exactly as specified: values are stored verbatim after unquoting, and what was parsed before a
+ * malformed tail is kept. Testing `=== undefined` here accepted that and sent `nonce=""` back, a
+ * response computed over a nonce no server can have issued. The challenge is declined instead, so the
+ * next one is tried and a 401 offering nothing else surfaces unchanged (AUTH-25, AUTH-33).
  */
 function parseDigestChallenge(
   challenge: Challenge,
@@ -245,7 +252,8 @@ function parseDigestChallenge(
   if (challenge.scheme !== 'digest') return undefined;
   const realm = challenge.params.get('realm');
   const nonce = challenge.params.get('nonce');
-  if (realm === undefined || nonce === undefined) return undefined;
+  if (realm === undefined || realm === '') return undefined;
+  if (nonce === undefined || nonce === '') return undefined;
 
   const qopRaw = challenge.params.get('qop');
   const hasQop = qopRaw !== undefined;

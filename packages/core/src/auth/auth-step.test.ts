@@ -661,6 +661,32 @@ describe('authStep: repeated challenge headers (AUTH-12/AUTH-16/AUTH-25)', () =>
     expect(value).toContain('qop=auth');
   });
 
+  test('a repeated Proxy-Authenticate is read the same way (AUTH-25)', async () => {
+    const challenged = repeatedChallengeResponse(407, 'Proxy-Authenticate', [
+      'Negotiate abc123',
+      'Basic realm="p"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {basic: new BasicCredential('u', 'p')},
+      tiers: tiersFor('BASIC'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(
+      transport.calls[1]?.request.headers
+        .get('Proxy-Authorization')
+        ?.startsWith('Basic '),
+    ).toBe(true);
+  });
+});
+
+describe('authStep: one offered challenge declined, the next answered (AUTH-13/AUTH-16)', () => {
   test('a malformed FIRST entry cannot swallow a satisfiable later one (AUTH-13)', async () => {
     // The row that fixes the parse strategy rather than only the read. Comma-joining the two values
     // before parsing lets the unterminated quoted string in the first run on into the second — the
@@ -688,28 +714,30 @@ describe('authStep: repeated challenge headers (AUTH-12/AUTH-16/AUTH-25)', () =>
     );
   });
 
-  test('a repeated Proxy-Authenticate is read the same way (AUTH-25)', async () => {
-    const challenged = repeatedChallengeResponse(407, 'Proxy-Authenticate', [
-      'Negotiate abc123',
-      'Basic realm="p"',
+  test('a challenge with an empty nonce is declined and the next one answered', async () => {
+    // Both halves of the same 401: a truncated first challenge that parses to `nonce: ''`, and a
+    // well-formed second. Declining is only useful if the step then keeps looking, which is what
+    // AUTH-25's "return no header when it cannot satisfy ANY offered challenge" requires -- the
+    // quantifier is over the whole offer, not over the first entry.
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="r", nonce=',
+      'Digest realm="second", nonce="n", qop="auth"',
     ]);
     const transport = new FakeTransport([
       challenged.response,
       countingResponse(200).response,
     ]);
     const descriptor = authStep({
-      credentials: {basic: new BasicCredential('u', 'p')},
-      tiers: tiersFor('BASIC'),
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
     });
 
     await runThrough(descriptor, transport);
 
     expect(transport.sendCount).toBe(2);
-    expect(
-      transport.calls[1]?.request.headers
-        .get('Proxy-Authorization')
-        ?.startsWith('Basic '),
-    ).toBe(true);
+    expect(transport.calls[1]?.request.headers.get('Authorization')).toContain(
+      'realm="second"',
+    );
   });
 });
 

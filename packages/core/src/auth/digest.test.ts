@@ -5,7 +5,8 @@
 // (the client nonce is drawn from a CSPRNG with >= 128 bits of entropy, never a non-cryptographic RNG),
 // AUTH-15 (exactly {MD5, MD5-sess, SHA-256, SHA-256-sess}, qop=auth or absent, declines
 // auth-int and unsupported algorithms), AUTH-16 (satisfiability: scheme/realm/nonce/qop/algorithm,
-// and configured-preference order over wire order), AUTH-17 (HA1/HA2/response per RFC 7616/2069,
+// and configured-preference order over wire order -- realm and nonce must carry a VALUE, so a
+// truncated `nonce=` is declined rather than echoed back as `nonce=""`), AUTH-17 (HA1/HA2/response per RFC 7616/2069,
 // verified against independently-computed vectors), AUTH-18/AUTH-19 (nonce count: starts at 1,
 // increments only on nonce reuse, 8 lower-case hex digits, bounded and drained to the cap),
 // AUTH-20 (client nonce from crypto.getRandomValues, >=128 bits), AUTH-21 (UTF-8 vs ISO-8859-1 by
@@ -255,6 +256,33 @@ describe('digestHandler: credential validation (AUTH-9/AUTH-22)', () => {
     expect(
       handler.canHandle(digestChallenge({realm: REALM, nonce: 'nö'})),
     ).toBe(false);
+  });
+});
+
+describe('digestHandler: a realm or nonce with no value (AUTH-16)', () => {
+  test('canHandle declines an EMPTY realm or nonce, not only an absent one (AUTH-16)', () => {
+    // A truncated `WWW-Authenticate: Digest realm="r", nonce=` parses to `nonce: ''` -- AUTH-12 stores
+    // values verbatim after unquoting and AUTH-13 keeps what it parsed before the malformed tail, both
+    // correctly. The `=== undefined` test downstream then read that as present, and the client sent
+    // `nonce=""` back: a response computed over an empty nonce, which no server can have issued
+    // (audit #67 / #74). AUTH-16's "carries realm and nonce" is read as carrying a VALUE.
+    const handler = digestHandler('u', 'p');
+    expect(handler.canHandle(digestChallenge({realm: REALM, nonce: ''}))).toBe(
+      false,
+    );
+    expect(handler.canHandle(digestChallenge({realm: '', nonce: NONCE}))).toBe(
+      false,
+    );
+  });
+
+  test('rank is worst-possible for an empty realm or nonce, so a sibling wins', () => {
+    // The declining half is only useful if the composer can still get past it: `rank` and `canHandle`
+    // must agree, or a challenge that cannot be stamped would still sort first (AUTH-25's "return no
+    // header when it cannot satisfy any" applies per challenge, not per response).
+    const handler = digestHandler('u', 'p');
+    expect(handler.rank?.(digestChallenge({realm: REALM, nonce: ''}))).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
   });
 });
 
