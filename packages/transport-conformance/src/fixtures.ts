@@ -122,8 +122,10 @@ function route(
       // keeps two. Neither may LOSE one, which is what the row asserts.
       //
       // An array value in `writeHead`, not two `setHeader` calls: `setHeader` on the same name
-      // replaces, which would make the fixture single-valued and the row vacuous.
-      res.writeHead(401, {'www-authenticate': REPEATED_CHALLENGES});
+      // replaces, which would make the fixture single-valued and the row vacuous. Spread into a
+      // MUTABLE copy -- `OutgoingHttpHeader` is `string | string[]`, so a `readonly string[]` does
+      // not satisfy it, and handing the exported constant itself to `node:http` would alias it.
+      res.writeHead(401, {'www-authenticate': [...REPEATED_CHALLENGES]});
       res.end();
       return;
     case '/redirect':
