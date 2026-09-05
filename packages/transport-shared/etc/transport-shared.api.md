@@ -100,6 +100,11 @@ export function producerFailure(done: Promise<void> | undefined): Promise<never>
 // @internal
 export function pumpBody(body: Body_2): BodyPump;
 
+// Warning: (ae-internal-missing-underscore) The name "requireValidDefaultTimeoutMs" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function requireValidDefaultTimeoutMs(value: number | undefined): void;
+
 // Warning: (ae-internal-missing-underscore) The name "toDispatchFailure" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal

@@ -20,6 +20,8 @@
 // short write fails the send on the streamed path, which only this runtime can assert),
 // TRANSPORT-24/25 (a 204 and a HEAD carry a null body on this runtime as well -- Node's `fetch`
 // returns null where Bun's returns a stream, and undici's dispatcher always returns a readable),
+// HTTP-35 (a defaultTimeoutMs AbortSignal.timeout() cannot take is refused at the factory -- Node
+// throws RangeError for two of the values Bun accepts),
 // TRANSPORT-25 (the response body is a lazily-read stream and close releases it), TRANSPORT-29/SEAM-12
 // (concurrent sends), SEAM-16 (an abort after delivery must not close the delivered body).
 import assert from 'node:assert/strict';
@@ -146,9 +148,14 @@ describe('the transport adapters on the Node runtime', () => {
     });
   });
 
+  // `makeTransport` takes the transport-wide default timeout so the HTTP-35 case can build a
+  // misconfigured transport; every other case passes nothing and gets today's shape.
   for (const [name, makeTransport] of [
-    ['transport-fetch', () => fetchTransport()],
-    ['transport-undici', () => undiciTransport()],
+    ['transport-fetch', defaultTimeoutMs => fetchTransport({defaultTimeoutMs})],
+    [
+      'transport-undici',
+      defaultTimeoutMs => undiciTransport({defaultTimeoutMs}),
+    ],
   ]) {
     describe(`${name} on the Node runtime`, () => {
       it('returns a 302 raw and never follows it (TRANSPORT-1)', async () => {
@@ -285,6 +292,39 @@ describe('the transport adapters on the Node runtime', () => {
           assert.ok(response.body instanceof ReadableStream);
           await response.close();
           await response.close(); // idempotent (BODY-15)
+        } finally {
+          await transport.close();
+        }
+      });
+
+      it('refuses an unhonourable defaultTimeoutMs at the factory (HTTP-35)', async () => {
+        // Runtime-divergent, and the reason the check exists at all: `AbortSignal.timeout(1.5)` and
+        // `AbortSignal.timeout(2**32)` throw `RangeError` on Node and are accepted by Bun 1.3.14,
+        // so before audit #67 / #82 the same misconfigured transport failed every send here and
+        // silently used a different deadline there. The factory now answers identically on both,
+        // which is what this pins on the runtime that used to be the strict one.
+        for (const value of [0, -1, 1.5, 2 ** 32, Number.NaN]) {
+          assert.throws(
+            () => makeTransport(value),
+            error => {
+              assert.ok(
+                error instanceof TypeError,
+                `expected a TypeError for ${value}, got ${error?.constructor?.name}`,
+              );
+              assert.equal(isIoError(error), false);
+              assert.ok(error.message.includes(String(value)), error.message);
+              return true;
+            },
+          );
+        }
+        // And a legitimate default still builds something that sends.
+        const transport = makeTransport(30_000);
+        try {
+          const response = await transport.send(
+            Request.newBuilder().url(`${origin}/echo`).build(),
+          );
+          assert.equal(response.status.code, 200);
+          await response.close();
         } finally {
           await transport.close();
         }

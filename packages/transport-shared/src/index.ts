@@ -9,6 +9,7 @@ export {
   pumpBody,
   type BodyPump,
 } from './body-pump.js';
+export {requireValidDefaultTimeoutMs} from './default-timeout.js';
 export {
   isPermanentDispatchFailure,
   toDispatchFailure,

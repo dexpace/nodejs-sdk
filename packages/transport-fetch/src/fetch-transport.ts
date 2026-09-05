@@ -22,6 +22,7 @@ import {
   materializeBody,
   producerFailure,
   pumpBody,
+  requireValidDefaultTimeoutMs,
   toDispatchFailure,
   type ForkedSignal,
   type HeaderDropLogging,
@@ -85,7 +86,13 @@ const MAX_MATERIALIZED_BODY_BYTES = 1_000_000;
 export interface FetchTransportOptions {
   /** How dropped header names are logged (TRANSPORT-13); defaults to `'first-per-name'`. */
   readonly headerDropLogging?: HeaderDropLogging;
-  /** A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own. */
+  /**
+   * A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own.
+   *
+   * An integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s
+   * range and so the only one any transport can honour; anything else is refused by
+   * {@link fetchTransport} rather than by the first send (HTTP-35).
+   */
   readonly defaultTimeoutMs?: number;
   /** A custom `fetch` implementation; defaults to `globalThis.fetch`. */
   readonly fetch?: FetchLike;
@@ -223,6 +230,9 @@ class FetchTransport implements Transport {
   readonly #defaultTimeoutMs: number | undefined;
 
   constructor(options: FetchTransportOptions) {
+    // Before anything else: a default no `AbortSignal.timeout()` can take is a caller error, and
+    // HTTP-35 puts it where it was supplied rather than at the first send (audit #67 / #82).
+    requireValidDefaultTimeoutMs(options.defaultTimeoutMs);
     this.#logDrops = createDropLogger(
       options.headerDropLogging ?? 'first-per-name',
     );
@@ -377,6 +387,9 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  *
  * @param options - optional transport settings.
  * @returns a transport ready to send; release it with `close()`.
+ * @throws `TypeError` when `defaultTimeoutMs` is not an integer number of milliseconds in
+ * `1 .. 2**32 - 1` — `AbortSignal.timeout()`'s range, and therefore the only one a per-call
+ * deadline can be built from.
  *
  * @public
  */

@@ -157,12 +157,20 @@ path, treat a file body as an ordinary `Body` and let `writeTo` produce the byte
 zero-copy clause is a SHOULD, and its MUSTs — replayable, and exactly the declared range on the
 wire — are the descriptor's to keep, not yours.
 
-**12. Refuse a proxy you cannot honour, at construction** (`TRANSPORT-30`). `ProxyType` admits
-`socks4` and `socks5`, and core resolves both from `ALL_PROXY`, so a configuration can hand you a
-proxy your client cannot build. Reject it in the factory with a typed error that names the type,
-before you allocate anything — not on the first send, where it arrives as whatever the native
+**12. Refuse at construction what you cannot honour** (`TRANSPORT-30`, `HTTP-35`). `ProxyType`
+admits `socks4` and `socks5`, and core resolves both from `ALL_PROXY`, so a configuration can hand
+you a proxy your client cannot build. Reject it in the factory with a typed error that names the
+type, before you allocate anything — not on the first send, where it arrives as whatever the native
 client raises. Keep it outside the `IoError` tree: `retry/classify.ts` is an allow-list, so a
 misconfiguration no retry can fix is then non-retryable for free. Declare it in `@throws`.
+
+A transport-wide default timeout is the same shape of decision. It ends up in
+`AbortSignal.timeout()`, whose range is an integer in `1 .. 2**32 - 1`, and nothing downstream will
+check it for you: `RequestOptions.timeoutMs` is validated at its setter, so an unchecked
+`defaultTimeoutMs` is the last path by which `1.5` or `2**32` reaches a deadline — where Node throws
+a `RangeError` on the first send and Bun 1.3.14 quietly accepts it. Call
+`requireValidDefaultTimeoutMs(value)` from `@dexpace/transport-shared` first thing in your
+constructor, before anything is allocated.
 
 **13. Send a real `User-Agent`** (`NFR-15`), never a placeholder. `getBuildInfo()` supplies the tokens.
 
@@ -179,14 +187,18 @@ runTransportConformanceSuite('my-transport', () => myTransport(), {
   supportsInternalCancel: false, // TRANSPORT-8: a cancel path distinct from a caller abort
   supportsProxy: false,          // TRANSPORT-30
   dropsConnectionHeader: true,   // TRANSPORT-11: is `Connection` in your drop set?
+  // HTTP-35, required: the rows hand this values `AbortSignal.timeout()` refuses and expect your
+  // factory to refuse them too, rather than deferring the failure to the first send.
+  buildWithDefaultTimeoutMs: value => myTransport({defaultTimeoutMs: value}),
   // TRANSPORT-30, optional: a proxy type your configuration can express and your client cannot
   // honour. Omit it and the row asserts `supportsProxy` is false, rather than skipping.
   // unsupportedProxy: {type: 'socks5', build: () => myTransport({proxy: socks5Proxy})},
 });
 ```
 
-Those capability entries are the only clauses §17 scopes to a subset of transports; everything else
-runs unconditionally. The suite starts its own fixture server, and a second one on a separate origin
+Those capability entries are the clauses §17 scopes to a subset of transports, plus the one builder
+the suite needs to construct a deliberately misconfigured transport; everything else runs
+unconditionally. The suite starts its own fixture server, and a second one on a separate origin
 for the rows that deliberately leave a connection unusable — a client that reuses a poisoned
 connection otherwise fails thirty rows downstream, which is a debugging problem of a different order.
 
@@ -197,12 +209,13 @@ The package is `private` and its `exports` name `./src/index.ts`, so it resolves
 
 `@dexpace/transport-shared` exists so the algorithm both adapters need exists once. Its exports are
 `@internal` and it is not a package to install directly, but reading it is the fastest way to see
-what a correct implementation of rules 2, 3, 4, 5, 6, 8 and 9 looks like:
+what a correct implementation of rules 2, 3, 4, 5, 6, 8, 9 and 12 looks like:
 
 | Module | Concern |
 |---|---|
 | `header-mapping.ts` | Rules 2 and 3: the outbound drop-and-degrade pass, and the lenient inbound copy |
 | `drop-log.ts` | Bounded, case-insensitive, drain-to-cap dedup of already-logged drop names |
+| `default-timeout.ts` | Rule 12: the range check a transport-wide default timeout has to pass |
 | `dispatch-classification.ts` | Rule 4: the one table deciding permanent-versus-retryable for a native rejection |
 | `body-less.ts` | Rule 8: which method/status pairs can carry no response body at all |
 | `abort-mapping.ts` | Rule 5's single mapping from an aborted signal to `TransportFailureError` or `CancellationError` |

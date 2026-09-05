@@ -29,6 +29,7 @@ import {
   materializeBody,
   producerFailure,
   pumpBody,
+  requireValidDefaultTimeoutMs,
   toDispatchFailure,
   type BodyPump,
   type ForkedSignal,
@@ -111,7 +112,13 @@ export interface UndiciTransportOptions {
   readonly proxy?: ProxyOptions;
   /** How dropped header names are logged (TRANSPORT-13); defaults to `'first-per-name'`. */
   readonly headerDropLogging?: HeaderDropLogging;
-  /** A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own. */
+  /**
+   * A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own.
+   *
+   * An integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s
+   * range and so the only one any transport can honour; anything else is refused by
+   * {@link undiciTransport} rather than by the first send (HTTP-35).
+   */
   readonly defaultTimeoutMs?: number;
   /** `Agent` options, used only when no `dispatcher` is supplied. */
   readonly agentOptions?: Agent.Options;
@@ -472,6 +479,9 @@ class UndiciTransport implements Transport {
   #closing: Promise<void> | undefined;
 
   constructor(options: UndiciTransportOptions) {
+    // Before `selectDispatchers` allocates anything: a refusal afterwards would leak the agents it
+    // built, with no transport for the caller to close them through (audit #67 / #82).
+    requireValidDefaultTimeoutMs(options.defaultTimeoutMs);
     this.#dispatchers = selectDispatchers(options);
     this.#proxy = options.proxy;
     this.#logDrops = createDropLogger(
@@ -684,9 +694,10 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  *
  * @param options - optional transport settings.
  * @returns a transport ready to send; release it with `close()`.
- * @throws `TypeError` when both `dispatcher` and `proxy` are supplied, or when `proxy.type` is
+ * @throws `TypeError` when both `dispatcher` and `proxy` are supplied; when `proxy.type` is
  * anything but `http` — undici's `ProxyAgent` cannot carry a SOCKS proxy, and neither can
- * `@dexpace/transport-fetch`, which has no proxy option at all.
+ * `@dexpace/transport-fetch`, which has no proxy option at all; or when `defaultTimeoutMs` is not
+ * an integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s range.
  *
  * @public
  */

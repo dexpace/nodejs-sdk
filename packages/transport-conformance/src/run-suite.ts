@@ -3,6 +3,8 @@
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
 // drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..29, BODY-13,
 // RETRY-2 (a permanent misconfiguration is outside the retryable IoError tree),
+// HTTP-35 (a transport-wide default timeout outside AbortSignal.timeout()'s range is refused at the
+// factory),
 // SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
@@ -76,6 +78,19 @@ export interface TransportCapabilities {
    * be handed — the row then asserts that omission is the truth rather than skipping.
    */
   readonly unsupportedProxy?: UnsupportedProxy;
+  /**
+   * HTTP-35: builds a transport whose transport-wide default timeout is `value`.
+   *
+   * Required, not a capability flag, because §17 assumes every transport has one — TRANSPORT-5 is
+   * written as "a per-call override … overriding the configured default for that call only". The
+   * rows hand it values `AbortSignal.timeout()` cannot take and expect the factory to refuse them,
+   * because a default nobody checked is the last path by which such a value reaches a deadline
+   * (`RequestOptions.timeoutMs` has been checked at its setter since audit #67 / #76).
+   *
+   * Typed `number` on purpose: `0`, `-1`, `1.5`, `2**32` and `NaN` are all legitimately `number`,
+   * so the row needs no cast to express what it is testing.
+   */
+  buildWithDefaultTimeoutMs(value: number): Transport;
 }
 
 /** What every row below needs: a transport factory, the live fixture origin, and the capability flags. */
@@ -976,6 +991,60 @@ function registerProxyRefusalRows(ctx: SuiteContext): void {
   });
 }
 
+/**
+ * Defaults `AbortSignal.timeout()` refuses. `1.5` and `2**32` are the two Bun 1.3.14 accepts and
+ * Node rejects with a `RangeError`, which is what made an unvalidated default a per-runtime
+ * behaviour rather than a per-caller error.
+ */
+const UNHONOURABLE_TIMEOUTS: readonly number[] = [
+  0,
+  -1,
+  1.5,
+  2 ** 32,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+];
+
+function registerDefaultTimeoutRows(ctx: SuiteContext): void {
+  describe('HTTP-35, TRANSPORT-5: an unhonourable default timeout is refused at construction', () => {
+    for (const value of UNHONOURABLE_TIMEOUTS) {
+      test(`a default of ${String(value)} fails the factory, not the first send`, () => {
+        let thrown: unknown;
+        try {
+          // A transport that returns instead of throwing has deferred the failure to the first
+          // send, where it arrives as a raw `RangeError` out of `AbortSignal.timeout()` on Node --
+          // or, on Bun, as no failure at all and a deadline nobody asked for.
+          void ctx.capabilities.buildWithDefaultTimeoutMs(value);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(TypeError);
+        // The same shape every other construction-time refusal in these transports has, and
+        // outside the IoError tree for the same reason (RETRY-2).
+        expect(isIoError(thrown)).toBe(false);
+        // "Discoverable": the message names the value that was refused.
+        expect((thrown as Error).message).toContain(String(value));
+      });
+    }
+
+    test('a default inside the range builds a transport that still sends', async () => {
+      // The twin: narrowing the accepted range must not reject a legitimate default. 30s is the
+      // shape a caller actually configures, and the send proves the value reached `composeSignal`
+      // without tripping it.
+      await withTransport(
+        () => ctx.capabilities.buildWithDefaultTimeoutMs(30_000),
+        async transport => {
+          const response = await transport.send(
+            Request.newBuilder().url(ctx.url('/echo-headers')).build(),
+          );
+          expect(response.status.code).toBe(200);
+          await response.close();
+        },
+      );
+    });
+  });
+}
+
 function registerScopedRows(ctx: SuiteContext): void {
   if (ctx.capabilities.supportsInternalCancel) {
     describe('TRANSPORT-8: an internal cancel is told apart from a timeout', () => {
@@ -1067,6 +1136,7 @@ export function runTransportConformanceSuite(
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerProxyRefusalRows(ctx);
+    registerDefaultTimeoutRows(ctx);
     registerScopedRows(ctx);
   });
 }
