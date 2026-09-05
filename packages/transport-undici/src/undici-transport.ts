@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-undici/src/undici-transport.ts
-import {createReadStream} from 'node:fs';
 import {createRequire} from 'node:module';
 import {Readable} from 'node:stream';
 import type {ReadableStream as NodeReadableStream} from 'node:stream/web';
@@ -13,8 +12,8 @@ import {
   Status,
   TransportFailureError,
   type Body,
-  type FileBodyDescriptor,
   type ProxyOptions,
+  type ProxyType,
   type Request,
   type RequestOptions,
   type Transport,
@@ -24,11 +23,14 @@ import {
   createDropLogger,
   degradeInboundHeaders,
   forkSignal,
+  hasNoResponseBody,
   isMaterializable,
   mapOutboundHeaders,
   materializeBody,
   producerFailure,
   pumpBody,
+  requireValidDefaultTimeoutMs,
+  toDispatchFailure,
   type BodyPump,
   type ForkedSignal,
   type HeaderDropLogging,
@@ -52,13 +54,26 @@ const require = createRequire(import.meta.url);
 const undici = require('undici/index.js') as typeof import('undici');
 
 /**
- * TRANSPORT-11's outbound drop set for this transport. `connection` is deliberately absent — §17's
- * own note is that an undici-class transport forwards it rather than dropping it.
+ * TRANSPORT-11's outbound drop set for this transport: the three framing headers undici computes
+ * itself, plus the three it refuses outright.
+ *
+ * `expect`, `keep-alive` and `upgrade` are undici's unconditional rejections
+ * (`lib/core/request.js:398,409` in 6.28.0 — `InvalidArgumentError` for the first two,
+ * `NotSupportedError` for `expect`). Until 2026-09-05 they were absent, so a caller who set any of
+ * them got a failed send out of `undiciTransport().send()` where the fetch twin dispatched
+ * (audit #67 / #81). TRANSPORT-12 says the header is what gives way, not the request.
+ *
+ * `connection` is deliberately absent — §17's own note is that an undici-class transport forwards
+ * it rather than dropping it. undici carries only `close` and `keep-alive`, so a third value is
+ * dropped per-request by {@link isUnsendableHeader} rather than by name here.
  */
 const UNDICI_FORBIDDEN_HEADERS: readonly string[] = [
   'content-length',
   'host',
   'transfer-encoding',
+  'expect',
+  'keep-alive',
+  'upgrade',
 ];
 
 /**
@@ -87,11 +102,23 @@ export interface UndiciTransportOptions {
    * (SEAM-14); supplying it together with `proxy` is a construction-time error.
    */
   readonly dispatcher?: Dispatcher;
-  /** Proxy configuration; the transport constructs and owns the resulting `ProxyAgent`. */
+  /**
+   * Proxy configuration; the transport constructs and owns the resulting `ProxyAgent`.
+   *
+   * `type` must be `http`. undici's `ProxyAgent` is an HTTP `CONNECT` tunnel, so the `socks4` and
+   * `socks5` values `ProxyType` also admits — which core resolves from `ALL_PROXY` — are refused at
+   * construction rather than at the first send (TRANSPORT-30).
+   */
   readonly proxy?: ProxyOptions;
   /** How dropped header names are logged (TRANSPORT-13); defaults to `'first-per-name'`. */
   readonly headerDropLogging?: HeaderDropLogging;
-  /** A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own. */
+  /**
+   * A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own.
+   *
+   * An integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s
+   * range and so the only one any transport can honour; anything else is refused by
+   * {@link undiciTransport} rather than by the first send (HTTP-35).
+   */
   readonly defaultTimeoutMs?: number;
   /** `Agent` options, used only when no `dispatcher` is supplied. */
   readonly agentOptions?: Agent.Options;
@@ -105,6 +132,38 @@ interface DispatcherSet {
   readonly direct: Dispatcher;
   /** Dispatchers this transport constructed; empty for a caller-supplied one (SEAM-14). */
   readonly owned: readonly Dispatcher[];
+}
+
+/**
+ * The one `ProxyOptions.type` this transport can build a dispatcher for.
+ *
+ * undici's `ProxyAgent` is an HTTP `CONNECT` tunnel and takes its `uri` as a URL, so a `socks5://`
+ * or `socks4://` one throws `InvalidArgumentError('Invalid URL protocol: …')` out of its
+ * constructor. Core resolves `ALL_PROXY=socks5://host:1080` to `type: 'socks5'` quite legitimately
+ * (`config/proxy.ts:372-380`, CFG-22), so the configuration can express a proxy neither shipped
+ * transport can honour, and until 2026-09-05 the way you found out was an undici error escaping a
+ * public factory untyped and undocumented (audit #67 / #81, `docs/deviations.md`).
+ */
+const SUPPORTED_PROXY_TYPE: ProxyType = 'http';
+
+/**
+ * TRANSPORT-30's "make the limitation discoverable rather than silently misbehaving", applied at
+ * the earliest point that can: construction, before any dispatcher is allocated.
+ *
+ * A `TypeError`, matching {@link selectDispatchers}' other construction-time refusal and
+ * deliberately outside the `IoError` tree — `retry/classify.ts` is an allow-list, so a
+ * misconfiguration that no retry can fix is non-retryable for free (RETRY-2).
+ *
+ * @param proxy - the configured proxy.
+ * @throws `TypeError` when `proxy.type` is anything but `http`.
+ */
+function requireSupportedProxyType(proxy: ProxyOptions): void {
+  if (proxy.type === SUPPORTED_PROXY_TYPE) return;
+  throw new TypeError(
+    `unsupported proxy type \`${proxy.type}\`: undici's ProxyAgent is an HTTP CONNECT tunnel and ` +
+      'cannot carry a SOCKS proxy, and @dexpace/transport-fetch has no proxy support at all. ' +
+      'Configure an http proxy, or route SOCKS outside this SDK.',
+  );
 }
 
 /**
@@ -137,6 +196,9 @@ function selectDispatchers(options: UndiciTransportOptions): DispatcherSet {
     const byo = options.dispatcher;
     return {proxied: byo, direct: byo, owned: []};
   }
+  // Before anything is allocated: a refusal after `new undici.Agent(...)` would leak the direct
+  // agent on the way out, with no transport for the caller to close it through.
+  if (options.proxy !== undefined) requireSupportedProxyType(options.proxy);
   // Agent, not Pool: a Pool is bound to one origin at construction, but a general-purpose Transport
   // must reach whatever origin each Request names.
   const direct = new undici.Agent(options.agentOptions);
@@ -146,7 +208,52 @@ function selectDispatchers(options: UndiciTransportOptions): DispatcherSet {
   return {proxied, direct, owned: [proxied, direct]};
 }
 
-/** undici's flat `[name, value, name, value, ...]` form -- the only shape that keeps a repeated name repeated (HTTP-14). */
+/**
+ * RFC 9110 `token`, which is what undici's `isValidHTTPToken` enforces on every header name
+ * (`lib/core/util.js:547-587`): VCHAR minus the delimiters `"(),/:;<=>?@[\]{}`. Anchored and
+ * one-or-more, so the empty name undici also rejects fails here too.
+ *
+ * `@dexpace/core` is deliberately laxer: `hasForbiddenNameByte` admits every printable ASCII byte
+ * (`http/ascii-validation.ts:29-33`), so `X Custom` is a model-valid name that no native client on
+ * this platform will carry.
+ */
+const RFC9110_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
+
+/** The only two `Connection` values undici carries; anything else is `InvalidArgumentError`. */
+const FORWARDABLE_CONNECTION_VALUES: ReadonlySet<string> = new Set([
+  'close',
+  'keep-alive',
+]);
+
+/**
+ * Whether undici's own request validation would reject this header, which for TRANSPORT-12 means it
+ * is dropped rather than allowed to fail the send.
+ *
+ * Only the *name* grammar and the `connection` value are checked. undici's value grammar
+ * (`headerCharRegex`, `lib/core/util.js:598`) admits HTAB, 0x20-0x7E **and** obs-text 0x80-0xFF,
+ * which is strictly wider than the outbound value rule `mapOutboundHeaders` has already applied
+ * (HTTP-18), so no value that reaches here can fail there.
+ *
+ * @param name - the header name, as the caller spelled it.
+ * @param value - the header value.
+ * @returns `true` when the header must be dropped instead of dispatched.
+ */
+function isUnsendableHeader(name: string, value: string): boolean {
+  if (!RFC9110_TOKEN.test(name)) return true;
+  return (
+    name.toLowerCase() === 'connection' &&
+    !FORWARDABLE_CONNECTION_VALUES.has(value.toLowerCase())
+  );
+}
+
+/**
+ * undici's flat `[name, value, name, value, ...]` form -- the only shape that keeps a repeated name
+ * repeated (HTTP-14) -- with every header undici would refuse degraded to a logged drop.
+ *
+ * The per-header guard is the same degrade `@dexpace/transport-fetch` gets for free from wrapping
+ * `Headers.append` in a `try`/`catch` (`fetch-transport.ts:159-166`): undici validates at dispatch
+ * rather than at construction, so this transport has to ask the question itself (TRANSPORT-12).
+ */
 function toUndiciHeaders(
   request: Request,
   forbidden: readonly string[],
@@ -155,8 +262,14 @@ function toUndiciHeaders(
   const {sent, dropped} = mapOutboundHeaders(request.headers, forbidden, {
     bodyDerivedMediaType: request.body?.mediaType,
   });
-  logDrops(dropped);
-  return [...sent.entries()].flat();
+  const degraded = [...dropped];
+  const flat: string[] = [];
+  for (const [name, value] of sent.entries()) {
+    if (isUnsendableHeader(name, value)) degraded.push(name);
+    else flat.push(name, value);
+  }
+  logDrops(degraded);
+  return flat;
 }
 
 /**
@@ -172,44 +285,28 @@ const NATIVE_CANCEL_CODES: ReadonlySet<string> = new Set([
   'UND_ERR_CLOSED',
 ]);
 
-/**
- * undici's codes for "these arguments can never work", as opposed to "this exchange failed". Both are
- * raised by argument validation and are perfectly reproducible, so classifying them as
- * `TransportFailureError` would hand `classify.ts` an always-retryable verdict (it returns `true` for
- * every `IoError`) and spend a caller's whole retry budget re-proving a permanent misconfiguration.
- * The commonest way to reach one is a bring-your-own `ProxyAgent` plus a per-request
- * `Proxy-Authorization`: `UNDICI_PROXIED_FORBIDDEN_HEADERS` only drops that header when this
- * transport constructed the proxy itself, so with a BYO dispatcher it reaches `dispatch` and is
- * rejected outright.
- */
-const TERMINAL_ARGUMENT_CODES: ReadonlySet<string> = new Set([
-  'UND_ERR_INVALID_ARG',
-  'UND_ERR_NOT_SUPPORTED',
-]);
-
-function errorCode(error: unknown): string | undefined {
-  const code = (error as {code?: unknown} | null | undefined)?.code;
-  return typeof code === 'string' ? code : undefined;
-}
-
 function isNativeCancel(error: unknown): boolean {
-  const code = errorCode(error);
-  return code !== undefined && NATIVE_CANCEL_CODES.has(code);
+  const code = (error as {code?: unknown} | null | undefined)?.code;
+  return typeof code === 'string' && NATIVE_CANCEL_CODES.has(code);
 }
 
 /**
- * Maps one dispatch failure onto the SDK's error vocabulary. Extracted from `#dispatch` so the four
+ * Maps one dispatch failure onto the SDK's error vocabulary. Extracted from `#dispatch` so the
  * branches read as one classification table rather than as control flow wrapped around a call.
  *
+ * Only the first two branches are this transport's own. The permanent-versus-retryable question the
+ * third asks is `@dexpace/transport-shared`'s {@link toDispatchFailure}, because the two shipped
+ * adapters answered it oppositely for the same condition until audit #67 / #82: `ftp://` is
+ * `UND_ERR_INVALID_ARG` here and a `fetch failed` with an `unknown scheme` cause over there, and
+ * only this transport treated it as permanent. A shared table is what keeps that from recurring —
+ * the same reason `abort-mapping.ts` exists.
+ *
  * @param error - whatever the dispatch rejected with.
- * @param signal - the forked signal the dispatch was given, if any.
+ * @param signal - the forked signal the dispatch was given.
  * @returns the error to throw; never returns normally without one.
  */
-function toDispatchError(
-  error: unknown,
-  signal: AbortSignal | undefined,
-): Error {
-  if (signal?.aborted) return abortToSdkError(signal, error);
+function toDispatchError(error: unknown, signal: AbortSignal): Error {
+  if (signal.aborted) return abortToSdkError(signal, error);
   if (isNativeCancel(error)) {
     // TRANSPORT-8: terminal, never retryable -- the dispatcher this send was routed over no longer
     // exists, so a retry over it cannot succeed.
@@ -217,22 +314,7 @@ function toDispatchError(
       cause: error,
     });
   }
-  const code = errorCode(error);
-  if (code !== undefined && TERMINAL_ARGUMENT_CODES.has(code)) {
-    // Deliberately outside the IoError tree: `classify.ts` is an allow-list, so anything that is not
-    // an IoError, a timeout, or a retryable status is non-retryable for free (RETRY-2). `TypeError`
-    // matches `selectDispatchers`, which already reports a caller misconfiguration that way.
-    return new TypeError(
-      error instanceof Error
-        ? error.message
-        : 'undici rejected the request arguments',
-      {cause: error},
-    );
-  }
-  return new TransportFailureError(
-    error instanceof Error ? error.message : 'undici dispatch failed',
-    {cause: error},
-  );
+  return toDispatchFailure(error, 'undici dispatch failed');
 }
 
 /** What undici accepts as a request body; `undefined` is not one of them, `null` is. */
@@ -245,33 +327,29 @@ interface PreparedBody {
 }
 
 /**
- * TRANSPORT-28's recognition contract, in one named place: a plain string-literal check, never a
- * cross-package `instanceof` against `@dexpace/body-file` (which this package does not depend on).
- * `Body.kind` is a union on one interface rather than a discriminated union of interfaces, so the
- * narrowing has to be spelled out as a predicate.
+ * Prepares one request body for dispatch: buffer it if it is small and replayable, stream it
+ * otherwise. Exactly the two decisions the fetch twin makes, in the same order, and deliberately so
+ * — there is **no** `kind === 'file'` branch here.
+ *
+ * There was one until 2026-09-05. It handed `createReadStream(path, {start, end})` to undici, which
+ * is a genuinely shorter path to the wire — one fewer userspace copy — and it bypassed the
+ * descriptor's own `writeTo`, so `@dexpace/body-file`'s `transferred === count` invariant never ran
+ * (BODY-13). `content-length` is dropped outbound, so undici framed the body chunked and the wire
+ * could not detect the short write either: a file truncated between `stat` and `send` POSTed its
+ * remaining bytes and resolved 200, where the fetch transport raised `TransportFailureError`
+ * (audit #67 / #81). A file body is now written through `writeTo` like any other, which is what
+ * makes BODY-13 hold on both transports and what the shared conformance row asserts.
+ *
+ * TRANSPORT-28's SHOULD is not thereby abandoned so much as re-described: no user-space path in
+ * either client reaches `sendfile(2)`, which `docs/deviations.md` item 13 has recorded since Phase
+ * 8a, and the clause's MUST — a file body is replayable, and exactly its declared byte range reaches
+ * the wire — is honoured by the descriptor itself, on both transports, by the same code.
+ *
+ * The zero-count case needs no branch either: `isMaterializable` admits `contentLength === 0`, and
+ * `materializeBody` returns an empty buffer without ever opening a read stream.
  */
-function isFileBody(body: Body): body is FileBodyDescriptor {
-  return body.kind === 'file';
-}
-
 async function prepareBody(body: Body | undefined): Promise<PreparedBody> {
   if (body === undefined) return {init: null, pump: undefined};
-  if (isFileBody(body)) {
-    // An empty range is not a degenerate read stream: `createReadStream` throws ERR_OUT_OF_RANGE the
-    // moment `end` (start + count - 1) falls below `start`, so a zero-count file body has to become
-    // an explicit empty body rather than a stream nobody can open.
-    if (body.count === 0) return {init: new Uint8Array(0), pump: undefined};
-    // TRANSPORT-28: dispatch straight off the file, honoring start/count, rather than routing the
-    // bytes through a userspace TransformStream first. The closest available approximation of the
-    // reference's zero-copy path -- see the Deviation Ledger for why a literal one does not exist.
-    return {
-      init: createReadStream(body.path, {
-        start: body.start,
-        end: body.start + body.count - 1,
-      }),
-      pump: undefined,
-    };
-  }
   if (isMaterializable(body, MAX_MATERIALIZED_BODY_BYTES)) {
     try {
       return {init: await materializeBody(body), pump: undefined};
@@ -331,7 +409,12 @@ function adaptResponse(
   const raw: [string, string][] = [];
   for (const [name, value] of Object.entries(result.headers)) {
     if (value === undefined) continue;
-    // An array means a genuinely repeated header (Set-Cookie); keep each value its own entry.
+    // An array means a genuinely repeated header -- undici arrays ANY name it saw more than once,
+    // not just `Set-Cookie`. Keep each value its own entry: `WWW-Authenticate` and
+    // `Proxy-Authenticate` arrive this way from a server following RFC 7616 3.3, and collapsing them
+    // to the first would hide every challenge after it (audit #67 / #74). `@dexpace/transport-fetch`
+    // comma-joins the same response, which RFC 9110 5.3 makes equivalent; the conformance row
+    // `a repeated inbound header keeps every value` asserts the two agree on the list.
     if (Array.isArray(value)) for (const each of value) raw.push([name, each]);
     else raw.push([name, value]);
   }
@@ -346,7 +429,15 @@ function adaptResponse(
       .protocol(Protocol.HTTP_1_1)
       .status(Status.of(result.statusCode))
       .headers(headers)
-      .body(toDemandDrivenStream(result.body))
+      // undici's dispatcher always hands back a `BodyReadable`, even for a 204, a 304 or a HEAD --
+      // so wrapping it unconditionally gave a caller an empty stream it had to read to discover
+      // was empty, where the fetch twin on Node gave `null`. The two adapters now decide by the
+      // same rule; `#exchange` dumps whatever this declines (audit #67 / #82).
+      .body(
+        hasNoResponseBody(request.method, result.statusCode)
+          ? null
+          : toDemandDrivenStream(result.body),
+      )
       .build()
   );
 }
@@ -388,6 +479,9 @@ class UndiciTransport implements Transport {
   #closing: Promise<void> | undefined;
 
   constructor(options: UndiciTransportOptions) {
+    // Before `selectDispatchers` allocates anything: a refusal afterwards would leak the agents it
+    // built, with no transport for the caller to close them through (audit #67 / #82).
+    requireValidDefaultTimeoutMs(options.defaultTimeoutMs);
     this.#dispatchers = selectDispatchers(options);
     this.#proxy = options.proxy;
     this.#logDrops = createDropLogger(
@@ -450,7 +544,7 @@ class UndiciTransport implements Transport {
     // which is exactly the in-flight window this check is about.
     const dispatched = context.fork.signal;
 
-    if (dispatched?.aborted) {
+    if (dispatched.aborted) {
       // TRANSPORT-9 / SEAM-30: this response will never reach a caller, so this producer closes it.
       await result.body.dump().catch(() => undefined);
       await pump?.abandon(dispatched.reason);
@@ -460,6 +554,12 @@ class UndiciTransport implements Transport {
     try {
       // TRANSPORT-22: a live socket is in hand, so any throw here must release it before propagating.
       const response = adaptResponse(request, result, this.#logDrops);
+      if (response.body === null) {
+        // Nothing references the `BodyReadable` any more, and an undrained one holds the pooled
+        // connection open until the dispatcher times it out (TRANSPORT-25, SEAM-30). `dump` reads
+        // and discards, which is what returns the socket to the pool.
+        await result.body.dump().catch(() => undefined);
+      }
       this.#reportProxyChallenge(response);
       return response;
     } catch (error) {
@@ -493,9 +593,9 @@ class UndiciTransport implements Transport {
           method: request.method,
           headers: context.headers,
           body: context.body,
-          // `?? null` rather than an omitted key: `exactOptionalPropertyTypes` makes an explicit
-          // `undefined` a distinct, rejected value here, and undici reads `null` as "no signal".
-          signal: context.fork.signal ?? null,
+          // Always a real signal since audit #67 / #82: the fork is this transport's own
+          // cancellation handle, not merely a relay for the caller's.
+          signal: context.fork.signal,
           // TRANSPORT-1: pinned explicitly rather than inherited -- a BYO dispatcher may carry a
           // redirect interceptor, and the pipeline is the single redirect authority.
           maxRedirections: 0,
@@ -503,8 +603,16 @@ class UndiciTransport implements Transport {
         producerFailure(pump?.done),
       ]);
     } catch (error) {
+      // Read BEFORE the fork is pulled below, or every producer failure would look like a caller
+      // abort and surface as a CancellationError.
+      const mapped = toDispatchError(error, context.fork.signal);
       await pump?.abandon(error);
-      throw toDispatchError(error, context.fork.signal);
+      // TRANSPORT-9: when the producer lost the race, undici is still dispatching. Nothing awaits
+      // it any more, so a response that arrives later would be dropped with its `BodyReadable`
+      // neither read nor destroyed, holding the pooled connection. Pulling the fork takes the
+      // dispatch down instead; on the path where undici itself rejected it is inert.
+      context.fork.abort(error);
+      throw mapped;
     }
   }
 
@@ -586,7 +694,10 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  *
  * @param options - optional transport settings.
  * @returns a transport ready to send; release it with `close()`.
- * @throws `TypeError` when both `dispatcher` and `proxy` are supplied.
+ * @throws `TypeError` when both `dispatcher` and `proxy` are supplied; when `proxy.type` is
+ * anything but `http` — undici's `ProxyAgent` cannot carry a SOCKS proxy, and neither can
+ * `@dexpace/transport-fetch`, which has no proxy option at all; or when `defaultTimeoutMs` is not
+ * an integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s range.
  *
  * @public
  */

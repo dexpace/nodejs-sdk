@@ -3,8 +3,12 @@
 // Exercises: PAGE-16 (cursor: single body read, null OR empty ends, configurable parameter), PAGE-17
 // (page-number: empty items ends, start-page fallback on absent/empty/garbage, configurable name and start),
 // PAGE-18/19/20 (link header: rel=next, RFC 3986 reference resolution, query-only reference preserves the path,
-// unresolvable target ends the stream without throwing).
+// unresolvable target ends the stream without throwing, and the spec's own `<not a url>` conformance fixture
+// resolving as a relative reference instead -- recorded as a deliberate reading in docs/deviations.md under
+// "Deviations recorded outside a phase" (2026-09-04, audit #67 / #69)), PAGE-22 (a server-supplied cursor with
+// no UTF-8 form fails inside the error tree).
 import {expect, test} from 'bun:test';
+import {DexpaceError, UrlConstructionError} from '../http/errors.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {
@@ -208,6 +212,33 @@ test('an unresolvable target ends the stream rather than throwing (PAGE-19)', as
   expect(info.items).toEqual(['a']);
 });
 
+test("the spec's `<not a url>` fixture is a RELATIVE reference, so it is followed (PAGE-19)", async () => {
+  // PAGE-19's conformance note (`docs/product-spec/12-pagination.md:52`) gives `<not a url>; rel=next` as an
+  // example of "stream ends, no exception". Under WHATWG URL — the resolver `strategies.ts` uses, and the
+  // only one available without a runtime dependency (SEAM-1) — a base makes that string a perfectly valid
+  // relative path reference: it resolves to `/repo/not%20a%20url`. The requirement's own normative sentence
+  // is "a target that CANNOT RESOLVE into a valid URL", and this one resolves, so the port follows it. Only
+  // the illustrative fixture disagrees; the test below keeps the end-of-stream half honest with a target that
+  // genuinely fails to resolve. Recorded in `docs/deviations.md`, "Deviations recorded outside a phase" —
+  // rejected alternative: an ad-hoc "looks unparseable" heuristic in front of the resolver.
+  const strategy = linkHeaderStrategy<string>({
+    extract: () => Promise.resolve(['a']),
+  });
+  const info = await strategy.parse(
+    response({
+      url: 'https://api.test/repo/issues?page=1',
+      headers: {link: ['<not a url>; rel="next"']},
+    }),
+    template('https://api.test/repo/issues?page=1'),
+  );
+  expect(
+    () => new URL('not a url', 'https://api.test/repo/issues'),
+  ).not.toThrow();
+  expect(info.nextRequest?.url.href).toBe(
+    'https://api.test/repo/not%20a%20url',
+  );
+});
+
 test('the fixture above really is unparseable — the guard is not vacuous (PAGE-19)', () => {
   expect(() => new URL('http://[', 'https://api.test/items')).toThrow();
   // And the near-miss that does NOT throw, pinned so nobody "simplifies" the fixture back to it later.
@@ -264,4 +295,41 @@ test('one strategy instance is safe across two concurrent walks (PAGE-5)', async
   ]);
   expect(first.nextRequest?.url.search).toBe('?page=2');
   expect(second.nextRequest?.url.search).toBe('?page=10');
+});
+
+// ---- a server-supplied component with no UTF-8 form (PAGE-22, audit #67 / #79) ----
+
+test('a cursor carrying an unpaired surrogate fails as UrlConstructionError, not URIError', async () => {
+  // `{"next":"\ud800"}` is well-formed JSON, so `extract` can hand one back without the caller
+  // having done anything wrong. Before the fix this surfaced as a bare `URIError: URI malformed`
+  // from inside `encodeURIComponent`, outside the `DexpaceError` tree.
+  const strategy = cursorStrategy<string>({
+    extract: () => Promise.resolve({items: ['a'], cursor: 'next\uD800'}),
+  });
+
+  let caught: unknown;
+  try {
+    await strategy.parse(response({}), template('https://api.test/items'));
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(UrlConstructionError);
+  expect(caught).toBeInstanceOf(DexpaceError);
+});
+
+test('a page-number parameter name carrying an unpaired surrogate fails the same way', async () => {
+  const strategy = pageNumberStrategy<string>({
+    extract: () => Promise.resolve(['a']),
+    parameterName: 'p\uD800',
+  });
+
+  let caught: unknown;
+  try {
+    await strategy.parse(response({}), template('https://api.test/items'));
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(UrlConstructionError);
 });

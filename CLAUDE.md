@@ -230,6 +230,7 @@ until it was dissolved on 2026-09-04.
 | [`docs/work/mvp/2026-09-04-open-items-dissolution.md`](docs/work/mvp/2026-09-04-open-items-dissolution.md) | **Archive of record, not a register.** The dissolved open-items register, moved here whole on 2026-09-04 with every open question in it decided. Nothing is appended to it; its item IDs stay reserved and still resolve, because they are cited from source. | no — archive |
 | `docs/first-release.md` | **Live.** Release-readiness: what the release path already does, and the blockers that must clear before a first publish. Was the `NFR-16` row of the dissolved deferral register. | yes |
 | `docs/deviations.md` | **Register.** The as-built audit of §10, and where a deviation found outside a phase lands. | yes |
+| `docs/audit-67-decisions.md` | **Ledger.** Decisions taken during the audit #67 remediation run, and the release-machinery work it deferred. | yes |
 | `docs/assets/` | Vendored wordmark SVGs the root `README.md` renders. | yes |
 
 **Frozen means a maintenance tool refuses to write there**, not merely that you should not. The

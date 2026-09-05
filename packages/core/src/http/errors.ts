@@ -127,16 +127,43 @@ export class MediaTypeParseError extends DexpaceError {}
 export class ProtocolParseError extends DexpaceError {}
 
 /**
- * Thrown when a request URL is malformed or not absolute; the message carries the offending input
- * and the underlying parse failure is chained as `cause` (HTTP-47).
+ * Thrown when a URL cannot be constructed from what a caller supplied.
+ *
+ * Three cases, all of them "this input has no URL form":
+ *
+ * - A request URL that is malformed or not absolute (HTTP-47). The message carries the offending
+ *   input and the underlying parse failure is chained as `cause`.
+ * - A base URL handed to `buildRequest()` that is malformed, not absolute, or carries a fragment
+ *   (SEAM-27).
+ * - A query-parameter name or value carrying an unpaired surrogate. Such a string has no UTF-8
+ *   form, so RFC 3986 percent-encoding is undefined for it and `QueryParams.encode()` could only
+ *   fail; `QueryParamsBuilder.add` rejects it at the call that supplied it instead. `cause` is not
+ *   set on this path — nothing was caught, the input was inspected (HTTP-29, audit #67 / #76).
+ *   `QueryParams.parse` does NOT throw it: HTTP-31 makes parsing lenient, so it substitutes U+FFFD.
+ *   Pagination's query splice — `spliceQueryParam` and `readQueryParam`, behind `cursorStrategy`
+ *   and `pageNumberStrategy` — rejects the same input for the same reason, through the same
+ *   predicate (PAGE-22, audit #67 / #79). That one is reachable without any caller mistake, since
+ *   the cursor is server-supplied; its message names the parameter and never echoes the value.
  *
  * @public
  */
 export class UrlConstructionError extends DexpaceError {}
 
 /**
- * Thrown when a per-call operational override is out of range — a non-null timeout that is zero or
- * negative, or a negative max-retries (HTTP-35).
+ * Thrown when a per-call operational override is out of range (HTTP-35).
+ *
+ * The ranges checked are the FULL ranges, not the lower bounds the requirement's own wording names.
+ * HTTP-35's point is that an out-of-range override is a loud error at the call site that supplied
+ * it, never a value reinterpreted downstream, and a value that only *some* consumer refuses is the
+ * same failure moved one seam away:
+ *
+ * - `timeoutMs` must be an integer in `1 .. 2**32 - 1` — the range `AbortSignal.timeout()` accepts,
+ *   which is the only one a transport can honour. Zero, negatives, `Infinity`, `NaN`, a fractional
+ *   millisecond and anything above the ceiling are all rejected. Zero is rejected rather than
+ *   reinterpreted: it means "no timeout" in one transport and is an error in another.
+ * - `maxRetries` must be a non-negative integer. `0` is accepted and means "disable retries for
+ *   this call", distinct from `undefined`; `Infinity` and `NaN` are rejected because they make a
+ *   retry driver's ceiling test permanently false and its loop unbounded.
  *
  * @public
  */

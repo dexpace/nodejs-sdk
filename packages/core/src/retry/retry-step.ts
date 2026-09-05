@@ -44,6 +44,11 @@ export interface RetryStepOptions {
    * RETRY-39's caller override: returns the delay in milliseconds to use for `attempt`, or
    * `undefined` to fall through to the configured schedule for that attempt.
    *
+   * A throw, or a non-finite result, is ignored: the configured schedule is used for that attempt
+   * and `http.retry.delayOverrideFailed` is logged at warning level (RETRY-40). Neither aborts the
+   * retry loop. A finite negative is honored as a delay and continues inline without a timer
+   * (RETRY-31).
+   *
    * @defaultValue absent, so every attempt uses the configured schedule
    */
   readonly delayOverride?:
@@ -65,12 +70,17 @@ function attemptVia(fork: () => Next): RetryDispatch {
  * RETRY-41/HTTP-35: the per-call `RequestOptions.maxRetries` override wins over the configured budget
  * when present. The option counts retries; `maxAttempts` counts total sends, hence the `+ 1`.
  *
- * The value IS revalidated here. `RequestOptionsBuilder.maxRetries` rejects only a negative value,
- * which is strictly weaker than the `Number.isFinite(...) && >= 1` guard `retrySettings()` applies
- * to the configured budget -- it admits `Infinity`, `NaN`, and fractions. Any of the first two
- * reaching `maxAttempts` makes the engine's `attempt >= maxAttempts` gate permanently false and the
- * retry loop unbounded, so the per-call route must not be the one path into the engine that skips
- * the check the configured route enforces.
+ * The value IS revalidated here, and the two guards now agree. `RequestOptionsBuilder.maxRetries`
+ * rejects a negative, fractional or non-finite value at the call site that supplied it
+ * (`../http/request-options.ts:212-219`, pinned by `request-options.test.ts`'s
+ * `maxRetries validation (HTTP-35)` block), so this `invariant` is the engine asserting its own
+ * precondition rather than the only thing enforcing it -- it should be unreachable, and tripping it
+ * means the builder's guard was weakened. That was not true when this comment was first written: the
+ * builder then rejected only a negative value, which was strictly weaker than the
+ * `Number.isFinite(...) && >= 1` guard `retrySettings()` applies to the configured budget. The
+ * assertion stays either way, because `Infinity` or `NaN` reaching `maxAttempts` makes the engine's
+ * `attempt >= maxAttempts` gate permanently false and the retry loop unbounded, and the per-call
+ * route must not be the one path into the engine that skips the check the configured route enforces.
  *
  * The derived object is frozen: a spread of a frozen source is NOT itself frozen, and RETRY-42
  * requires every policy component to be immutable after construction, not merely typed `readonly`.
@@ -107,6 +117,15 @@ function configFrom(
  *
  * `ctx.fork` is asserted rather than checked -- RETRY is in `PILLAR_STAGES`, so its absence means the
  * descriptor was installed somewhere it cannot be, which is a programmer error.
+ *
+ * **What it throws when it gives up is the FINAL attempt's own error, unwrapped.** The class you
+ * catch does not depend on how many attempts ran: a transport failure surfaces as
+ * `TransportFailureError` whether `maxAttempts` was 1 or 3, and an abort that ended a backoff wait
+ * surfaces as `CancellationError` (`XCUT-1`). The earlier attempts' errors are not lost -- read them
+ * with `retryAttempts(caught)`, oldest first: one entry per attempt that failed BEFORE the error you
+ * caught, which is not the same as an attempt count (`RETRY-34`, and see `retryAttempts` for why the
+ * difference bites). A response the loop discards is always closed first; the response that ENDS the
+ * loop is returned live and unread, and closing it is yours.
  *
  * @param options - settings overrides and the injected clock, randomness, and delay override.
  * @returns the descriptor to install in a pipeline's RETRY slot.

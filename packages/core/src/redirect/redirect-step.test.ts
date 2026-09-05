@@ -9,6 +9,11 @@
 // closes the current response and propagates SchemeDowngradeError), and the cancellation check (an
 // an abort DURING a hop returns the current response open rather than issuing a further hop, while a
 // signal already aborted at entry is refused by the cursor before the step runs -- see V15).
+//
+// Also: REDIR-28 / XCUT-19 / OBS-11 / OBS-12 for the `http.redirect.rejected` record specifically. The
+// other three redirect events already route their URL fields through `redactUrl()`; the rejection
+// event carried the decision error's MESSAGE, which interpolated the raw `from`/`to` URLs, so a
+// userinfo password or a query-string token reached the log record in clear text.
 import {describe, expect, test} from 'bun:test';
 import {
   createRequestContext,
@@ -28,6 +33,7 @@ import type {SuppressedErrorLike} from '../suppress.js';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
 import {NonReplayableBodyError, SchemeDowngradeError} from './errors.js';
 import {REDIRECT_STEP_TYPE, redirectStep} from './redirect-step.js';
+import type {RedirectSettings} from './settings.js';
 
 const SEED = Request.newBuilder().url('https://example.com/start').build();
 const CANCEL_FAILURE = new Error('cancel exploded');
@@ -585,5 +591,142 @@ describe('Phase 7b retrofit: redirect rejection logging', () => {
     } finally {
       setGlobalLogger(NOOP_LOGGER);
     }
+  });
+});
+
+// --- REDIR-28 / XCUT-19: the rejection record ---------------------------------------------------
+
+/** A seed carrying both things OBS-11 and OBS-12 name: userinfo, and a non-allow-listed query value. */
+const SECRET_SEED =
+  'https://alice:hunter2@example.com/start?access_token=SUPERSECRET';
+/** What `redactUrl()` makes of {@link SECRET_SEED}; the shape every URL field on this path must have. */
+const REDACTED_SEED = 'https://***:***@example.com/start?access_token=***';
+
+/**
+ * Drives one redirect step to settlement over `transport`, capturing every record it emits, and
+ * restores the shipped no-op logger before returning. Rejections are swallowed: each caller here is
+ * asserting on the LOG, and the thrown error's own redaction is `errors.test.ts`'s row.
+ */
+async function recordsFromRun(
+  seed: Request,
+  transport: FakeTransport,
+  overrides?: Partial<RedirectSettings>,
+): Promise<Map<string, unknown>[]> {
+  const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+    await import('../observability/logger.js');
+  const events: Map<string, unknown>[] = [];
+  setGlobalLogger(
+    createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    }),
+  );
+  try {
+    await rejectionOf(
+      new Cursor({
+        steps: [redirectStep(overrides)],
+        transport,
+        request: seed,
+        context: aRequestContext(seed),
+      }).advance(),
+    );
+  } finally {
+    setGlobalLogger(NOOP_LOGGER);
+  }
+  return events;
+}
+
+/** The one `http.redirect.rejected` record, rendered field-by-field as a logger backend sees it. */
+function rejection(
+  events: Map<string, unknown>[],
+): Map<string, unknown> | undefined {
+  const rejected = events.filter(
+    e => e.get('event') === 'http.redirect.rejected',
+  );
+  expect(rejected).toHaveLength(1);
+  return rejected[0];
+}
+
+/** Asserts no field of `record` carries any of `secrets` in clear text -- XCUT-19's actual claim. */
+function expectNoSecret(
+  record: Map<string, unknown> | undefined,
+  secrets: readonly string[],
+): void {
+  for (const field of record?.values() ?? []) {
+    for (const secret of secrets) {
+      expect(String(field)).not.toContain(secret);
+    }
+  }
+}
+
+const SECRETS = ['alice', 'hunter2', 'SUPERSECRET', 'ALSOSECRET'] as const;
+
+describe('REDIR-28/XCUT-19: the rejection record never carries a raw URL', () => {
+  test('redacts the downgrade rejection cause and its url.full field', async () => {
+    const hop = countingResponse(301);
+    const records = await recordsFromRun(
+      Request.newBuilder().url(SECRET_SEED).build(),
+      new FakeTransport([
+        withLocation(hop.response, 'http://example.com/next?code=ALSOSECRET'),
+      ]),
+    );
+
+    const record = rejection(records);
+    // The logger renders a cause as `name: message` (observability/logger.ts), so the MESSAGE is the
+    // log field. The 8192-byte field cap truncates nothing here, and would not have helped if it did.
+    expect(String(record?.get('cause'))).toStartWith('SchemeDowngradeError: ');
+    expect(String(record?.get('cause'))).toContain('***:***@');
+    expect(String(record?.get('cause'))).toContain('access_token=***');
+    expect(String(record?.get('cause'))).toContain('code=***');
+    expect(record?.get('url.full')).toBe(REDACTED_SEED);
+    expectNoSecret(record, SECRETS);
+  });
+
+  test('redacts the non-replayable-body rejection cause and its url.full field', async () => {
+    const oneShot = streamBody(
+      new ReadableStream<Uint8Array>({
+        start: c => {
+          c.close();
+        },
+      }),
+      undefined,
+      0,
+    );
+    const hop = countingResponse(307);
+    const records = await recordsFromRun(
+      Request.newBuilder()
+        .method('POST')
+        .url(SECRET_SEED)
+        .body(oneShot)
+        .build(),
+      new FakeTransport([
+        withLocation(hop.response, 'https://example.com/next?code=ALSOSECRET'),
+      ]),
+      {allowedMethods: new Set<Method>(['GET', 'HEAD', 'POST'])},
+    );
+
+    const record = rejection(records);
+    expect(String(record?.get('cause'))).toStartWith(
+      'NonReplayableBodyError: ',
+    );
+    expect(String(record?.get('cause'))).toContain('code=***');
+    expect(record?.get('url.full')).toBe(REDACTED_SEED);
+    expectNoSecret(record, SECRETS);
+  });
+
+  test('carries url.full on a rejection with no error, matching the other events', async () => {
+    // The `return-current` rejections -- loop detected, hop cap, malformed Location -- emit the same
+    // event with no cause. They still name the hop, and it is still redacted. The malformed-Location
+    // one is the sharpest case: REDIR-28 lets the sibling `malformedLocation` event log the header
+    // RAW, so this record is the only redacted URL anywhere on that path.
+    const hop = countingResponse(302);
+    const records = await recordsFromRun(
+      Request.newBuilder().url(SECRET_SEED).build(),
+      new FakeTransport([withLocation(hop.response, 'javascript:alert(1)')]),
+    );
+
+    const record = rejection(records);
+    expect(record?.has('cause')).toBe(false);
+    expect(record?.get('url.full')).toBe(REDACTED_SEED);
+    expectNoSecret(record, SECRETS);
   });
 });

@@ -94,8 +94,10 @@ export interface Serializer {
    * because the caller owns it (SERDE-3).
    *
    * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
-   * `'AbortError'` when none was given. Checked before the writer lock is taken, so an aborted call
-   * never leaves the caller's sink locked and never closes it (SERDE-3).
+   * `'AbortError'` when none was given. Checked before the writer lock is taken, and then raced
+   * against each pending write, so an aborted call never leaves the caller's sink locked and never
+   * closes it (SERDE-3). A write parked against a slow sink is the case the pre-check cannot cover;
+   * the write itself is left outstanding, because aborting it would be taking ownership.
    *
    * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
    * project-wide test for whether an API owes one. Buffered-bytes APIs — `serialize`,
@@ -162,13 +164,15 @@ export interface DecodeTarget<T> {
  * streams bytes straight into {@link Deserializer.deserializeFrom} and never holds a parsed value to
  * inspect, and core owning a parser would violate SEAM-1.
  *
- * **Every decode target is treated as non-null.** An implementation sees a schema *value*, which
- * carries no nullability it could read, so the check above cannot be conditional — it rejects a
- * top-level wire `null` unconditionally. A legitimately nullable top-level target is therefore
- * outside this contract: a `200` whose whole body is the literal `null` does not decode, and
- * `tristate(inner)` is a *field* combinator rather than a top-level decode target. This is
- * deliberate — the alternative lets a permissive schema such as `{parse: (i) => i}` launder a wire
- * `null` into a non-null `T`, which is the heap pollution SERDE-5 and SERDE-13 exist to prevent.
+ * **A decode target is treated as non-null unless the caller says otherwise.** An implementation
+ * sees a schema *value*, which carries no nullability it could read, so the check above cannot be
+ * derived from the schema — it rejects a top-level wire `null` unconditionally *by default*. The one
+ * way to admit one is {@link DecodeTarget.admitsNull}, the caller stating what the schema value
+ * cannot: that `T` includes `null`. With it set the check is skipped, the `null` reaches the schema,
+ * which is free to reject it, and `tristate(inner)` can serve as a top-level target rather than only
+ * a *field* combinator. Off by default, and deliberately so — the alternative lets a permissive
+ * schema such as `{parse: (i) => i}` launder a wire `null` into a non-null `T`, which is the heap
+ * pollution SERDE-5 and SERDE-13 exist to prevent.
  *
  * **One spelling, both layers.** Every decode entry point takes the schema and its diagnostic label
  * bundled as a {@link DecodeTarget}: the SPI here, and `decodeResponse` / `decodeSuccessResponse`
@@ -208,8 +212,11 @@ export interface Deserializer {
    * not re-typed, because a contended source is a programmer error rather than a decode failure.
    *
    * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
-   * `'AbortError'` when none was given. Checked before the reader lock is taken and between reads,
-   * so an aborted call never leaves the caller's source locked and never cancels it (SERDE-3).
+   * `'AbortError'` when none was given. Checked before the reader lock is taken, and then raced
+   * against each pending read, so an aborted call never leaves the caller's source locked and never
+   * cancels it (SERDE-3). Racing is the load-bearing half: a source that stalls mid-body parks the
+   * drain inside a read that a between-reads check can never reach again, and an implementation
+   * that only checks between reads leaves that call unsettled and that source locked forever.
    *
    * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
    * project-wide test for whether an API owes one. The abort reaches the drain loop; the CPU-bound

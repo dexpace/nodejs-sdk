@@ -112,6 +112,11 @@ export async function call(): Promise<void> {
 the two apart at the point of abort — which is exactly how a transport decides which of the two
 errors to raise.
 
+**Neither narrowing changes when a retry pillar is installed.** What `retryStep` throws once it gives
+up is the final attempt's own error, unwrapped, so the two `instanceof` checks above read the same at
+`maxAttempts: 1` and at `maxAttempts: 3`. The earlier attempts ride beside it and are read with
+`retryAttempts(error)` — see [`pipelines.md`](./pipelines.md#the-four-shipped-pillars).
+
 ## Narrowing helpers
 
 Three predicates exist for the cases where `instanceof` on a union is tedious:
@@ -162,12 +167,30 @@ Eight classes that a `@throws` tag named but no package exported were promoted t
 | `CursorAlreadyAdvancedError` | a step reusing an already-invoked `next()`/`fork()` continuation |
 | `EndOfStreamError` | a `BufferedSource` read that required more bytes than the source delivered |
 
+**The two redirect errors carry redacted messages and raw properties, and the split is deliberate.**
+`SchemeDowngradeError.message` and `NonReplayableBodyError.message` name their URLs in the redacted
+form `OBS-11`/`OBS-12` define — userinfo as `***:***@`, every non-allow-listed query value as `***` —
+because a message is rendered by every logger, every `cause` chain and every consumer `console.error`,
+and `http.redirect.rejected` hands the error straight to `LogEvent.cause()`. The unredacted URLs stay
+on `fromUrl` / `toUrl` / `targetUrl`, which is where program code reads them:
+
+```ts
+try {
+  await client.send(request);
+} catch (error) {
+  if (error instanceof SchemeDowngradeError) {
+    console.error(error.message); // https://***:***@api.example.com/v1?token=***
+    retargetTo(error.toUrl); //     the real URL, for code rather than for a log
+  }
+}
+```
+
 Two more joined them on the same date, both from `XCUT-8`'s "never fabricate a successful exception":
 
 | Error | Raised by |
 |---|---|
 | `HttpStatusValidationError` | `new HttpStatusError(status, …)` when `status` is not an integer in 400–599. The constructor validated nothing before, so a consumer could build an `HttpStatusError` claiming a `200`. `toHttpError` is the total form — it returns `null` instead of throwing |
-| `RetryDiscardedResponseError` | the retry engine's suppressed trail, for a response it discarded whose status is outside 400–599. Reachable only if you widen `RetrySettings.retryableStatuses` to include a non-error code; the trail previously said `HttpStatusError` for it, which claimed an HTTP failure that had not happened |
+| `RetryDiscardedResponseError` | the retry engine's prior-attempt trail (`retryAttempts()`), for a response it discarded whose status is outside 400–599. Reachable only if you widen `RetrySettings.retryableStatuses` to include a non-error code; the trail previously said `HttpStatusError` for it, which claimed an HTTP failure that had not happened |
 
 All of them descend from `DexpaceError`, so the broad catch works too.
 

@@ -8,7 +8,10 @@
 // with one send() method, and nests inside another pipeline with the caller's options intact), PIPE-27
 // (close() never touches the wrapped transport), CTX-17's positive half (the first store entry is installed
 // by the first promotion), CTX-1/2/3/6 (exchangeSource pins the call key and instrumentation when it
-// rebuilds)
+// rebuilds), OBS-22/OBS-23 (the caller's active span and diagnostic fields are what they were once
+// send() settles, either way), OBS-29 (one operation span per send, ended exactly once even when end()
+// throws, and a second send gets its own), CTX-11 (a throwing tracerFactory leaks no store entry),
+// CTX-16 (the pipeline's operation name reaches the request context)
 import {describe, expect, test} from 'bun:test';
 import {
   createRequestContext,
@@ -22,7 +25,13 @@ import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
 import {invariant} from '../invariant.js';
 import {
+  getDiagnosticContext,
+  pushDiagnosticFields,
+} from '../observability/diagnostic-context.js';
+import {
+  NOOP_SPAN,
   createInstrumentationBundle,
+  getActiveSpan,
   type Span,
   type Tracer,
 } from '../observability/tracing.js';
@@ -458,5 +467,126 @@ describe('the per-operation span: 1:1 with a logical operation (OBS-29)', () => 
       transport,
     ).send(aRequest('https://example.com'));
     expect(response.status.code).toBe(200);
+  });
+});
+
+describe('async-context hygiene across send() (OBS-22, OBS-23, OBS-29)', () => {
+  test('the caller observes no active span after `await send()` resolves', async () => {
+    const {tracer} = recordingTracer();
+    expect(getActiveSpan()).toBe(NOOP_SPAN);
+
+    await runtimeWith(tracer, new RecordingTransport(aResponse(200))).send(
+      aRequest('https://example.com'),
+    );
+
+    expect(getActiveSpan()).toBe(NOOP_SPAN);
+  });
+
+  test('the caller observes no active span after `await send()` rejects', async () => {
+    const {tracer} = recordingTracer();
+    const failing: StepDescriptor = {
+      type: Symbol('failing'),
+      stage: 'PRE_REDIRECT',
+      fn: () => Promise.reject(new Error('boom')),
+    };
+
+    await runtimeWith(tracer, new RecordingTransport(aResponse(200)), [failing])
+      .send(aRequest('https://example.com'))
+      .then(
+        () => undefined,
+        () => undefined,
+      );
+
+    expect(getActiveSpan()).toBe(NOOP_SPAN);
+  });
+
+  test('diagnostic fields a step pushed do not outlive the call (OBS-23)', async () => {
+    const pushing: StepDescriptor = {
+      type: Symbol('pushing'),
+      stage: 'PRE_REDIRECT',
+      fn: (request, ctx) => {
+        // What `activateSpanForCorrelation` does inside the LOGGING pillar step: a handle-based push
+        // whose restore runs in a later continuation and therefore never reaches this caller.
+        pushDiagnosticFields({'trace.id': 't-leaked', 'span.id': 's-leaked'});
+        return ctx.next(request);
+      },
+    };
+
+    await runtimeWith(
+      recordingTracer().tracer,
+      new RecordingTransport(aResponse(200)),
+      [pushing],
+    ).send(aRequest('https://example.com'));
+
+    expect(getDiagnosticContext(null)).toEqual({});
+  });
+
+  test('a second send() on the same runtime opens its own operation span (OBS-29)', async () => {
+    const {tracer, spans} = recordingTracer();
+    const runtime = runtimeWith(tracer, new RecordingTransport(aResponse(200)));
+
+    await runtime.send(aRequest('https://example.com/one'));
+    await runtime.send(aRequest('https://example.com/two'));
+
+    expect(spans.length).toBe(2);
+    expect(spans.map(span => span.ended)).toEqual([1, 1]);
+  });
+});
+
+describe('store and span hygiene on a failing tracer (CTX-11, OBS-29)', () => {
+  test('a throwing tracerFactory leaves the context store the size it found it', async () => {
+    const boom = new Error('tracer down');
+    const runtime = createRuntime(
+      [passthroughStep()],
+      new RecordingTransport(aResponse(200)),
+      {
+        instrumentation: createInstrumentationBundle(() => {
+          throw boom;
+        }),
+      },
+    );
+
+    const before = contextStore.size;
+    const thrown = await runtime.send(aRequest('https://example.com')).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(thrown).toBe(boom);
+    expect(contextStore.size).toBe(before);
+  });
+
+  test('an end() that throws on the success path is not called a second time', async () => {
+    let ends = 0;
+    const endFailed = new Error('end failed');
+    const exceptions: unknown[] = [];
+    const span: Span = {
+      isRecording: true,
+      setAttribute(): Span {
+        return span;
+      },
+      recordException(error: unknown): Span {
+        exceptions.push(error);
+        return span;
+      },
+      end(): void {
+        ends += 1;
+        throw endFailed;
+      },
+    };
+
+    const thrown = await runtimeWith(
+      {startSpan: () => span},
+      new RecordingTransport(aResponse(200)),
+    )
+      .send(aRequest('https://example.com'))
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+    expect(thrown).toBe(endFailed);
+    expect(ends).toBe(1);
+    expect(exceptions).toEqual([endFailed]);
   });
 });

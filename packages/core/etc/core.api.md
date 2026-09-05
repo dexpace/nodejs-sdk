@@ -105,8 +105,10 @@ export interface BackoffSettings {
 }
 
 // @public
-export interface BasicCredential {
-    readonly password: string;
+export class BasicCredential {
+    [INSPECT](): string;
+    constructor(username: string, password: string);
+    toString(): string;
     readonly username: string;
 }
 
@@ -345,9 +347,11 @@ export class DexpaceError extends Error {
 export type DigestAlgorithm = 'MD5' | 'MD5-sess' | 'SHA-256' | 'SHA-256-sess';
 
 // @public
-export interface DigestCredential {
-    readonly algorithmPreference?: readonly DigestAlgorithm[] | undefined;
-    readonly password: string;
+export class DigestCredential {
+    [INSPECT](): string;
+    constructor(username: string, password: string, algorithmPreference?: readonly DigestAlgorithm[]);
+    readonly algorithmPreference: readonly DigestAlgorithm[] | undefined;
+    toString(): string;
     readonly username: string;
 }
 
@@ -664,6 +668,7 @@ export function loggingStep(settings?: LoggingStepSettings): StepDescriptor;
 // @public
 export interface LoggingStepSettings {
     readonly clock?: Clock | undefined;
+    readonly configKey?: string | undefined;
     readonly droppedHeaderPolicy?: DroppedHeaderPolicy | undefined;
     readonly granularity?: LoggingGranularity | undefined;
     readonly logger?: Logger | undefined;
@@ -910,7 +915,7 @@ export class PillarCollisionError extends DexpaceError {
 
 // @public
 export class PipelineBuilder {
-    constructor(transport: Transport);
+    constructor(transport: Transport, options?: PipelineOptions);
     append(descriptor: StepDescriptor): this;
     appendAll(descriptors: readonly StepDescriptor[]): this;
     build(): Runtime;
@@ -922,6 +927,12 @@ export class PipelineBuilder {
     remove(type: symbol): this;
     replace(anchorType: symbol, descriptor: StepDescriptor): this;
     static seedFrom(runtime: Runtime, mode: 'flatten' | 'nest'): PipelineBuilder;
+}
+
+// @public
+export interface PipelineOptions {
+    readonly instrumentation?: InstrumentationBundle | undefined;
+    readonly operationName?: string | undefined;
 }
 
 // @public
@@ -1173,6 +1184,9 @@ export type ResponseStep = (response: Response_2) => Promise<Response_2>;
 export const RETRYABLE_STATUSES: ReadonlySet<number>;
 
 // @public
+export function retryAttempts(error: unknown): readonly unknown[];
+
+// @public
 export class RetryDiscardedResponseError extends DexpaceError {
     constructor(status: number, options?: ErrorOptions);
     readonly status: number;
@@ -1373,7 +1387,7 @@ export const STAGE_ORDER: readonly Stage[];
 export function standardResilience(transport: Transport, options?: StandardResilienceOptions): Runtime;
 
 // @public
-export interface StandardResilienceOptions {
+export interface StandardResilienceOptions extends PipelineOptions {
     readonly auth?: AuthStepSettings | undefined;
     readonly logging?: LoggingStepSettings | undefined;
     readonly redirect?: Partial<RedirectSettings> | undefined;

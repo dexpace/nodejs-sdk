@@ -113,6 +113,11 @@ export {
   ReservedStageError,
 } from './pipeline/errors.js';
 export {retryStep} from './retry/retry-step.js';
+// RETRY-34's read side. The retry pillar surfaces the FINAL attempt's own error, so `instanceof`
+// against it does not depend on how many attempts ran; this is how the earlier ones are reached.
+// Exported alongside `retryStep` because the two are one contract: nothing else in the barrel can
+// tell a caller that the error they caught is the third of three.
+export {retryAttempts} from './retry/attempt-trail.js';
 // The trail entry for a response the engine discarded whose status is outside 400-599 — reachable
 // only through a caller-widened `retryableStatuses`.
 export {RetryDiscardedResponseError} from './retry/errors.js';
@@ -152,6 +157,10 @@ export type {
   RequestContext,
 } from './context/context.js';
 export type {InstrumentationBundle} from './context/instrumentation.js';
+// `PipelineOptions` is what a caller passes to `new PipelineBuilder(transport, options)` and, by
+// extension, to `standardResilience`; it is the only public route to `OBS-29`'s per-operation span
+// and `CTX-16`'s operation name, so it is exported beside the bundle it carries.
+export type {PipelineOptions} from './pipeline/builder.js';
 export type {BackoffSettings} from './retry/backoff.js';
 export type {RetrySettings} from './retry/settings.js';
 export type {RetryStepOptions} from './retry/retry-step.js';
@@ -165,20 +174,20 @@ export type {
   ApiKeyCredentialConfig,
   AuthCredentialSet,
   AuthStepSettings,
-  BasicCredential,
   BearerCredential,
   ChallengeHook,
-  DigestCredential,
 } from './auth/auth-step.js';
 export type {AuthTiers} from './auth/resolve.js';
 export type {AuthScheme} from './auth/scheme.js';
 export type {DigestAlgorithm} from './auth/digest.js';
 
 // Factories, not bare interfaces: AUTH-3 validates and freezes inside `createAuthDescriptor`, and
-// `ApiKeyCredential`/`NameKeyCredential`/`BearerToken` are NOMINAL -- they carry a `#` field, so no
-// caller-side object literal is assignable and the AUTH-9 validation in each factory cannot be routed
-// around. Without these, API_KEY and OAUTH2 auth are unreachable from outside the package.
-// `BearerToken` is a VALUE export, not a type-only one: it is a class, and `TokenProvider` returns it.
+// every credential type is NOMINAL -- each carries a `#` field, so no caller-side object literal is
+// assignable and the AUTH-9 validation in each factory cannot be routed around. Without these,
+// API_KEY, OAUTH2, BASIC and DIGEST auth are unreachable from outside the package.
+// All five are VALUE exports, not type-only ones: they are classes, `TokenProvider` returns a
+// `BearerToken`, and `BasicCredential`/`DigestCredential` became classes on 2026-09-04 so AUTH-8's
+// redaction covers their passwords too (audit #67 / #71).
 export type {AuthDescriptor} from './auth/descriptor.js';
 export {createAuthDescriptor} from './auth/descriptor.js';
 export type {AuthRequirement} from './auth/requirement.js';
@@ -189,7 +198,9 @@ export {
 export type {TokenProvider} from './auth/credential.js';
 export {
   ApiKeyCredential,
+  BasicCredential,
   BearerToken,
+  DigestCredential,
   NameKeyCredential,
   bearerTokensEqual,
   createBearerToken,

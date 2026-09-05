@@ -51,10 +51,16 @@ Node).
 
 **A phase that touches a runtime-divergent surface adds a case here, not only to `bun test`** (§5.9:378).
 Since Phase 4 that has meant most phases — pipelines, retry, redirect, auth, serde, SSE, pagination,
-configuration, observability, the two concrete transports, and the RxJS bridge all have cases here. Two are
-worth naming as the shape to aim for: 8a's `fetch`/`undici` transports, where this stops being precautionary
-and becomes the point, and 8b's RxJS bridge, whose reason for being hand-written is a cancellation path the
-runtime decides.
+configuration, observability, the two concrete transports, and the RxJS bridge all have cases here — as, since
+audit #67's #77, do the five Web Streams bridges that had none: `BufferedSource.toReadableStream`,
+`BufferedSink.toWritableStream`, `TeeSink.toWritableStream` in `io-byte-stream.test.mjs`, and the
+`withRequestLogging` / `withResponseLogging` body taps in `body-lifecycle.test.mjs`. Every one of them is a
+hand-written underlying source or sink object, so what they exercise is the runtime's own pull scheduling,
+cancel dispatch and reader-lock bookkeeping. Three are worth naming as the shape to aim for: 8a's
+`fetch`/`undici` transports, where this stops being precautionary and becomes the point; 8b's RxJS bridge,
+whose reason for being hand-written is a cancellation path the runtime decides; and #77's multipart
+`Content-Type`, where Bun's `Response.formData()` accepted a header Node's `Response.formData()` rejected —
+the Bun rows were green over a body no Node peer could parse, and only the case here reproduced it.
 
 ## Which cases exist
 

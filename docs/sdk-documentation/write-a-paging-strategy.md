@@ -13,9 +13,18 @@ interface PageInfo<T> {
 }
 ```
 
-Given the page that just arrived and the request template the walk started from, produce this page's
-items and the request that fetches the next one. `undefined` for `nextRequest` is how a walk ends —
-there is no separate "done" flag to keep consistent with it.
+Given the page that just arrived and the request that fetched it, produce this page's items and the
+request that fetches the next one. `undefined` for `nextRequest` is how a walk ends — there is no
+separate "done" flag to keep consistent with it.
+
+**`template` is not the request the walk started from.** The glossary calls it "the original request
+template", but the engine passes the request it sent for *this* page and then makes your `nextRequest`
+the following hop's template — it advances with the walk
+(`packages/core/src/pagination/paginator.ts:165,213`, and the contract on
+`PaginationStrategy.parse` at `strategy.ts:10-15`). Read the parameter as "the request to derive the
+next one from". Where you specifically want the URL the response actually came from — after a redirect
+or a step's rewrite — use `response.request.url`, which is what `pageNumberStrategy` reads its current
+page number from.
 
 ## Three ship already
 
@@ -86,7 +95,7 @@ for await (const page of paginator.pages()) { /* page by page */ }
 independent walks, not two views of one. That is also why `@dexpace/rx`'s `pageItems$`/`pages$` are
 cold and repeatable while its SSE observables are not.
 
-## The four rules
+## The five rules
 
 **1. Take everything you need from the response before your promise settles** (`PAGE-5`). The
 response you are handed is live and single-use; the engine may close it the moment `parse` resolves.
@@ -101,8 +110,10 @@ protects — single use, nothing retained — is what the async signature preser
 [`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
 where the dissolved deferral register's rows went — precisely so an async signature does not later read as an oversight. Every shipped strategy's `extract` above is `async` for the same reason.
 
-**2. Build `nextRequest` from the template, not from the response.** The template carries the headers,
-auth tier and options the walk was started with. A next request built from scratch loses all of them.
+**2. Build `nextRequest` from the template, not from scratch.** The template carries the headers, auth
+tier and options the walk was started with, and it is the previous hop's request rather than page one's,
+so deriving from it accumulates the walk's state instead of re-deriving it. A next request built from
+scratch loses all of that.
 
 ```typescript
 const next = template
@@ -123,6 +134,20 @@ which is an erratum recorded in `docs/knowledge/notes/pagination.md` and `docs/w
 **4. Terminate.** Returning a `nextRequest` equal to the one just fetched is an infinite walk.
 `maxPages` on `PaginatorInit` is the backstop, not the design. Loop detection is not the paginator's
 job.
+
+**5. Always return a well-formed `PageInfo`** (`PAGE-4`). `items` must be an array — an empty one is
+fine and is a perfectly valid non-terminal page — and `nextRequest === undefined` is the **single,
+exclusive** end-of-stream signal. A `PageInfo` that is itself `null` or `undefined`, or whose `items`
+is either, is a programmer error and the engine treats it as one: it closes the response and throws
+an assertion naming the invariant you broke. It does **not** end the walk quietly, because "the
+strategy forgot to `return`" and "the server ran out of pages" must not look the same from the
+outside. Use `pageInfo(items, next?)` and this cannot happen; the check exists because `parse`
+crosses a seam, where an `any`-typed decode or a trusted server field can produce a shape the types
+say is impossible.
+
+Terminating and failing are different acts. To *end* the walk, return `pageInfo(items)` with no next
+request. To *fail* it, throw — the engine closes the response and your error reaches the consumer
+unwrapped (`PAGE-13`, `PAGE-28`).
 
 `PaginationError` is reserved for engine misuse and precondition violations — not for "the server
 returned a page I did not understand", which is your `extract`'s error to raise.

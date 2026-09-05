@@ -169,6 +169,47 @@ test('a mid-stream read failure releases before propagating, with the close erro
   expect(closeCount).toBe(1);
 });
 
+test('a release failure during an in-flight error is reported exactly once (SSE-29, SSE-30)', async () => {
+  const readFailure = new IoError('socket reset');
+  const closeFailure = new IoError('close failed too');
+  const reported: unknown[] = [];
+  let closeCount = 0;
+  const web = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: a\n\n'));
+      controller.error(readFailure);
+    },
+  });
+  const stream = new SseStream(
+    new SseParser(BufferedSource.overStream(web)),
+    {
+      close(): Promise<void> {
+        closeCount += 1;
+        return Promise.reject(closeFailure);
+      },
+    },
+    {onReleaseFailure: e => reported.push(e)},
+  );
+
+  let caught: unknown;
+  try {
+    for await (const event of stream) {
+      void event;
+    }
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  const suppressed = caught as SuppressedErrorLike;
+  expect(suppressed.error).toBe(readFailure);
+  expect(suppressed.suppressed).toBe(closeFailure);
+  // SSE-30 scopes the hook to the automatic CLEAN terminal path. With an error already in flight the
+  // release failure is on the thrown error, and calling the hook as well makes one failure arrive
+  // twice — once in whatever logs `onReleaseFailure`, once in whatever logs the caught error.
+  expect(reported).toEqual([]);
+  expect(closeCount).toBe(1);
+});
+
 test('sseStreamFrom binds lifecycle to the response body (SSE-32)', async () => {
   let responseClosed = 0;
   const response = {

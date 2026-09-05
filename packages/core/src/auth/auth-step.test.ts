@@ -4,10 +4,14 @@
 // lands before any token fetch or header write, and it applies only on the credential-attaching path --
 // a marker-suppressed cross-origin re-issue may proceed credential-free over any scheme),
 // AUTH-27 (exactly one AUTH-stage descriptor, pinned to the pillar), AUTH-28 (HTTPS guard,
-// NO_AUTH exempt, re-applied on the replay path), AUTH-29 (the cross-origin marker skips the guard and
+// NO_AUTH exempt, re-applied on the replay path -- unconditionally once the outbound pass guarded the
+// hop, whatever header names the replacement carries, and additionally on an Authorization or
+// Proxy-Authorization the hook adds to an unguarded NO_AUTH hop), AUTH-29 (the cross-origin marker skips the guard and
 // stamping, is cleared from the outbound headers, and suppresses the challenge reaction too -- so the
 // credential cannot re-enter via the 401), AUTH-25 (a 407 is answered from Proxy-Authenticate into
-// Proxy-Authorization), AUTH-30 (401 + WWW-Authenticate invokes the hook; a replacement re-drives
+// Proxy-Authorization), AUTH-12/AUTH-13 (EVERY value of the matching challenge header is parsed, each
+// value on its own, so a repeated WWW-Authenticate/Proxy-Authenticate offers its later challenges too
+// and a malformed earlier value cannot swallow them), AUTH-30 (401 + WWW-Authenticate invokes the hook; a replacement re-drives
 // exactly once through a fresh fork()), AUTH-31 (a non-replayable replacement body surfaces the
 // original challenge unchanged and unclosed), AUTH-32 (a throwing hook closes the challenge response
 // before propagating), AUTH-33 (no matching challenge header, or a hook yielding nothing -> unchanged),
@@ -41,7 +45,12 @@ import {
   availableSchemesOf,
   type AuthCredentialSet,
 } from './auth-step.js';
-import {createBearerToken, ApiKeyCredential} from './credential.js';
+import {
+  createBearerToken,
+  ApiKeyCredential,
+  BasicCredential,
+  DigestCredential,
+} from './credential.js';
 import {createAuthDescriptor} from './descriptor.js';
 import {AuthResolutionError, PlaintextCredentialError} from './errors.js';
 import {createAuthRequirement} from './requirement.js';
@@ -117,6 +126,27 @@ function challengeResponse(
         .build(),
     )
     .build();
+  return {response, cancelCount: base.cancelCount};
+}
+
+/**
+ * A challenge response carrying the same challenge header SEVERAL times — the wire shape RFC 7616
+ * §3.3 recommends for algorithm discovery, and the one `@dexpace/transport-undici` hands over as
+ * separate entries rather than one comma-joined value.
+ *
+ * `addInbound` in a loop, never `setInbound`: `set` REPLACES, so building the fixture with it would
+ * quietly assert against a single-valued header and the row would pass against the very bug it exists
+ * to catch.
+ */
+function repeatedChallengeResponse(
+  status: number,
+  headerName: string,
+  headerValues: readonly string[],
+): {response: Response; cancelCount: () => number} {
+  const base = countingResponse(status);
+  const builder = base.response.headers.newBuilder();
+  for (const value of headerValues) builder.addInbound(headerName, value);
+  const response = base.response.newBuilder().headers(builder.build()).build();
   return {response, cancelCount: base.cancelCount};
 }
 
@@ -236,8 +266,8 @@ describe('availableSchemesOf (AUTH-5)', () => {
 
   test('maps each configured credential to its scheme', () => {
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
-      digest: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
+      digest: new DigestCredential('u', 'p'),
       bearer: {provider: () => Promise.resolve(createBearerToken('t'))},
       apiKey: {credential: new ApiKeyCredential('k')},
     };
@@ -379,7 +409,7 @@ describe('authStep: the HTTPS guard and tier resolution (AUTH-6/AUTH-28)', () =>
   test('BASIC/DIGEST never stamp preemptively -- the outbound request carries no Authorization', async () => {
     const transport = new FakeTransport([countingResponse(200).response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -437,7 +467,7 @@ describe('authStep: the cross-origin marker (AUTH-29)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -464,7 +494,7 @@ describe('authStep: challenge detection (AUTH-25/AUTH-33)', () => {
       success.response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -492,7 +522,7 @@ describe('authStep: challenge detection (AUTH-25/AUTH-33)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -508,7 +538,7 @@ describe('authStep: challenge detection, negative cases (AUTH-33)', () => {
     const the401 = countingResponse(401);
     const transport = new FakeTransport([the401.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -541,7 +571,7 @@ describe('authStep: the challenge replay (AUTH-30/AUTH-31)', () => {
       success.response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -566,7 +596,7 @@ describe('authStep: the challenge replay (AUTH-30/AUTH-31)', () => {
     );
     const transport = new FakeTransport([first.response, second.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -590,7 +620,7 @@ describe('authStep: answering a Digest challenge (AUTH-15..AUTH-22)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      digest: {username: 'u', password: 'p'},
+      digest: new DigestCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('DIGEST')});
 
@@ -602,6 +632,112 @@ describe('authStep: answering a Digest challenge (AUTH-15..AUTH-22)', () => {
     expect(value?.startsWith('Digest ')).toBe(true);
     // AUTH-22: the digest-uri is the request-target, path AND query.
     expect(value).toContain('uri="/a?q=1"');
+  });
+});
+
+describe('authStep: repeated challenge headers (AUTH-12/AUTH-16/AUTH-25)', () => {
+  test('a later WWW-Authenticate entry is answered when the first is unsupported', async () => {
+    // RFC 7616 §3.3's algorithm-discovery shape: one header per algorithm, strongest first. Reading
+    // only `headers.get(...)` saw the SHA-512-256 line, found nothing satisfiable, and surfaced the
+    // 401 — while the identical pair comma-joined into ONE value authenticated (audit #67 / #74).
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="r", nonce="n", algorithm=SHA-512-256',
+      'Digest realm="r", nonce="n", algorithm=SHA-256, qop="auth"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    const value = transport.calls[1]?.request.headers.get('Authorization');
+    expect(value).toContain('algorithm=SHA-256');
+    expect(value).toContain('qop=auth');
+  });
+
+  test('a repeated Proxy-Authenticate is read the same way (AUTH-25)', async () => {
+    const challenged = repeatedChallengeResponse(407, 'Proxy-Authenticate', [
+      'Negotiate abc123',
+      'Basic realm="p"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {basic: new BasicCredential('u', 'p')},
+      tiers: tiersFor('BASIC'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(
+      transport.calls[1]?.request.headers
+        .get('Proxy-Authorization')
+        ?.startsWith('Basic '),
+    ).toBe(true);
+  });
+});
+
+describe('authStep: one offered challenge declined, the next answered (AUTH-13/AUTH-16)', () => {
+  test('a malformed FIRST entry cannot swallow a satisfiable later one (AUTH-13)', async () => {
+    // The row that fixes the parse strategy rather than only the read. Comma-joining the two values
+    // before parsing lets the unterminated quoted string in the first run on into the second — the
+    // scanner closes it at the `"` of `realm="r"`, and the whole satisfiable challenge disappears
+    // into a realm value. Parsing each value on its own bounds the damage at the value that carries
+    // it, which is what AUTH-13's "recovers to the next top-level comma" is reaching for.
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="unterminated',
+      'Digest realm="r", nonce="n", qop="auth"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(transport.calls[1]?.request.headers.get('Authorization')).toContain(
+      'realm="r"',
+    );
+  });
+
+  test('a challenge with an empty nonce is declined and the next one answered', async () => {
+    // Both halves of the same 401: a truncated first challenge that parses to `nonce: ''`, and a
+    // well-formed second. Declining is only useful if the step then keeps looking, which is what
+    // AUTH-25's "return no header when it cannot satisfy ANY offered challenge" requires -- the
+    // quantifier is over the whole offer, not over the first entry.
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="r", nonce=',
+      'Digest realm="second", nonce="n", qop="auth"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(transport.calls[1]?.request.headers.get('Authorization')).toContain(
+      'realm="second"',
+    );
   });
 });
 
@@ -617,7 +753,7 @@ describe('authStep: the replayability gate (AUTH-31)', () => {
       countingResponse(200).response,
     ]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -641,7 +777,7 @@ describe('authStep: the replayability gate (AUTH-31)', () => {
     );
     const transport = new FakeTransport([challenged.response]);
     const credentials: AuthCredentialSet = {
-      basic: {username: 'u', password: 'p'},
+      basic: new BasicCredential('u', 'p'),
     };
     const descriptor = authStep({credentials, tiers: tiersFor('BASIC')});
 
@@ -749,7 +885,7 @@ describe('authStep: hook override and non-reactive schemes (AUTH-30)', () => {
     ]);
     let hookInvoked = false;
     const descriptor = authStep({
-      credentials: {basic: {username: 'u', password: 'p'}},
+      credentials: {basic: new BasicCredential('u', 'p')},
       tiers: tiersFor('BASIC'),
       challengeHook: (_response, request) => {
         hookInvoked = true;
@@ -1005,7 +1141,87 @@ describe('authStep: the replay HTTPS guard (AUTH-28)', () => {
     expect(transport.sendCount).toBe(1); // the replacement never reached the wire
     expect(challenged.cancelCount()).toBe(1); // and the 401 was closed before the throw, not leaked
   });
+});
 
+describe('authStep: once guarded, the replay stays guarded (AUTH-28)', () => {
+  test('a replacement carrying a NON-standard credential header over plaintext is refused (AUTH-28)', async () => {
+    // The reported hole (audit #67 / #71): the guard tested two header NAMES, and
+    // `ApiKeyCredentialConfig.headerName` lets this very step stamp any header it is told to. A hook
+    // that downgrades the URL and answers with `X-Api-Key` therefore went out in clear text, with no
+    // `PlaintextCredentialError`. The rule is now "the outbound pass guarded this hop, so the replay
+    // is guarded too", which does not depend on reading header names at all.
+    const challenged = challengeResponse(
+      401,
+      'WWW-Authenticate',
+      'Basic realm="x"',
+    );
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {
+        apiKey: {
+          credential: new ApiKeyCredential('secret'),
+          headerName: 'X-Api-Key',
+        },
+      },
+      tiers: tiersFor('API_KEY'), // the outbound pass DID guard: the seed is https
+      challengeHook: (_response, request) =>
+        Promise.resolve(
+          request
+            .newBuilder()
+            .url('http://example.com/a')
+            .headers(
+              request.headers.newBuilder().set('X-Api-Key', 'SECRET').build(),
+            )
+            .build(),
+        ),
+    });
+
+    const error = await rejectionOf(runThrough(descriptor, transport));
+
+    expect(error).toBeInstanceOf(PlaintextCredentialError);
+    expect(transport.sendCount).toBe(1); // the replacement never reached the wire
+    expect(challenged.cancelCount()).toBe(1); // and the 401 was closed before the throw
+  });
+
+  test('a header-free replacement over plaintext is refused too, once the hop was guarded (AUTH-28)', async () => {
+    // The other half of the same rule, and the reason it is stated as "once guarded, always guarded"
+    // rather than as a wider header list: a hook is free to invent a credential carrier this step has
+    // never heard of, so no enumeration of names can be complete. The scheme that made the outbound
+    // pass credentialed is what the replay inherits.
+    const challenged = challengeResponse(
+      401,
+      'WWW-Authenticate',
+      'Basic realm="x"',
+    );
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {
+        apiKey: {credential: new ApiKeyCredential('secret')},
+      },
+      tiers: tiersFor('API_KEY'),
+      challengeHook: (_response, request) =>
+        Promise.resolve(
+          Request.newBuilder()
+            .url('http://example.com/b')
+            .method(request.method)
+            .build(),
+        ),
+    });
+
+    const error = await rejectionOf(runThrough(descriptor, transport));
+
+    expect(error).toBeInstanceOf(PlaintextCredentialError);
+    expect(transport.sendCount).toBe(1);
+  });
+});
+
+describe('authStep: an unguarded NO_AUTH hop (AUTH-28/AUTH-29)', () => {
   test('a credential-free replacement over plaintext is NOT blocked by the replay guard (AUTH-28/AUTH-29)', async () => {
     const challenged = challengeResponse(
       401,
@@ -1137,7 +1353,7 @@ describe('authStep: answering an unrecognized scheme through challengeHook', () 
       countingResponse(200).response,
     ]);
     const descriptor = authStep({
-      credentials: {basic: {username: 'u', password: 'p'}},
+      credentials: {basic: new BasicCredential('u', 'p')},
       tiers: tiersFor('BASIC'),
       challengeHook: (_response, request) =>
         Promise.resolve(
@@ -1459,7 +1675,7 @@ describe('authStep: a challenge this client cannot echo (AUTH-21/AUTH-22)', () =
     );
     const transport = new FakeTransport([challenge.response]);
     const descriptor = authStep({
-      credentials: {digest: {username: 'u', password: 'p'}},
+      credentials: {digest: new DigestCredential('u', 'p')},
       tiers: tiersFor('DIGEST'),
     });
 

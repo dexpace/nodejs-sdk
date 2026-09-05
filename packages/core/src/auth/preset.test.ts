@@ -3,10 +3,16 @@
 // Exercises: PIPE-24 ("installs into empty pillar slots only" -- true by construction, since the preset
 // always starts from a fresh PipelineBuilder), PIPE-39 (installs exactly the pillars that exist), and
 // jointly with 5b: PIPE-2's "auth executes per redirect hop, not once for the whole call" plus
-// AUTH-29's marker-CONSUMPTION side (5b produced the marker and routed consumption here).
+// AUTH-29's marker-CONSUMPTION side (5b produced the marker and routed consumption here), OBS-29 +
+// CTX-16 (the preset forwards an instrumentation bundle and an operation name to the built pipeline).
 import {describe, expect, test} from 'bun:test';
 import {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
+import {
+  createInstrumentationBundle,
+  type Span,
+  type Tracer,
+} from '../observability/tracing.js';
 import {PipelineBuilder} from '../pipeline/builder.js';
 import type {StepDescriptor} from '../pipeline/step.js';
 import {CROSS_ORIGIN_MARKER_HEADER} from '../redirect/cross-origin.js';
@@ -214,5 +220,69 @@ describe('standardResilience logging options (Phase 7b)', () => {
     await runtime.send(aRequest());
 
     expect(events).toEqual(['http.request', 'http.response']);
+  });
+});
+
+describe('standardResilience instrumentation options (OBS-29, CTX-16)', () => {
+  test('the supplied bundle opens one operation span per send, and the name reaches the step', async () => {
+    const spanNames: string[] = [];
+    const factoryNames: string[] = [];
+    const span: Span = {
+      isRecording: true,
+      setAttribute: (): Span => span,
+      recordException: (): Span => span,
+      end: (): void => undefined,
+    };
+    const tracer: Tracer = {
+      startSpan(name: string): Span {
+        spanNames.push(name);
+        return span;
+      },
+    };
+    let seen: string | undefined;
+    const probe: StepDescriptor = {
+      type: Symbol('operation-name-probe'),
+      stage: 'PRE_SERDE',
+      fn: async (request, ctx) => {
+        seen =
+          'operationName' in ctx.context
+            ? ctx.context.operationName
+            : undefined;
+        return ctx.next(request);
+      },
+    };
+
+    const runtime = PipelineBuilder.seedFrom(
+      standardResilience(
+        new FakeTransport([
+          countingResponse(200).response,
+          countingResponse(200).response,
+        ]),
+        {
+          instrumentation: createInstrumentationBundle(operationName => {
+            factoryNames.push(operationName);
+            return tracer;
+          }),
+          operationName: 'GetUser',
+        },
+      ),
+      'flatten',
+    )
+      .append(probe)
+      .build();
+
+    await runtime.send(aRequest());
+    await runtime.send(aRequest());
+
+    // `Runtime.send()` asks the factory for the operation's own tracer once per call (OBS-29's 1:1
+    // binding), and the LOGGING pillar asks for one labelled with CTX-16's operation name per attempt.
+    expect(
+      factoryNames.filter(name => name === 'http.client.operation'),
+    ).toHaveLength(2);
+    expect(factoryNames.filter(name => name === 'GetUser')).toHaveLength(2);
+    expect(
+      spanNames.filter(name => name === 'http.client.operation'),
+    ).toHaveLength(2);
+    expect(seen).toBe('GetUser');
   });
 });

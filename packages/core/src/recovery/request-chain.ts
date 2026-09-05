@@ -13,8 +13,13 @@ export type RequestStep = (request: Request) => Promise<Request>;
 /**
  * A sequential left-to-right fold over request steps (RECOV-3): the output of step N is the input
  * of step N+1, an empty chain returns its input unchanged, and a throwing step aborts the remainder
- * and propagates — `dispatchWithRecovery` (`orchestrator.ts`) converts that propagation into a
- * `Failure` per RECOV-2, which is the only reason propagating here is safe.
+ * and propagates — `prepareRequest` (`orchestrator.ts`) converts that propagation into a `Failure`
+ * per RECOV-2, which is the only reason propagating here is safe. Every entry point runs the chain
+ * through that one helper, the retry adapter included.
+ *
+ * **Apply the chain once per logical request, not once per wire send.** Steps here are the ones
+ * whose output must stay stable across a retry — `idempotencyKeyStep` above all — and the SDK's own
+ * retry adapter sits below this chain for that reason (`retry/retry-dispatch.ts`).
  *
  * Safe under concurrent `apply()` calls (RECOV-14): after construction the instance holds nothing
  * but its step array, and every piece of per-call state lives in `apply()`'s locals. A later phase

@@ -31,9 +31,18 @@ export class TeeSink implements Sink {
   readonly #tapLimit: number;
 
   constructor(primary: Sink, tapLimit: number = Number.POSITIVE_INFINITY) {
+    // Integrality, not merely `>= 0`. A tap cap is a byte count, so IO-3's rule for `count` applies
+    // to it — and a fractional cap was not merely odd, it was deferred: `#mirror` computes
+    // `room = tapLimit - tap.size` and hands it to `ByteQueue.copyTo`, where `assertCount` rejects
+    // it as "count must be a non-negative integer, got 2.5". That names the wrong parameter, fires
+    // at the first write rather than at the construction that supplied it, and does so before the
+    // primary write on a path that has already taken bytes from the caller. `Infinity` is admitted
+    // explicitly: it is not an integer, and it is the documented unbounded default (IO-26).
+    // Audit #67 / #76.
     invariant(
-      tapLimit >= 0,
-      `tapLimit must be non-negative, got ${String(tapLimit)}`,
+      (Number.isInteger(tapLimit) && tapLimit >= 0) ||
+        tapLimit === Number.POSITIVE_INFINITY,
+      `tapLimit must be a non-negative integer or Infinity, got ${String(tapLimit)}`,
     );
     this.#primary = primary;
     this.#tapLimit = tapLimit;

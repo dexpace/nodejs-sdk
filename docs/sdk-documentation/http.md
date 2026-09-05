@@ -110,8 +110,9 @@ const options = RequestOptions.newBuilder()
 `RequestOptions.EMPTY` is the shared no-op instance. A step reads it as `ctx.options`, and a
 transport receives it as `send()`'s second argument. Both range checks are the **full** range, not
 only the lower bound: `maxRetries` rejects anything that is not a non-negative integer, and
-`timeoutMs` rejects zero, negatives, `Infinity` and `NaN` alike (`HTTP-35`). A fractional
-`timeoutMs` is accepted — a timeout is a duration, not a count.
+`timeoutMs` rejects zero, negatives, `Infinity`, `NaN`, a fractional value and anything above
+`2**32 - 1` (`HTTP-35`) — the range is `AbortSignal.timeout()`'s, the only one a transport can
+honor.
 
 `auth` on the builder is the **per-call** auth tier, the highest-precedence one; see
 [`auth.md`](./auth.md).

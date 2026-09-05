@@ -41,9 +41,14 @@ DOM global under a `lib` that includes `"DOM"`, and the two are unrelated types 
 `Response` has `status: Status`, `close()` and `request`, and no `json()`. The mistake typechecks
 until you try to pass one.
 
-`decodeSuccessResponse` delegates to `decodeResponse` on a 2xx and to `toHttpError` otherwise, so a
-`4xx` becomes an `HttpStatusError` carrying the status, the headers and a bounded body preview
-(`SERDE-28`).
+`decodeSuccessResponse` delegates to `decodeResponse` on a 2xx and to `toHttpError` on a **4xx or 5xx**,
+so a `404` becomes an `HttpStatusError` carrying `status`, a replayable `body()` and a non-consuming
+`preview()` — a bounded in-memory copy at the 1 MiB `HTTP-52`/`BODY-30` cap, taken before the response
+was closed. There is no headers accessor on it; read anything else you need off the response before you
+hand it over. Any *other* non-2xx — a `1xx`, or an unfollowed `3xx` such as a `304` — is neither decoded
+nor mapped: the response is closed and a `DeserializationError` is raised whose message leads with the
+status code and which carries `ETag` and `Location` as fields, so conditional and redirect context
+survives the close (`SERDE-28`).
 
 ## What the shipped handlers guarantee, and what you must reproduce
 
@@ -76,6 +81,18 @@ The suppression wrapper's `name` is `'SuppressedError'`, `.error` is the primary
 release failure. **`instanceof SuppressedError` is not a valid test**: the class is absent on this
 project's declared Node floor and a structurally identical stand-in is built there instead. Test the
 shape, or read `.error` unconditionally.
+
+**A failed release is the only thing in this SDK that builds one.** Every site that constructs the
+pairing — the response chain, the redirect and auth and retry pillars, the serde handlers, the SSE
+stream, the paginator — is doing this one job: a `close()` that threw while an error was already in
+flight. It is a genuine two-value shape, which is why it fits.
+
+The retry pillar used to build one for a *second* reason, folding N prior attempt errors into a
+nested chain of pairs so that what you caught after three attempts was a wrapper rather than the
+failure. It no longer does: it surfaces the last attempt's error unwrapped and records the earlier
+ones beside it, read back with `retryAttempts()` (see [`pipelines.md`](./pipelines.md#the-four-shipped-pillars)).
+So if you catch a `'SuppressedError'` from this SDK, `.suppressed` is a teardown failure, never an
+earlier attempt.
 
 **3. Only payload failures are re-typed.** `SERDE-12`: a malformed body or a shape mismatch becomes a
 `DeserializationError` with the original chained; a genuine stream failure propagates untouched,

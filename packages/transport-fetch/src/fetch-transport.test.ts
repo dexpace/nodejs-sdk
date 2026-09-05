@@ -5,15 +5,20 @@
 // its close owns nothing to release),
 // TRANSPORT-2 (no retrying/redirecting dispatcher is ever composed), TRANSPORT-15/16
 // (close is a documented no-op), TRANSPORT-17/19 (single-use body written once, abandoned producer
-// unblocked), TRANSPORT-22 (an adaptation throw still closes the native response), TRANSPORT-30
+// unblocked), TRANSPORT-22 (an adaptation throw still closes the native response),
+// TRANSPORT-20 with RETRY-2 (a permanent misconfiguration is classified outside the IoError tree,
+// a failed exchange inside it), TRANSPORT-9 (a producer that loses the race cancels the native call
+// it raced, so no response is stranded), TRANSPORT-30
 // (no proxy option exists at all), SEAM-30 (no producer is left running for its rejection to reach
 // Node's default unhandledRejection policy)
 import {describe, expect, test} from 'bun:test';
 import {
   byteArrayBody,
   Headers,
+  isIoError,
   Request,
   streamBody,
+  TransportFailureError,
   type Body,
 } from '@dexpace/core';
 import {fetchTransport} from './fetch-transport.js';
@@ -237,6 +242,64 @@ describe('fetchTransport request-body failures', () => {
   });
 });
 
+describe('fetchTransport failure classification (TRANSPORT-20, RETRY-2)', () => {
+  /** Every shape a runtime's `fetch` uses to say "these arguments can never work". */
+  const permanent: readonly (readonly [string, Error])[] = [
+    // Node's undici-backed `fetch`, thrown out of the `Request` constructor: no cause, because no
+    // dispatch was ever attempted.
+    [
+      'a forbidden method',
+      new TypeError("'CONNECT' HTTP method is unsupported."),
+    ],
+    [
+      'a non-token method',
+      new TypeError("'BAD METHOD' is not a valid HTTP method."),
+    ],
+    // The same runtime's scheme refusal, which it can only report as a network error.
+    [
+      'an unsupported scheme',
+      new TypeError('fetch failed', {cause: new Error('unknown scheme')}),
+    ],
+    // Bun 1.3.14's shape for the same scheme refusal: a code, and no cause at all.
+    [
+      "Bun's coded scheme refusal",
+      Object.assign(new TypeError('protocol must be http:, https: or s3:'), {
+        code: 'ERR_INVALID_ARG_VALUE',
+      }),
+    ],
+  ];
+
+  for (const [what, cause] of permanent) {
+    test(`${what} is terminal, outside the IoError tree`, async () => {
+      // A permanent misconfiguration classified as TransportFailureError is an IoError, and
+      // `classify.ts` returns true for every IoError -- so the caller's whole retry budget goes on
+      // re-proving it. The undici twin has refused its own equivalents since Phase 8a; this
+      // transport refused none of them until audit #67 / #82.
+      const transport = fetchTransport({fetch: () => Promise.reject(cause)});
+      const request = Request.newBuilder().url('http://127.0.0.1:1/x').build();
+      const error = await rejection(transport.send(request));
+      expect(error).toBeInstanceOf(TypeError);
+      expect(isIoError(error)).toBe(false);
+      expect((error as Error).cause).toBe(cause);
+    });
+  }
+
+  test('a network failure reported the same way stays retryable', async () => {
+    // The twin of the rows above: `fetch failed` is also how every genuine connect/DNS/TLS failure
+    // arrives, so the cause is the only discriminator and narrowing must not swallow this.
+    const cause = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('getaddrinfo ENOTFOUND h.invalid'), {
+        code: 'ENOTFOUND',
+      }),
+    });
+    const transport = fetchTransport({fetch: () => Promise.reject(cause)});
+    const request = Request.newBuilder().url('http://h.invalid/x').build();
+    const error = await rejection(transport.send(request));
+    expect(error).toBeInstanceOf(TransportFailureError);
+    expect(isIoError(error)).toBe(true);
+  });
+});
+
 describe('fetchTransport lifecycle', () => {
   test('TRANSPORT-15/16: close is a no-op and send still works afterwards (SEAM-15)', async () => {
     const recorder = recordingFetch();
@@ -283,14 +346,86 @@ describe('fetchTransport lifecycle', () => {
     expect(recorder.calls.length).toBe(0);
   });
 
-  test('defaultTimeoutMs applies when the call supplies no timeout of its own', async () => {
-    const recorder = recordingFetch();
+  test('defaultTimeoutMs bounds a call that supplies no timeout of its own', async () => {
+    // Asserted through the outcome, not through "a signal was handed over": every send dispatches
+    // with a forked signal since audit #67 / #82, so the presence of one no longer discriminates.
+    // The double honours its signal the way a real `fetch` does, which is what makes the composed
+    // deadline observable.
     const transport = fetchTransport({
-      fetch: recorder.fetch,
-      defaultTimeoutMs: 5_000,
+      fetch: (_input, init) =>
+        new Promise<globalThis.Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(init.signal?.reason as Error);
+          });
+        }),
+      defaultTimeoutMs: 20,
     });
     const request = Request.newBuilder().url('http://127.0.0.1:1/x').build();
-    await (await transport.send(request)).close();
-    expect(recorder.calls[0]?.signal).toBeInstanceOf(AbortSignal);
+    // TRANSPORT-4: a timeout is the retryable failure, never a cancellation, and the fork carries
+    // the source's `TimeoutError` reason through for `isTimeoutSignal` to read.
+    expect(await rejection(transport.send(request))).toMatchObject({
+      name: 'TransportFailureError',
+      message: 'request timed out',
+    });
+  });
+});
+
+describe('fetchTransport producer-failure race (TRANSPORT-9, SEAM-30)', () => {
+  test('a producer that loses the race takes the pending fetch down with it', async () => {
+    // The send rejects the moment `writeTo` fails, while `fetch` is still pending -- and until
+    // audit #67 / #82 nothing then cancelled it. With no caller signal and no timeout the transport
+    // dispatched with NO signal at all, so a response arriving afterwards was dropped with its body
+    // neither read nor cancelled: a connection held for as long as the pool would keep it.
+    let dispatched: AbortSignal | undefined;
+    let settled = false;
+    const transport = fetchTransport({
+      fetch: (_input, init) => {
+        dispatched = init.signal ?? undefined;
+        return new Promise<globalThis.Response>(resolve => {
+          setTimeout(() => {
+            settled = true;
+            resolve(new globalThis.Response('late', {status: 200}));
+          }, 30);
+        });
+      },
+    });
+    const failing: Body = {
+      kind: 'stream',
+      mediaType: undefined,
+      contentLength: -1,
+      replayable: false,
+      writeTo: () => Promise.reject(new Error('producer exploded')),
+    };
+    const request = Request.newBuilder()
+      .method('POST')
+      .url('http://127.0.0.1:1/x')
+      .body(failing)
+      .build();
+
+    const error = await rejection(transport.send(request));
+    // The producer's own classification, not the native table's: `writeTo` failing is a transport
+    // failure, and the send must not be waiting on `fetch` to say so.
+    expect(error).toBeInstanceOf(TransportFailureError);
+    expect(settled).toBe(false);
+    expect(dispatched?.aborted).toBe(true);
+    expect((dispatched?.reason as Error | undefined)?.message).toBe(
+      'producer exploded',
+    );
+  });
+
+  test('a delivered response is never aborted by the same handle (SEAM-16)', async () => {
+    // The twin: `abort` is latched by `detach`, so the fork's second direction cannot become the
+    // very violation its first direction exists to prevent.
+    let dispatched: AbortSignal | undefined;
+    const transport = fetchTransport({
+      fetch: (_input, init) => {
+        dispatched = init.signal ?? undefined;
+        return Promise.resolve(new globalThis.Response('ok', {status: 200}));
+      },
+    });
+    const request = Request.newBuilder().url('http://127.0.0.1:1/x').build();
+    const response = await transport.send(request);
+    expect(await response.text()).toBe('ok');
+    expect(dispatched?.aborted).toBe(false);
   });
 });

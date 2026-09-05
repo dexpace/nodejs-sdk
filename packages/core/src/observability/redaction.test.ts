@@ -102,6 +102,15 @@ describe('redactUrl: delimiters and total safety (OBS-14..15)', () => {
     expect(redactUrl('not a url at all ###')).toBe('[malformed url]');
   });
 
+  test('the output is re-rendered from the parsed URL, so WHATWG normalisation shows (OBS-14)', () => {
+    // Pinned, not fixed: the result is assembled from `URL`'s components, so host case, a default
+    // port and an empty path normalise on the way through. Documented on `redactUrl` as inherent to
+    // parsing, and left as is by audit #67 / #80 -- re-rendering the caller's authority by hand would
+    // be a second URL renderer for no gain in what OBS-11..15 asks for.
+    expect(redactUrl('https://EXAMPLE.com:443')).toBe('https://example.com/');
+    expect(redactUrl('http://Example.COM:80/p')).toBe('http://example.com/p');
+  });
+
   test('property: never throws for any string', () => {
     fc.assert(
       fc.property(fc.string(), value => {

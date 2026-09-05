@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pagination/query-splice.test.ts
 // Exercises: PAGE-21 (verbatim splice, untargeted params byte-for-byte), PAGE-22 (RFC 3986 component encoding,
-// literal + is data), PAGE-23 (replace-first / append / remove, order preserved), PAGE-24 (non-query components
-// preserved exactly).
-import {expect, test} from 'bun:test';
+// literal + is data; a component with no UTF-8 form is rejected as UrlConstructionError), PAGE-23
+// (replace-first / append / remove, order preserved), PAGE-24 (non-query components preserved exactly).
+import {describe, expect, test} from 'bun:test';
+import {UrlConstructionError} from '../http/errors.js';
 import {readQueryParam, spliceQueryParam} from './query-splice.js';
 
 const at = (href: string): URL => new URL(href);
@@ -138,4 +139,58 @@ test('stray empty segments are skipped, matching HTTP-31 query parsing', () => {
   expect(
     query(spliceQueryParam(at('https://h/p?a=1&&b=2&page=1'), 'page', '2')),
   ).toBe('a=1&b=2&page=2');
+});
+
+describe('a cursor with no UTF-8 form is rejected here, not inside encodeURIComponent (PAGE-22)', () => {
+  // The splice shares `HTTP-29`'s component encoder, and `encodeURIComponent` throws a bare
+  // `URIError: URI malformed` on a string carrying an unpaired surrogate. A cursor is SERVER
+  // -supplied — `{"next":"\ud800"}` is well-formed JSON — so this is reachable without any caller
+  // mistake, and until audit #67 / #79 it escaped the `DexpaceError` tree entirely. #76 closed the
+  // same hole at `QueryParamsBuilder.add` and left this one named.
+  const LONE_HIGH = '\uD800';
+  const LONE_LOW = '\uDFFF';
+
+  test.each([
+    ['a lone high surrogate', LONE_HIGH],
+    ['a lone low surrogate', LONE_LOW],
+    ['a lone surrogate inside a longer cursor', `ok${LONE_HIGH}ok`],
+  ])('spliceQueryParam rejects %s as a value', (_label, value) => {
+    expect(() =>
+      spliceQueryParam(at('https://h/p?a=1'), 'cursor', value),
+    ).toThrow(UrlConstructionError);
+  });
+
+  test('the message names the parameter and never echoes the value', () => {
+    expect(() =>
+      spliceQueryParam(at('https://h/p?a=1'), 'cursor', `secret${LONE_HIGH}`),
+    ).toThrow(/value of query parameter "cursor"/);
+    expect(() =>
+      spliceQueryParam(at('https://h/p?a=1'), 'cursor', `secret${LONE_HIGH}`),
+    ).not.toThrow(/secret/);
+  });
+
+  test('spliceQueryParam rejects a lone surrogate in the parameter NAME', () => {
+    expect(() =>
+      spliceQueryParam(at('https://h/p?a=1'), LONE_HIGH, '2'),
+    ).toThrow(UrlConstructionError);
+  });
+
+  test('readQueryParam rejects a lone surrogate in the parameter NAME', () => {
+    expect(() => readQueryParam(at('https://h/p?a=1'), LONE_HIGH)).toThrow(
+      UrlConstructionError,
+    );
+  });
+
+  test('removing a parameter still validates the name', () => {
+    expect(() =>
+      spliceQueryParam(at('https://h/p?a=1'), LONE_HIGH, undefined),
+    ).toThrow(UrlConstructionError);
+  });
+
+  test('a well-formed surrogate PAIR is ordinary text and splices normally', () => {
+    // Rejecting this too would make the rule "no astral characters", which PAGE-22 does not say.
+    const out = spliceQueryParam(at('https://h/p?a=1'), 'cursor', '\u{1F600}');
+    expect(query(out)).toBe('a=1&cursor=%F0%9F%98%80');
+    expect(readQueryParam(out, 'cursor')).toBe('\u{1F600}');
+  });
 });

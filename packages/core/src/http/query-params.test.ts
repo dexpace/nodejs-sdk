@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/query-params.test.ts
 // Exercises: HTTP-28 (case-sensitive, multi-value, value-less param), HTTP-29/32 (RFC 3986 encoding),
-// HTTP-30 (order-sensitive equality, empty-list dropped), HTTP-31 (lenient parse)
+// HTTP-30 (order-sensitive equality, empty-list dropped), HTTP-31 (lenient parse),
+// HTTP-5 (getAll returns a frozen list on every path, present name or absent)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {
@@ -9,6 +10,22 @@ import {
   decodeQueryComponent,
   encodeQueryComponent,
 } from './query-params.js';
+import {UrlConstructionError} from './errors.js';
+
+/**
+ * Strings that mix ordinary text with UNPAIRED surrogate code units. `fc.string()` alone never
+ * produces one — its default unit is printable ASCII — so the URIError path it is here to cover
+ * would go ungenerated.
+ */
+const surrogateBearingString = fc.string({
+  unit: fc.oneof(
+    fc.constantFrom('a', 'b', ' ', '=', '&', '%', '+', '\u{1F600}'),
+    fc
+      .integer({min: 0xd800, max: 0xdfff})
+      .map(code => String.fromCharCode(code)),
+  ),
+  maxLength: 8,
+});
 
 describe('case-sensitive names and multi-value (HTTP-28)', () => {
   test('page and Page are distinct names', () => {
@@ -148,4 +165,97 @@ test('the component decoder treats a literal + as data, not a space (HTTP-29, PA
 
 test('the decoder falls back to raw text on malformed percent-encoding (HTTP-31)', () => {
   expect(decodeQueryComponent('a%zzb')).toBe('a%zzb');
+});
+
+describe('lone surrogates are rejected where they are supplied (HTTP-29, HTTP-31)', () => {
+  // `encodeRfc3986Component` is `encodeURIComponent`, which throws a bare `URIError: URI malformed`
+  // on a string carrying an unpaired surrogate. Before audit #67 / #76 that escaped the
+  // `DexpaceError` tree entirely, and it escaped from `encode()` and `equals()` — accessors whose
+  // TSDoc documents no throw at all — rather than from the `add()` that accepted the value.
+  const LONE_HIGH = '\uD800';
+  const LONE_LOW = '\uDFFF';
+
+  test.each([
+    ['a lone high surrogate value', 'c', LONE_HIGH],
+    ['a lone low surrogate value', 'c', LONE_LOW],
+    ['a lone surrogate name', LONE_HIGH, 'v'],
+    ['a lone surrogate inside a longer value', 'c', `ok${LONE_HIGH}ok`],
+  ])('add() rejects %s with UrlConstructionError', (_label, name, value) => {
+    expect(() => QueryParams.newBuilder().add(name, value)).toThrow(
+      UrlConstructionError,
+    );
+  });
+
+  test('a well-formed surrogate PAIR is accepted and encoded as UTF-8', () => {
+    // U+1F600, one code point spelled with two code units. Rejecting this too would make the check
+    // "no astral characters", which HTTP-29 does not say.
+    expect(
+      QueryParams.newBuilder().add('emoji', '\u{1F600}').build().encode(),
+    ).toBe('emoji=%F0%9F%98%80');
+  });
+
+  test('parse() stays lenient and substitutes U+FFFD, because HTTP-31 forbids throwing', () => {
+    // HTTP-31 is MUST-level about `parse` never throwing, so the strict `add()` path cannot be the
+    // one `parse` uses for a value it did not choose. Replacement matches what the platform's own
+    // query serializer does with the same input: `new URL('https://x/?a=\uD800').search` is
+    // `?a=%EF%BF%BD` (measured 2026-09-05). This is `Headers`' outbound/inbound split, applied to
+    // the query model.
+    const parsed = QueryParams.parse(`a=${LONE_HIGH}`);
+    expect(parsed.get('a')).toBe('�');
+    expect(parsed.encode()).toBe('a=%EF%BF%BD');
+  });
+
+  test('parse() sanitizes the NAME as well as the value', () => {
+    const parsed = QueryParams.parse(`${LONE_HIGH}=v`);
+    expect(parsed.has('�')).toBe(true);
+    expect(parsed.encode()).toBe('%EF%BF%BD=v');
+  });
+
+  test('no URIError escapes encode() or equals(), whatever the builder admitted (property)', () => {
+    fc.assert(
+      fc.property(surrogateBearingString, surrogateBearingString, (n, v) => {
+        let params: QueryParams;
+        try {
+          params = QueryParams.newBuilder().add(n, v).build();
+        } catch (e: unknown) {
+          expect(e).toBeInstanceOf(UrlConstructionError);
+          return;
+        }
+        expect(() => params.encode()).not.toThrow();
+        expect(() =>
+          params.equals(QueryParams.newBuilder().build()),
+        ).not.toThrow();
+      }),
+      {numRuns: 500},
+    );
+  });
+
+  test('no anything escapes parse(), whatever it is handed (property, HTTP-31)', () => {
+    fc.assert(
+      fc.property(surrogateBearingString, raw => {
+        const parsed = QueryParams.parse(raw);
+        expect(() => parsed.encode()).not.toThrow();
+      }),
+      {numRuns: 500},
+    );
+  });
+});
+
+describe('getAll returns a frozen list on every path (HTTP-5)', () => {
+  const params = QueryParams.newBuilder().add('x', '1').add('x', '2').build();
+
+  test('the present-name list is frozen', () => {
+    const values = params.getAll('x');
+    expect(Object.isFrozen(values)).toBe(true);
+    expect(() => (values as string[]).push('3')).toThrow(TypeError);
+    expect(params.getAll('x')).toEqual(['1', '2']);
+  });
+
+  test('the absent-name list is frozen too, and is the same shared instance', () => {
+    const first = params.getAll('nope');
+    const second = params.getAll('also-nope');
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(first).toBe(second);
+    expect(() => (first as string[]).push('x')).toThrow(TypeError);
+  });
 });

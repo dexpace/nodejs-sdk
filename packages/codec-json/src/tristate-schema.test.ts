@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
 // packages/codec-json/src/tristate-schema.test.ts
-// Exercises: SERDE-16 (missing → Absent, explicit null → Null, value → Present with element type preserved),
-// SERDE-17 (a missing key resolves to Absent via the combinator's own default, not a JSON.parse reviver),
-// SERDE-29 (both combinators return frozen schemas, so a shared schema cannot acquire state).
+// Exercises: SERDE-14 (three states and only three — a Present can never carry null), SERDE-16 (missing →
+// Absent, explicit null → Null, value → Present with element type preserved), SERDE-17 (a missing key resolves
+// to Absent via the combinator's own default, not a JSON.parse reviver), SERDE-29 (both combinators return
+// frozen schemas, so a shared schema cannot acquire state).
 import {expect, test} from 'bun:test';
-import {valueOrNull, type Schema, type Tristate} from '@dexpace/core';
+import {
+  DeserializationError,
+  valueOrNull,
+  type Schema,
+  type Tristate,
+} from '@dexpace/core';
 import {expectTypeOf} from 'expect-type';
 import {MISSING, tristate, tristateObject} from './tristate-schema.js';
 
@@ -218,4 +224,39 @@ test('tristateObject rejects an array rather than reshaping it into an index-key
 test('both combinators return frozen schemas, like the bundle itself', () => {
   expect(Object.isFrozen(tristate(identity))).toBe(true);
   expect(Object.isFrozen(tristateObject({a: identity}))).toBe(true);
+});
+
+// SERDE-14 has three states. `present(null)` is a fourth, and the type system alone cannot keep it
+// out: `present` takes `NonNullable<T>`, but `inner.parse`'s declared `T` is unconstrained, so the
+// cast that satisfies the compiler is exactly where a normalizing schema slips through
+// (audit #67 / #79).
+const nullifying: Schema<unknown> = {parse: () => null};
+const erasing: Schema<unknown> = {parse: () => undefined};
+
+test('an inner schema that normalizes a value to null is a decode failure (SERDE-14)', () => {
+  expect(() => tristate(nullifying).parse('a value')).toThrow(
+    DeserializationError,
+  );
+  expect(() => tristate(nullifying).parse('a value')).toThrow(
+    /present Tristate cannot carry null/,
+  );
+});
+
+test('an inner schema that normalizes a value to undefined is rejected the same way', () => {
+  expect(() => tristate(erasing).parse('a value')).toThrow(
+    DeserializationError,
+  );
+});
+
+test('the wire null and missing-key paths still decode ahead of that check (SERDE-16)', () => {
+  // Neither reaches `inner.parse`, so a normalizing inner schema cannot turn a legitimate Null or
+  // Absent into a failure.
+  expect(tristate(nullifying).parse(null).kind).toBe('null');
+  expect(tristate(nullifying).parse(MISSING).kind).toBe('absent');
+});
+
+test('a nullifying field schema fails the whole tristateObject decode (SERDE-14)', () => {
+  expect(() => tristateObject({age: nullifying}).parse({age: 30})).toThrow(
+    DeserializationError,
+  );
 });

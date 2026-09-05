@@ -39,6 +39,7 @@ import assert from 'node:assert/strict';
 import {getEventListeners} from 'node:events';
 import {describe, it} from 'node:test';
 import {
+  BasicCredential,
   CancellationError,
   Request,
   authStep,
@@ -216,7 +217,7 @@ describe('challenge response lifecycle over Node Web Streams (AUTH-30/AUTH-31/AU
   const tiers = {
     client: createAuthDescriptor([createAuthRequirement('BASIC')]),
   };
-  const credentials = {basic: {username: 'u', password: 'p'}};
+  const credentials = {basic: new BasicCredential('u', 'p')};
 
   it('closes the original 401 before re-driving, and leaves the replacement response open', async () => {
     const challenged = challengeResponse(

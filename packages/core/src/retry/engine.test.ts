@@ -3,10 +3,14 @@
 // Exercises: RETRY-7/8 (both axes gate), RETRY-20 (a hint replaces the schedule, unjittered), RETRY-22
 // (a pacing failure never masks the upstream failure), RETRY-26/31 (cancellable wait, zero delay
 // inline), RETRY-27/RECOV-20 (total-timeout budget with per-attempt shrinking), RETRY-32 (no attempts
-// after cancellation), RETRY-34 (suppressed trail on failure, discarded on success, skip-self),
+// after cancellation), RETRY-34 (the prior-attempt trail rides BESIDE the surfaced error, discarded
+// on success, skip-self), XCUT-1 (the surfaced type does not depend on how many attempts ran -- the
+// final attempt's own error is what the engine hands back, cancellation included),
 // RETRY-35/RECOV-16 (body released before the wait, bounded buffering), RETRY-36/RECOV-19 (503,503,200
 // terminates on the 200; a surviving response is returned LIVE), RETRY-39/40 (delay precedence; a
-// throwing override is non-fatal), RETRY-42/RECOV-28 (per-call state).
+// throwing override is non-fatal -- and a non-finite RETURN from one is the same case, falling back
+// to the schedule and logging through the same event; audit #67 / #78), RETRY-42/RECOV-28 (per-call
+// state).
 import {describe, expect, test} from 'bun:test';
 import {HttpStatusError} from '../body/http-status-error.js';
 import type {Clock} from '../config/clock.js';
@@ -15,10 +19,12 @@ import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
-import {IoError} from '../io/errors.js';
+import {IoError, TransportFailureError} from '../io/errors.js';
 import {failure, success, type Outcome} from '../recovery/outcome.js';
+import {CancellationError} from '../seams/transport.js';
 import type {SuppressedErrorLike} from '../suppress.js';
 import {countingResponse} from '../testing/fake-transport.js';
+import {retryAttempts} from './attempt-trail.js';
 import {runWithRetry, type RetryConfig, type RetryDispatch} from './engine.js';
 import {retrySettings, type RetrySettings} from './settings.js';
 
@@ -29,9 +35,13 @@ const BARE_POST = Request.newBuilder()
   .build();
 
 /**
- * The suppressed pair is asserted on SHAPE, never `instanceof SuppressedError`: the native class is
- * absent on this package's Node floor (>=20.3), where `suppress()` returns a structural stand-in and
- * an `instanceof` assertion would silently assert nothing.
+ * The one remaining pairing this engine can build is RECOV-12's -- a release failure riding along
+ * with the primary it must not mask. The retry TRAIL is no longer a `SuppressedError` chain, so the
+ * only assertions below that use this predicate are the release ones.
+ *
+ * Asserted on SHAPE, never `instanceof SuppressedError`: the native class is absent on this
+ * package's Node floor (>=20.3), where `suppress()` returns a structural stand-in and an
+ * `instanceof` assertion would silently assert nothing.
  */
 function isSuppressedShape(value: unknown): value is SuppressedErrorLike {
   return (
@@ -85,6 +95,66 @@ function scriptedDispatch(
     );
   };
   return Object.assign(dispatch, {calls});
+}
+
+/** A clock that records every duration it is asked to sleep for, and returns immediately. */
+function recordingClock(slept: number[]): Clock {
+  return {
+    now: () => 0,
+    monotonic: () => 0,
+    sleep: durationMs => {
+      slept.push(durationMs);
+      return Promise.resolve();
+    },
+  };
+}
+
+/**
+ * `defaultClock`'s own precondition, modelled: `Clock.sleep` rejects a non-finite duration with a
+ * `RangeError` (`config/clock.ts:148-157`). A fake that slept for any duration at all would hide the
+ * bug; this guard is what surfaces it.
+ */
+function guardingClock(): Clock {
+  return {
+    now: () => 0,
+    monotonic: () => 0,
+    sleep: durationMs =>
+      Number.isFinite(durationMs)
+        ? Promise.resolve()
+        : Promise.reject(
+            new RangeError(
+              `Clock.sleep: durationMs must be a non-negative finite number, got ${String(durationMs)}`,
+            ),
+          ),
+  };
+}
+
+/** One retryable failure, then a 200: the shortest script that drives exactly one delay decision. */
+function oneFailureThenSuccess(): RetryDispatch {
+  return scriptedDispatch([
+    failure(new IoError('first')),
+    success(countingResponse(200).response),
+  ]);
+}
+
+/** Installs a capturing global logger for the duration of `body` and returns what it emitted. */
+async function captureLogEvents(
+  body: () => Promise<void>,
+): Promise<Map<string, unknown>[]> {
+  const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+    await import('../observability/logger.js');
+  const events: Map<string, unknown>[] = [];
+  setGlobalLogger(
+    createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    }),
+  );
+  try {
+    await body();
+  } finally {
+    setGlobalLogger(NOOP_LOGGER);
+  }
+  return events;
 }
 
 describe('eligibility (RETRY-7/8)', () => {
@@ -219,6 +289,94 @@ describe('delay resolution (RETRY-39/40)', () => {
 
     expect(outcome.kind).toBe('success');
     expect(dispatch.calls).toHaveLength(2);
+  });
+
+  test('a finite override is honored unchanged, fractional and huge alike (RETRY-39)', async () => {
+    // The finiteness guard below screens `NaN` and the two infinities and nothing else. A fractional
+    // or very large delay is still a delay, and RETRY-39 gives the caller precedence over the
+    // schedule -- 5000 ms of `fixedDelayMs` here, which neither run waits.
+    const slept: number[] = [];
+    const clock = recordingClock(slept);
+
+    for (const override of [0.5, Number.MAX_SAFE_INTEGER]) {
+      await runWithRetry(
+        GET,
+        scriptedDispatch([failure(new TransportFailureError('reset'))]),
+        {
+          settings: retrySettings({maxAttempts: 2, fixedDelayMs: 5000}),
+          clock,
+          random: () => 0.5,
+          delayOverride: () => override,
+        },
+      );
+    }
+
+    expect(slept).toEqual([0.5, Number.MAX_SAFE_INTEGER]);
+  });
+});
+
+/**
+ * RETRY-40 makes a bad override non-fatal. A throw was handled; a non-finite RETURN was not, and it
+ * is the worse of the two, because `NaN` fails every comparison downstream instead of failing loudly
+ * at the override. Audit #67 / #78 reads the two as one case: drop the value, use the computed
+ * schedule, keep going.
+ */
+describe('a non-finite delayOverride is the throwing case (RETRY-40)', () => {
+  test('every non-finite value falls back to the computed schedule', async () => {
+    // Asserted on the delays the clock was ASKED for. Three sends alone would also pass against a
+    // fake that quietly slept for `NaN`, which is most of them.
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      const slept: number[] = [];
+      const dispatch = scriptedDispatch([
+        failure(new TransportFailureError('connection refused')),
+      ]);
+
+      const outcome = await runWithRetry(GET, dispatch, {
+        settings: retrySettings({
+          maxAttempts: 3,
+          initialDelayMs: 200,
+          multiplier: 2,
+          jitter: 0,
+        }),
+        clock: recordingClock(slept),
+        random: () => 0.5,
+        delayOverride: () => bad,
+      });
+
+      expect(dispatch.calls).toHaveLength(3);
+      expect(slept).toEqual([200, 400]);
+      expect(outcome.kind).toBe('failure');
+    }
+  });
+
+  test('it never reaches Clock.sleep as a duration, so the real failure survives', async () => {
+    // The reported symptom, against a clock that guards its input the way `defaultClock` does: the
+    // rejection was folded into the terminal failure by RETRY-33's catch-all, so `() => NaN` with
+    // `maxAttempts: 3` gave ONE send and surfaced a `RangeError` about `durationMs` in place of the
+    // transport failure being retried -- with the real error demoted to the trail.
+    const dispatch = scriptedDispatch([
+      failure(new TransportFailureError('first')),
+      failure(new TransportFailureError('second')),
+      failure(new TransportFailureError('third')),
+    ]);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      settings: retrySettings({maxAttempts: 3, fixedDelayMs: 0}),
+      clock: guardingClock(),
+      random: () => 0.5,
+      delayOverride: () => Number.NaN,
+    });
+
+    expect(dispatch.calls).toHaveLength(3);
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(outcome.error).toBeInstanceOf(TransportFailureError);
+    expect((outcome.error as Error).message).toBe('third');
+    expect(retryAttempts(outcome.error)).toHaveLength(2);
   });
 });
 
@@ -364,12 +522,11 @@ describe('cancellation (RETRY-26/32)', () => {
   });
 });
 
-describe('suppressed trail (RETRY-34)', () => {
-  test('prior attempt failures ride along as suppressed on the surfaced error', async () => {
-    const dispatch = scriptedDispatch([
-      failure(new IoError('first')),
-      failure(new IoError('second')),
-    ]);
+describe('the prior-attempt trail (RETRY-34)', () => {
+  test('the FINAL attempt error is surfaced, with the priors reachable beside it', async () => {
+    const first = new IoError('first');
+    const second = new IoError('second');
+    const dispatch = scriptedDispatch([failure(first), failure(second)]);
 
     const outcome = await runWithRetry(
       GET,
@@ -379,12 +536,45 @@ describe('suppressed trail (RETRY-34)', () => {
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
+    // Not a wrapper: the surfaced value IS attempt 2's own error, so a caller's `instanceof` reads
+    // the same here as it does after a single attempt.
+    expect(outcome.error).toBe(second);
+    expect(retryAttempts(outcome.error)).toEqual([first]);
+  });
+
+  test('the surfaced TYPE does not depend on how many attempts ran (XCUT-1)', async () => {
+    const one = await runWithRetry(
+      GET,
+      scriptedDispatch([failure(new TransportFailureError('refused'))]),
+      configOf({maxAttempts: 1, fixedDelayMs: 0}),
+    );
+    // Distinct instances, because `scriptedDispatch` repeats its last entry and RETRY-34's
+    // skip-self guard would otherwise empty the trail this row needs to be non-empty.
+    const three = await runWithRetry(
+      GET,
+      scriptedDispatch([
+        failure(new TransportFailureError('refused')),
+        failure(new TransportFailureError('refused')),
+        failure(new TransportFailureError('refused')),
+      ]),
+      configOf({maxAttempts: 3, fixedDelayMs: 0}),
+    );
+
+    expect(one.kind).toBe('failure');
+    expect(three.kind).toBe('failure');
+    if (one.kind !== 'failure' || three.kind !== 'failure') return;
+    // Until 2026-09-05 the second of these was a `SuppressedError` and this row was false: the
+    // surfaced CLASS was a function of the attempt budget, which is what XCUT-1's conformance
+    // clause ("assert the surfaced error is the cancellation type") catches on the abort path.
+    expect(one.error).toBeInstanceOf(TransportFailureError);
+    expect(three.error).toBeInstanceOf(TransportFailureError);
+    expect(retryAttempts(three.error)).toHaveLength(2);
   });
 
   test('the trail is discarded entirely on eventual success', async () => {
+    const first = new IoError('first');
     const dispatch = scriptedDispatch([
-      failure(new IoError('first')),
+      failure(first),
       success(countingResponse(200).response),
     ]);
 
@@ -395,10 +585,12 @@ describe('suppressed trail (RETRY-34)', () => {
     );
 
     expect(outcome.kind).toBe('success');
+    // Nothing was recorded anywhere: the discarded failure carries no trail of its own either.
+    expect(retryAttempts(first)).toEqual([]);
   });
 });
 
-describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', () => {
+describe('the trail -- skip-self and single-attempt shapes (RETRY-34)', () => {
   test('a reused instance never suppresses itself (RETRY-34 skip-self)', async () => {
     const reused = new IoError('same instance every time');
     const dispatch = scriptedDispatch([failure(reused)]);
@@ -410,6 +602,8 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
     );
 
     expect(outcome).toEqual(failure(reused));
+    // Skip-self leaves nothing at all for a transport that reuses one instance across attempts.
+    expect(retryAttempts(reused)).toEqual([]);
   });
 
   test('a single failed attempt surfaces its error unwrapped', async () => {
@@ -419,6 +613,7 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
     expect(await runWithRetry(GET, dispatch, configOf())).toEqual(
       failure(only),
     );
+    expect(retryAttempts(only)).toEqual([]);
   });
 
   test('a discarded 503 becomes a buffered HttpStatusError in the trail (RECOV-16)', async () => {
@@ -438,10 +633,8 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(IoError);
-    expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
+    expect(outcome.error).toBeInstanceOf(IoError);
+    expect(retryAttempts(outcome.error)[0]).toBeInstanceOf(HttpStatusError);
   });
 });
 
@@ -469,13 +662,10 @@ describe('a discarded response OUTSIDE the 400-599 band (V14/N2, XCUT-8)', () =>
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.suppressed).toBeInstanceOf(
-      RetryDiscardedResponseError,
-    );
-    expect(outcome.error.suppressed).not.toBeInstanceOf(HttpStatusError);
-    expect((outcome.error.suppressed as {status: number}).status).toBe(200);
+    const [discarded] = retryAttempts(outcome.error);
+    expect(discarded).toBeInstanceOf(RetryDiscardedResponseError);
+    expect(discarded).not.toBeInstanceOf(HttpStatusError);
+    expect((discarded as {status: number}).status).toBe(200);
   });
 
   test('a discarded 404 still becomes an HttpStatusError -- the band is unchanged', async () => {
@@ -496,9 +686,7 @@ describe('a discarded response OUTSIDE the 400-599 band (V14/N2, XCUT-8)', () =>
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
+    expect(retryAttempts(outcome.error)[0]).toBeInstanceOf(HttpStatusError);
   });
 });
 
@@ -599,9 +787,7 @@ describe('the inter-attempt wait -- degenerate and hostile delays', () => {
     // instead of silently becoming an extra attempt.
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(RangeError);
+    expect(outcome.error).toBeInstanceOf(RangeError);
     expect(dispatch.calls).toHaveLength(1);
   });
 });
@@ -663,6 +849,90 @@ describe('cancellation while an attempt is in flight (RETRY-32)', () => {
   });
 });
 
+describe('a cancelled backoff surfaces the cancellation TYPE (XCUT-1)', () => {
+  /** Aborts from inside attempt 1, so the loop reaches its RETRY-32 check with a one-entry trail. */
+  function abortAfterOneAttempt(
+    controller: AbortController,
+    first: unknown,
+  ): RetryDispatch & {sends: number} {
+    const dispatch = (): Promise<Outcome<Response>> => {
+      dispatch.sends += 1;
+      controller.abort();
+      return Promise.resolve(failure(first));
+    };
+    dispatch.sends = 0;
+    return dispatch;
+  }
+
+  test('the surfaced error is CancellationError, with the prior attempt beside it', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    // `abortToSdkError` maps the abort to this type one line before the trail is attached; until
+    // 2026-09-05 the trail wrapper undid the mapping immediately, and a cancelled backoff ALWAYS
+    // has a non-empty trail -- so `instanceof CancellationError` was false for every one of them.
+    expect(outcome.error).toBeInstanceOf(CancellationError);
+    expect(retryAttempts(outcome.error)).toEqual([first]);
+  });
+
+  test('the trail already covers every send, so length is NOT one less than the count', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    // The surfaced error is SYNTHESIZED at the RETRY-32 gate, not raised by a send, so it is not an
+    // attempt's error and the trail already accounts for all of them. `length + 1` would say two
+    // sends where one happened -- which is why no TSDoc here offers that arithmetic.
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
+  });
+});
+
+describe('the RETRY-32 gate can synthesize a TransportFailureError too', () => {
+  test('a TIMEOUT signal takes the same synthesized path, as TransportFailureError', async () => {
+    // `abortToSdkError` branches on `isTimeoutSignal`, so the engine's own RETRY-32 gate can
+    // synthesize a `TransportFailureError` too. Narrowing a catch to that class therefore does NOT
+    // guarantee the caught error came from a send.
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch: RetryDispatch & {sends: number} = Object.assign(
+      (): Promise<Outcome<Response>> => {
+        dispatch.sends += 1;
+        controller.abort(new DOMException('timed out', 'TimeoutError'));
+        return Promise.resolve(failure(first));
+      },
+      {sends: 0},
+    );
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(outcome.error).toBeInstanceOf(TransportFailureError);
+    expect(outcome.error).not.toBeInstanceOf(CancellationError);
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
+  });
+});
+
 describe('a throwing attempt still carries the trail (RETRY-33/34)', () => {
   test('a throw from inside the attempt is folded into a failure outcome, trail intact', async () => {
     const calls: number[] = [];
@@ -681,16 +951,14 @@ describe('a throwing attempt still carries the trail (RETRY-33/34)', () => {
     expect(calls).toEqual([1, 2]);
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(RangeError);
+    expect(outcome.error).toBeInstanceOf(RangeError);
     // RETRY-34: attempt 1's failure would have been lost had the throw escaped as a rejection.
-    expect((outcome.error.suppressed as Error).message).toBe('first');
+    expect((retryAttempts(outcome.error)[0] as Error).message).toBe('first');
   });
 });
 
-describe('the suppressed trail with more than two entries (RETRY-34)', () => {
-  test('three distinct attempt failures fold into a nested chain', async () => {
+describe('the trail with more than two entries (RETRY-34)', () => {
+  test('three distinct attempt failures list flat, oldest first', async () => {
     const dispatch = scriptedDispatch([
       failure(new IoError('first')),
       failure(new IoError('second')),
@@ -705,15 +973,12 @@ describe('the suppressed trail with more than two entries (RETRY-34)', () => {
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect((outcome.error.error as Error).message).toBe('third');
-    // The two priors folded into a nested pair, oldest innermost.
-    const folded = outcome.error.suppressed;
-    expect(isSuppressedShape(folded)).toBe(true);
-    if (!isSuppressedShape(folded)) return;
-    expect((folded.error as Error).message).toBe('second');
-    expect((folded.suppressed as Error).message).toBe('first');
+    expect((outcome.error as Error).message).toBe('third');
+    // A flat list in wire order. The `SuppressedError` pair is binary, so N priors used to fold
+    // into a nested chain a caller had to walk; nothing about RETRY-34 asked for that shape.
+    expect(
+      retryAttempts(outcome.error).map(entry => (entry as Error).message),
+    ).toEqual(['first', 'second']);
   });
 });
 
@@ -876,70 +1141,66 @@ describe('per-call state (RETRY-42, RECOV-28)', () => {
 
 describe('Phase 7b retrofit: structured retry logging', () => {
   test('emits attemptFailed per retry and exhausted when attempts run out', async () => {
-    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
-      await import('../observability/logger.js');
-    const events: Map<string, unknown>[] = [];
-    const testLogger = createLogger((_level, fields) => {
-      events.push(new Map(fields));
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(
+        GET,
+        scriptedDispatch([
+          failure(new IoError('first')),
+          failure(new IoError('second')),
+          failure(new IoError('third')),
+        ]),
+        configOf({maxAttempts: 3, fixedDelayMs: 0}),
+      );
     });
-    setGlobalLogger(testLogger);
 
-    try {
-      const config = configOf({maxAttempts: 3, fixedDelayMs: 0});
-      const dispatch = scriptedDispatch([
-        failure(new IoError('first')),
-        failure(new IoError('second')),
-        failure(new IoError('third')),
-      ]);
+    const failedEvents = events.filter(
+      e => e.get('event') === 'http.retry.attemptFailed',
+    );
+    expect(failedEvents).toHaveLength(2);
+    expect(failedEvents[0]?.get('attempt')).toBe(1);
+    expect(failedEvents[1]?.get('attempt')).toBe(2);
 
-      await runWithRetry(GET, dispatch, config);
-
-      const failedEvents = events.filter(
-        e => e.get('event') === 'http.retry.attemptFailed',
-      );
-      expect(failedEvents).toHaveLength(2);
-      expect(failedEvents[0]?.get('attempt')).toBe(1);
-      expect(failedEvents[1]?.get('attempt')).toBe(2);
-
-      const exhaustedEvents = events.filter(
-        e => e.get('event') === 'http.retry.exhausted',
-      );
-      expect(exhaustedEvents).toHaveLength(1);
-      expect(exhaustedEvents[0]?.get('attempts')).toBe(3);
-    } finally {
-      setGlobalLogger(NOOP_LOGGER);
-    }
+    const exhaustedEvents = events.filter(
+      e => e.get('event') === 'http.retry.exhausted',
+    );
+    expect(exhaustedEvents).toHaveLength(1);
+    expect(exhaustedEvents[0]?.get('attempts')).toBe(3);
   });
 
   test('emits delayOverrideFailed when delayOverride throws', async () => {
-    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
-      await import('../observability/logger.js');
-    const events: Map<string, unknown>[] = [];
-    const testLogger = createLogger((_level, fields) => {
-      events.push(new Map(fields));
-    });
-    setGlobalLogger(testLogger);
-
-    try {
-      const config: RetryConfig = {
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(GET, oneFailureThenSuccess(), {
         ...configOf({maxAttempts: 2, fixedDelayMs: 0}),
         delayOverride: () => {
           throw new Error('bad override');
         },
-      };
-      const dispatch = scriptedDispatch([
-        failure(new IoError('first')),
-        success(countingResponse(200).response),
-      ]);
+      });
+    });
 
-      await runWithRetry(GET, dispatch, config);
+    const overrideFailed = events.filter(
+      e => e.get('event') === 'http.retry.delayOverrideFailed',
+    );
+    expect(overrideFailed).toHaveLength(1);
+    expect(overrideFailed[0]?.get('cause')).toBe('Error: bad override');
+  });
 
-      const overrideFailed = events.filter(
-        e => e.get('event') === 'http.retry.delayOverrideFailed',
-      );
-      expect(overrideFailed).toHaveLength(1);
-    } finally {
-      setGlobalLogger(NOOP_LOGGER);
-    }
+  test('emits delayOverrideFailed when delayOverride returns a non-finite delay', async () => {
+    // "Treated exactly like one that throws" (RETRY-40) is a claim about the diagnostic too: an
+    // override dropped in silence is a schedule the operator cannot explain from the configuration.
+    // Same event, same level, same emit path -- only the cause differs, and it names the value.
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(GET, oneFailureThenSuccess(), {
+        ...configOf({maxAttempts: 2, fixedDelayMs: 0}),
+        delayOverride: () => Number.NaN,
+      });
+    });
+
+    const overrideFailed = events.filter(
+      e => e.get('event') === 'http.retry.delayOverrideFailed',
+    );
+    expect(overrideFailed).toHaveLength(1);
+    expect(overrideFailed[0]?.get('cause')).toBe(
+      'delayOverride returned a non-finite delay: NaN',
+    );
   });
 });

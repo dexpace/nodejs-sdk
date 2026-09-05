@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pagination/query-splice.property.test.ts
-import {test} from 'bun:test';
+import {expect, test} from 'bun:test';
 import fc from 'fast-check';
+import {UrlConstructionError} from '../http/errors.js';
 import {readQueryParam, spliceQueryParam} from './query-splice.js';
 
 /**
@@ -49,5 +50,42 @@ test('write-then-read is the identity for any value (PAGE-22)', () => {
       );
       return readQueryParam(url, 'cursor') === value;
     }),
+  );
+});
+
+/**
+ * Strings that mix ordinary query text with UNPAIRED surrogate code units — the same generator
+ * `http/query-params.test.ts` uses, for the same reason: `fc.string()`'s default unit is printable
+ * ASCII, so the `URIError` path would otherwise go ungenerated. That is exactly why the identity
+ * property above never caught it.
+ */
+const surrogateBearingString = fc.string({
+  unit: fc.oneof(
+    fc.constantFrom('a', 'b', ' ', '=', '&', '%', '+', '\u{1F600}'),
+    fc
+      .integer({min: 0xd800, max: 0xdfff})
+      .map(code => String.fromCharCode(code)),
+  ),
+  maxLength: 8,
+});
+
+test('no URIError escapes the splice or the read, whatever a server sent (PAGE-22)', () => {
+  fc.assert(
+    fc.property(
+      surrogateBearingString,
+      surrogateBearingString,
+      (name, value) => {
+        const url = new URL('https://h/p?a=1');
+        try {
+          const out = spliceQueryParam(url, name, value);
+          expect(readQueryParam(out, name)).toBe(value);
+        } catch (e: unknown) {
+          // The one sanctioned failure: inside the error tree, from the call that was handed the
+          // value. A `URIError` here means the guard was bypassed.
+          expect(e).toBeInstanceOf(UrlConstructionError);
+        }
+      },
+    ),
+    {numRuns: 500},
   );
 });

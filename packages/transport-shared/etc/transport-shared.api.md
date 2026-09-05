@@ -4,9 +4,10 @@
 
 ```ts
 
-import type { Body as Body_2 } from '@dexpace/core';
+import { Body as Body_2 } from '@dexpace/core';
 import { DexpaceError } from '@dexpace/core';
 import { Headers as Headers_2 } from '@dexpace/core';
+import type { Method } from '@dexpace/core';
 
 // Warning: (ae-internal-missing-underscore) The name "abortToSdkError" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -39,14 +40,20 @@ export function degradeInboundHeaders(raw: Iterable<readonly [string, string]>):
 //
 // @internal
 export interface ForkedSignal {
+    abort(reason: unknown): void;
     detach(): void;
-    readonly signal: AbortSignal | undefined;
+    readonly signal: AbortSignal;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "forkSignal" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal
 export function forkSignal(source: AbortSignal | undefined): ForkedSignal;
+
+// Warning: (ae-internal-missing-underscore) The name "hasNoResponseBody" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function hasNoResponseBody(method: Method, status: number): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "HeaderDropLogging" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -57,6 +64,11 @@ export type HeaderDropLogging = 'all' | 'first-per-name' | 'quiet';
 //
 // @internal
 export function isMaterializable(body: Body_2, maxBytes: number): boolean;
+
+// Warning: (ae-internal-missing-underscore) The name "isPermanentDispatchFailure" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function isPermanentDispatchFailure(error: unknown): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "mapOutboundHeaders" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -87,6 +99,16 @@ export function producerFailure(done: Promise<void> | undefined): Promise<never>
 //
 // @internal
 export function pumpBody(body: Body_2): BodyPump;
+
+// Warning: (ae-internal-missing-underscore) The name "requireValidDefaultTimeoutMs" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function requireValidDefaultTimeoutMs(value: number | undefined): void;
+
+// Warning: (ae-internal-missing-underscore) The name "toDispatchFailure" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function toDispatchFailure(error: unknown, fallbackMessage: string): Error;
 
 // (No @packageDocumentation comment for this package)
 

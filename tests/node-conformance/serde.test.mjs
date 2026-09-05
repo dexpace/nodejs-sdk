@@ -261,3 +261,122 @@ describe("decodeResponse's close-failure path on the declared Node floor (SERDE-
     );
   });
 });
+
+/**
+ * Fails the case instead of hanging it. `node --test` has no default per-test timeout, so a
+ * regression in the abort race would park the runner for as long as CI allows rather than reporting
+ * anything. The timer is ref'd, which also holds the loop open while the abort is in flight.
+ */
+async function settleWithin(promise, ms) {
+  let timer;
+  const deadline = new Promise((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`did not settle within ${ms}ms`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Whatever `promise` rejected with, or the string marker when it resolved. */
+async function rejection(promise) {
+  try {
+    await promise;
+    return 'RESOLVED';
+  } catch (e) {
+    return e;
+  }
+}
+
+describe('an abort landing on a PENDING read or write (SERDE-3, audit #67 / #79)', () => {
+  // Runtime-divergent twice over. `AbortSignal` and Web Streams are independent implementations
+  // here, and the two disagree on what a reader release does to an outstanding read: measured
+  // 2026-09-05, Bun 1.3.14 rejects it with an `AbortError` and Node 20.3/26 with
+  // `TypeError: Invalid state: Releasing reader`. Neither may reach the caller in place of its own
+  // abort reason, and neither may escape as an unhandled rejection — which `node --test` would
+  // report as a failure of this file even if every assertion below passed.
+  it('settles deserializeFrom with the caller reason and unlocks the source', async () => {
+    let cancelled = false;
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from('{"id"'));
+      },
+      // Parks the drain inside its second `read()`: the state a between-chunks check cannot see.
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const controller = new AbortController();
+    const reason = new Error('the caller gave up mid-drain');
+    const settled = rejection(
+      jsonSerde().deserializer.deserializeFrom(
+        source,
+        {schema: identity, typeName: 'Dto'},
+        {signal: controller.signal},
+      ),
+    );
+    const abortAt = setTimeout(() => controller.abort(reason), 5);
+
+    try {
+      assert.equal(await settleWithin(settled, 2000), reason);
+    } finally {
+      clearTimeout(abortAt);
+    }
+    assert.equal(source.locked, false, 'the caller must get its source back');
+    assert.equal(cancelled, false, 'the source is caller-owned (SERDE-3)');
+  });
+
+  it('settles serializeTo with the caller reason and unlocks the sink', async () => {
+    let closed = false;
+    let aborted = false;
+    const sink = new WritableStream({
+      write() {
+        return new Promise(() => {});
+      },
+      close() {
+        closed = true;
+      },
+      abort() {
+        aborted = true;
+      },
+    });
+    const controller = new AbortController();
+    const reason = new Error('the caller gave up mid-write');
+    const settled = rejection(
+      jsonSerde().serializer.serializeTo({a: 1}, sink, {
+        signal: controller.signal,
+      }),
+    );
+    const abortAt = setTimeout(() => controller.abort(reason), 5);
+
+    try {
+      assert.equal(await settleWithin(settled, 2000), reason);
+    } finally {
+      clearTimeout(abortAt);
+    }
+    assert.equal(sink.locked, false, 'the caller must get its sink back');
+    assert.equal(closed, false, 'the sink is caller-owned (SERDE-3)');
+    assert.equal(aborted, false);
+  });
+
+  it('leaves a completed drain untouched when the signal never fires', async () => {
+    const controller = new AbortController();
+    const value = await jsonSerde().deserializer.deserializeFrom(
+      streamOf(Buffer.from('{"id"'), Buffer.from(':42}')),
+      {schema: identity},
+      {signal: controller.signal},
+    );
+
+    assert.deepEqual(value, {id: 42});
+    // The listener is removed on the way out, so a later abort reaches nothing at all — an
+    // unremoved one would reject a promise nobody is waiting on any more.
+    controller.abort(new Error('too late'));
+  });
+});

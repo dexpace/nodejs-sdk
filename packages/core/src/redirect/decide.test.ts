@@ -15,7 +15,9 @@
 // replayability gate; 303 exempt), REDIR-7 (Authorization always stripped), REDIR-9/REDIR-10 (Cookie and
 // Proxy-Authorization stripped only cross-origin), REDIR-11 (the marker set only on a cross-origin hop),
 // REDIR-5 (the 303 GET rebuild drops the body and every Content-* header), REDIR-3/REDIR-4 (a followed
-// method-preserving redirect keeps the original method).
+// method-preserving redirect keeps the original method), and REDIR-3's eligibility reference point -- the
+// CURRENT hop's method rather than the spec's literal "original request method", recorded as a deliberate
+// reading in docs/deviations.md under "Deviations recorded outside a phase" (2026-09-04, audit #67 / #69).
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import type {Body} from '../body/body.js';
@@ -749,6 +751,51 @@ describe('header construction -- the 303 rebuild and method preservation', () =>
     expect(decision.kind).toBe('follow');
     if (decision.kind === 'follow') {
       expect(decision.nextRequest.method).toBe('POST');
+    }
+  });
+});
+
+describe('REDIR-3 measures eligibility against the CURRENT hop, not the original request', () => {
+  // The spec says "the ORIGINAL request method" (`docs/product-spec/10-redirect-handling.md:8`); the port
+  // reads `currentRequest.method` (`decide.ts:241` into `codes.ts:69`). The two readings agree on every
+  // chain except one, and this is it: an opted-in 303 rewrites POST to GET (REDIR-5), and a 301 arriving on
+  // that rewritten hop is followed under the DEFAULT {GET, HEAD} set, where the literal reading would refuse
+  // it because the request that started the chain was a POST. Kept deliberately -- the rewritten GET is
+  // idempotent and carries no body, so the literal reading buys no safety, and refusing the hop would make
+  // `allow303` half-useful. Recorded in `docs/deviations.md`, "Deviations recorded outside a phase".
+  test('a 303-rewritten GET makes a following 301 eligible under the default method set (REDIR-3/REDIR-5)', () => {
+    const original = aRequest({
+      method: 'POST',
+      url: 'https://example.com/a',
+      body: stringBody('x'),
+    });
+    const first = decide(
+      aResponse(303, 'https://example.com/b'),
+      contextFor(original),
+      redirectSettings({allow303: true}),
+    );
+    expect(first.kind).toBe('follow');
+    if (first.kind !== 'follow') return;
+    expect(first.nextRequest.method).toBe('GET');
+
+    // Nothing about the second hop is opted into: the default set is {GET, HEAD} and excludes the method
+    // the chain started with, which is what makes the two readings disagree here rather than coincide.
+    const settings = redirectSettings();
+    expect(settings.allowedMethods.has('POST')).toBe(false);
+    expect(original.method).toBe('POST');
+
+    const second = decide(
+      aResponse(301, 'https://example.com/c'),
+      contextFor(first.nextRequest, {
+        visited: new Set([original.url.href, first.nextRequest.url.href]),
+        redirectsFollowed: 1,
+      }),
+      settings,
+    );
+    expect(second.kind).toBe('follow');
+    if (second.kind === 'follow') {
+      expect(second.nextRequest.url.href).toBe('https://example.com/c');
+      expect(second.nextRequest.method).toBe('GET');
     }
   });
 });

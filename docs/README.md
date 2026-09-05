@@ -16,6 +16,7 @@ is the index; the rule is that nothing in `docs/` is unowned, and nothing is wri
 | [the dissolved open-items register](./work/mvp/2026-09-04-open-items-dissolution.md) | **Archive of record.** Everything the register held when it was dissolved on 2026-09-04, with every open question in it decided. Item IDs stay reserved and still resolve | — | No — nothing is appended |
 | [`first-release.md`](./first-release.md) | Release readiness: what the release path already does, the confirmed mechanics, and the blockers that must clear before a first publish. Was the `NFR-16` row of `deferred-items.md`, which was dissolved on 2026-09-04 — its five still-live rows are archived under *Live deferrals* in [`work/mvp/2026-09-04-register-retirement-purge.md`](./work/mvp/2026-09-04-register-retirement-purge.md) | The maintainer | Yes — edited as blockers clear |
 | [`deviations.md`](./deviations.md) | The as-built audit of §10, and the landing point for a deviation found outside a phase | An audit or review | Yes — appends |
+| [`audit-67-decisions.md`](./audit-67-decisions.md) | Decision ledger for the audit #67 remediation run: cross-task decisions, rejected alternatives, and the release-machinery work deferred from it | The remediation supervisor | Yes — appends |
 | [`assets/`](./assets/) | Vendored wordmark SVGs the root `README.md` renders | Copied from `dexpace/morphic` | Yes |
 
 ## Frozen means frozen

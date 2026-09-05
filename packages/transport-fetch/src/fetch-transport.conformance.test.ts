@@ -11,4 +11,6 @@ runTransportConformanceSuite('fetchTransport', () => fetchTransport(), {
   supportsProxy: false,
   // TRANSPORT-11: `Connection` is a WHATWG forbidden request header, so fetch drops it either way.
   dropsConnectionHeader: true,
+  // HTTP-35: the factory is where a default `AbortSignal.timeout()` could not take is refused.
+  buildWithDefaultTimeoutMs: value => fetchTransport({defaultTimeoutMs: value}),
 });

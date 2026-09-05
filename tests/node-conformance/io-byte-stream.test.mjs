@@ -224,3 +224,163 @@ describe('BufferedSink and TeeSink over a Node WritableStream', () => {
     );
   });
 });
+
+// The five Web Streams bridges had no case here at all until #77. Every one of them is a hand-written
+// `ReadableStream`/`WritableStream` underlying-source or -sink object, so what they exercise is the
+// runtime's own pull scheduling, cancel dispatch and reader-lock bookkeeping — the three things §5.9
+// names and the three that two independent Streams implementations are most likely to differ on.
+
+describe('BufferedSource.toReadableStream on Node (IO-16)', () => {
+  it('pulls one chunk at a time instead of draining the source eagerly', async () => {
+    let pulls = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 4) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(Uint8Array.from([pulls]));
+      },
+    });
+    const bridge = BufferedSource.overStream(stream).toReadableStream();
+    const reader = bridge.getReader();
+
+    const first = await reader.read();
+    assert.deepEqual([...first.value], [1]);
+    // Node's default queuing strategy reads one chunk ahead, so at most one pull beyond the one just
+    // served. The assertion that matters is that the whole 4-chunk source has not been materialized.
+    assert.ok(pulls <= 2, `expected at most 2 pulls, saw ${pulls}`);
+    await reader.cancel();
+  });
+
+  it('closes the bridge at natural EOF without tearing down the owning source', async () => {
+    // IO-19: closing the source here would invalidate every outstanding peek/slice view, defeating the
+    // bridge's most natural usage — take a preview, hand the bridge to the transport, read the preview
+    // afterwards. Only an explicit cancel closes the source (next case).
+    const source = BufferedSource.overStream(streamOfChunks([[1, 2], [3]]));
+    const preview = source.peek();
+    const collected = [];
+    for await (const chunk of source.toReadableStream())
+      collected.push(...chunk);
+
+    assert.deepEqual(collected, [1, 2, 3]);
+    assert.deepEqual([...(await preview.readBytes())], [1, 2, 3]);
+    assert.equal(source.closed, false);
+    await source.close();
+  });
+
+  it('cancelling the bridge closes the source AND releases the caller stream lock', async () => {
+    const stream = streamOfChunks([[1, 2, 3]]);
+    const source = BufferedSource.overStream(stream);
+    assert.equal(stream.locked, true);
+
+    await source.toReadableStream().cancel();
+    assert.equal(source.closed, true);
+    // cancel() cancels the stream but never releases the reader's lock; only releaseLock() does, and a
+    // leaked lock on a connection-backed source is a held socket.
+    assert.equal(stream.locked, false);
+  });
+
+  it('a mid-stream read failure closes the source rather than stranding the lock', async () => {
+    // The Streams spec does NOT invoke `cancel` on an errored stream, so the bridge has to close the
+    // source itself on this path. A runtime that dispatched cancel here would hide the bug.
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2, 3]));
+      },
+      pull() {
+        throw new Error('mid-stream read failure');
+      },
+    });
+    const source = BufferedSource.overStream(stream);
+    const reader = source.toReadableStream().getReader();
+
+    assert.deepEqual([...(await reader.read()).value], [1, 2, 3]);
+    await assert.rejects(reader.read(), /mid-stream read failure/);
+    assert.equal(source.closed, true);
+    assert.equal(stream.locked, false);
+  });
+});
+
+describe('BufferedSink.toWritableStream on Node (IO-16)', () => {
+  it('carries a pipeTo through to the destination and closes it', async () => {
+    // `pipeTo` closes its destination on natural EOF, and IO-16 says closing the bridge closes the
+    // sink, which closes the caller's stream. Three closes chained through two runtimes' plumbing.
+    const written = [];
+    let closed = false;
+    const destination = new WritableStream({
+      write: chunk => void written.push(...chunk),
+      close: () => void (closed = true),
+    });
+    const sink = BufferedSink.overStream(destination);
+
+    await streamOfChunks([[1, 2], [3]]).pipeTo(sink.toWritableStream());
+    assert.deepEqual(written, [1, 2, 3]);
+    assert.equal(sink.closed, true);
+    assert.equal(closed, true);
+  });
+
+  it('aborting the bridge aborts the sink and carries the reason, rather than closing it', async () => {
+    // Collapsing an abort into a graceful close commits a cancelled request body downstream as a
+    // well-formed complete one, so the peer cannot tell an aborted upload from a successful short one.
+    let closed = false;
+    let abortReason = 'NOT-ABORTED';
+    const destination = new WritableStream({
+      write: chunk => void chunk,
+      close: () => void (closed = true),
+      abort: reason => void (abortReason = reason),
+    });
+    const sink = BufferedSink.overStream(destination);
+    const writer = sink.toWritableStream().getWriter();
+    await writer.write(Uint8Array.from([1, 2, 3]));
+
+    const reason = new Error('user cancelled');
+    await writer.abort(reason);
+    assert.equal(abortReason, reason);
+    assert.equal(closed, false);
+    assert.equal(sink.closed, true);
+  });
+
+  it('drops a zero-length chunk rather than forwarding a chunked-encoding terminator', async () => {
+    const {stream, written} = collectingStream();
+    const sink = BufferedSink.overStream(stream);
+    const writer = sink.toWritableStream().getWriter();
+    await writer.write(new Uint8Array(0));
+    await writer.write(Uint8Array.from([7]));
+    await writer.close();
+    assert.deepEqual([...written()], [7]);
+  });
+});
+
+describe('TeeSink.toWritableStream on Node (IO-16, IO-26)', () => {
+  it('routes through the tee, so bytes written to the bridge still reach the tap', async () => {
+    // Handing callers the PRIMARY's bridge instead would let every byte written through it bypass the
+    // tap, silently producing an empty capture.
+    const {stream, written} = collectingStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream), 2);
+
+    await streamOfChunks([
+      [1, 2],
+      [3, 4, 5],
+    ]).pipeTo(tee.toWritableStream());
+    assert.deepEqual([...written()], [1, 2, 3, 4, 5]);
+    assert.deepEqual([...tee.snapshot()], [1, 2]);
+  });
+
+  it('forwards an abort to the primary while the tap survives to record what was attempted', async () => {
+    let abortReason = 'NOT-ABORTED';
+    const destination = new WritableStream({
+      write: chunk => void chunk,
+      abort: reason => void (abortReason = reason),
+    });
+    const tee = new TeeSink(BufferedSink.overStream(destination), 4);
+    const writer = tee.toWritableStream().getWriter();
+    await writer.write(Uint8Array.from([1, 2, 3]));
+
+    const reason = new Error('deadline exceeded');
+    await writer.abort(reason);
+    assert.equal(abortReason, reason);
+    assert.deepEqual([...tee.snapshot()], [1, 2, 3]);
+  });
+});

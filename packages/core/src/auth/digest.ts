@@ -233,10 +233,17 @@ function isHeaderSafeEcho(info: {
 }
 
 /**
- * AUTH-16: satisfiable if and only if the scheme is `digest`, `realm` and `nonce` are both present,
- * `qop` is absent or contains `auth`, the algorithm (defaulting to `MD5`) is in the caller's
- * configured preference list, and every field AUTH-22 echoes back is header-safe
+ * AUTH-16: satisfiable if and only if the scheme is `digest`, `realm` and `nonce` both carry a
+ * non-empty value, `qop` is absent or contains `auth`, the algorithm (defaulting to `MD5`) is in the
+ * caller's configured preference list, and every field AUTH-22 echoes back is header-safe
  * ({@link isHeaderSafeEcho}).
+ *
+ * "Carries realm and nonce" is read as carrying a VALUE, not merely a key. A truncated header —
+ * `Digest realm="r", nonce=` — parses to `nonce: ''`, which is AUTH-12 and AUTH-13 both behaving
+ * exactly as specified: values are stored verbatim after unquoting, and what was parsed before a
+ * malformed tail is kept. Testing `=== undefined` here accepted that and sent `nonce=""` back, a
+ * response computed over a nonce no server can have issued. The challenge is declined instead, so the
+ * next one is tried and a 401 offering nothing else surfaces unchanged (AUTH-25, AUTH-33).
  */
 function parseDigestChallenge(
   challenge: Challenge,
@@ -245,7 +252,8 @@ function parseDigestChallenge(
   if (challenge.scheme !== 'digest') return undefined;
   const realm = challenge.params.get('realm');
   const nonce = challenge.params.get('nonce');
-  if (realm === undefined || nonce === undefined) return undefined;
+  if (realm === undefined || realm === '') return undefined;
+  if (nonce === undefined || nonce === '') return undefined;
 
   const qopRaw = challenge.params.get('qop');
   const hasQop = qopRaw !== undefined;
@@ -368,8 +376,19 @@ interface HeaderValueParams {
 
 /**
  * AUTH-22: quotes `username`/`realm`/`nonce`/`uri`/`response`/`cnonce`/`opaque`; leaves
- * `qop`/`nc`/`algorithm` unquoted, with the full algorithm spelling; emits `cnonce`/`nc`/`qop` only
- * when `qop` was actually negotiated.
+ * `qop`/`nc`/`algorithm` unquoted, with the full algorithm spelling; emits `nc`/`qop` only when `qop`
+ * was actually negotiated.
+ *
+ * **`cnonce` is emitted for every `-sess` algorithm, negotiated `qop` or not** — a deliberate
+ * departure from AUTH-22's letter, recorded in `docs/deviations.md`. A `-sess` HA1 is
+ * `H(H(user:realm:pass):nonce:cnonce)` (RFC 7616 §3.4.2), so a server handed a `-sess` response with
+ * no `cnonce` cannot recompute HA1 and cannot verify anything: the request is unanswerable by
+ * construction, and AUTH-30 bounds the replay to one 401, so it simply fails. RFC 7616 §3.4 states it
+ * outright — "cnonce: This parameter MUST be used by all implementations". AUTH-22's wording is RFC
+ * 2617's RFC 2069-compatibility form, which predates `-sess` entirely.
+ *
+ * `nc` stays conditional and stays out: RFC 2069's response input is `H(HA1:nonce:HA2)`, with no nonce
+ * count in it, so emitting one would advertise a count the response was not computed over.
  */
 function buildHeaderValue(params: HeaderValueParams): string {
   const {username, info, uri, response, cnonce, nc} = params;
@@ -385,6 +404,8 @@ function buildHeaderValue(params: HeaderValueParams): string {
   if (info.opaque !== undefined) parts.push(`opaque=${quote(info.opaque)}`);
   if (info.hasQopAuth)
     parts.push('qop=auth', `nc=${nc}`, `cnonce=${quote(cnonce)}`);
+  else if (info.algorithm.endsWith('-sess'))
+    parts.push(`cnonce=${quote(cnonce)}`);
   return `Digest ${parts.join(', ')}`;
 }
 

@@ -141,7 +141,7 @@ import {
   type AuthStepSettings,
   type AuthTiers,
   type BackoffSettings,
-  type BasicCredential,
+  BasicCredential,
   type BearerCredential,
   BearerToken,
   bearerTokensEqual,
@@ -159,7 +159,7 @@ import {
   type DeserializationErrorOptions,
   type Deserializer,
   type DigestAlgorithm,
-  type DigestCredential,
+  DigestCredential,
   type DispatchContext,
   type ExchangeContext,
   type ExecutionContext,
@@ -333,8 +333,8 @@ export function assemble(transport: Transport): Runtime {
   const settings: AuthStepSettings = {
     credentials: {
       apiKey: {credential: new ApiKeyCredential('k'), prefix: 'ApiKey'},
-      basic: {username: 'u', password: 'p'},
-      digest: {username: 'u', password: 'p', algorithmPreference: ['SHA-256' satisfies DigestAlgorithm]},
+      basic: new BasicCredential('u', 'p'),
+      digest: new DigestCredential('u', 'p', ['SHA-256' satisfies DigestAlgorithm]),
       bearer: {provider, marginMs: 5_000},
     },
     tiers: {
@@ -379,8 +379,8 @@ export function narrow(error: unknown): string | undefined {
   if (error instanceof AuthResolutionError) return error.requiredSchemes?.[0];
   return undefined;
 }
-export function credentialSet(set: AuthCredentialSet): BasicCredential | undefined {
-  return set.basic;
+export function credentialSet(set: AuthCredentialSet): string | undefined {
+  return set.basic?.username;
 }
 export function bearerCredential(c: BearerCredential): TokenProvider {
   return c.provider;

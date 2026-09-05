@@ -16,8 +16,12 @@ interface AuthTiers {
 
 The most specific tier that is set wins (`AUTH-4`). `perCall` comes from
 `RequestOptions.newBuilder().auth(descriptor)`, which is how one call opts out of, or into, something
-different from the client default. Only the *selection* is tiered; whether a selected requirement can
-be satisfied at all is `AUTH-6`, and failing it is an `AuthResolutionError`.
+different from the client default. **`operation` comes from `RequestOptions.operationAuth`**, set with
+`RequestOptions.newBuilder().operationAuth(descriptor)` — both per-call slots ride on the same
+`RequestOptions`, and the AUTH pillar step reads them into the two tiers
+(`packages/core/src/auth/auth-step.ts:252,756`; `packages/core/src/auth/resolve.ts:19` names the mapping). `client` is the
+configured default. Only the *selection* is tiered; whether a selected requirement can be satisfied at
+all is `AUTH-6`, and failing it is an `AuthResolutionError`.
 
 An `AuthDescriptor` is a list of `AuthRequirement`s, each a scheme plus optional scopes and
 parameters. Both are built by factory, never as an object literal:
@@ -39,8 +43,8 @@ The factories validate and freeze (`AUTH-3`). A descriptor containing a `NO_AUTH
 ```typescript
 interface AuthCredentialSet {
   readonly bearer?: {provider: TokenProvider; marginMs?: number};
-  readonly basic?: {username: string; password: string};
-  readonly digest?: {username: string; password: string; algorithmPreference?: DigestAlgorithm[]};
+  readonly basic?: BasicCredential;
+  readonly digest?: DigestCredential;
   readonly apiKey?: {credential: ApiKeyCredential | NameKeyCredential; headerName?: string; prefix?: string};
 }
 ```
@@ -49,17 +53,36 @@ The five schemes are `OAUTH2`, `API_KEY`, `BASIC`, `DIGEST` and `NO_AUTH`. A req
 scheme; the credential set supplies the material for it. A requirement with no matching credential is
 an `AuthResolutionError` at send time, not a silent unauthenticated request.
 
-**`ApiKeyCredential`, `NameKeyCredential` and `BearerToken` are nominal, not structural.** Each carries
-a `#private` field, so no caller-side object literal is assignable to them and the validation in each
-factory cannot be routed around. They also override `toString()` and Node's inspect symbol, so a
-credential cannot leak into a log line or a stack trace by accident.
+**Every credential type is nominal, not structural.** `ApiKeyCredential`, `NameKeyCredential`,
+`BearerToken`, `BasicCredential` and `DigestCredential` each carry a `#private` field, so no
+caller-side object literal is assignable to them and the validation behind each cannot be routed
+around. All five override `toString()` and Node's inspect symbol, so a credential cannot leak into a
+log line or a stack trace by accident.
 
 ```typescript
-import {ApiKeyCredential, createBearerToken} from '@dexpace/core';
+import {
+  ApiKeyCredential,
+  BasicCredential,
+  createBearerToken,
+  DigestCredential,
+} from '@dexpace/core';
+
+const credentials = {
+  basic: new BasicCredential('alice', 'super-secret'),
+  digest: new DigestCredential('bob', 'super-secret', ['SHA-256', 'MD5']),
+  apiKey: {credential: new ApiKeyCredential('super-secret'), headerName: 'X-Api-Key'},
+};
 
 String(new ApiKeyCredential('super-secret')); // 'ApiKeyCredential{key=***}'
 String(createBearerToken('t', 1)); // 'BearerToken{token=***, expiresAt=1}' — the expiry survives
+String(credentials.basic); // 'BasicCredential{username=alice, password=***}'
 ```
+
+There is no `password` property to read back, by design: `BasicCredential` and `DigestCredential`
+shipped as plain `{username, password}` records until 2026-09-04, and a plain property is reachable
+through `credential['password']`, `Object.keys`, `JSON.stringify` and a default `util.inspect` — so
+`util.inspect(credentials)` printed the password in clear beside `ApiKeyCredential{key=***}`. The
+username and the Digest algorithm preference stay visible; `AUTH-8` permits non-secret fields to.
 
 The inspect symbol matters as much as `toString`: `console.log(credential)` and `util.inspect` do not
 route an object argument through `toString`, so both are overridden (`AUTH-8`).
@@ -102,6 +125,14 @@ request is dispatched (`AUTH-28`). There is no option to disable it. `NO_AUTH` n
 is why an auth-less `standardResilience()` installs a `NO_AUTH`-only step rather than no step at all —
 the pillar slot stays filled and the behaviour stays uniform.
 
+**Once guarded, always guarded.** A `challengeHook` may return any request it likes, including one
+whose URL has been downgraded to `http://`. When the outbound pass ran the guard, the replay is
+guarded too — unconditionally, without inspecting a single header name, because
+`ApiKeyCredentialConfig.headerName` lets this step stamp a header no fixed list would contain. On a
+`NO_AUTH` hop, which is never guarded outbound, a replacement carrying `Authorization` or
+`Proxy-Authorization` still trips the guard. A genuinely credential-free re-issue over `http://` is
+what `XCUT-16` explicitly permits, and it still proceeds.
+
 ## Challenges
 
 ```typescript
@@ -129,6 +160,23 @@ when the deferral register was dissolved on 2026-09-04).
 
 **Basic and Digest never stamp preemptively.** They react to a challenge. That is an interpretation of
 `§11` rather than a stated requirement, and it is ledgered as one.
+
+**Every challenge the response offered is considered, not just the first.** A server may send
+`WWW-Authenticate` (or `Proxy-Authenticate`) once with several comma-separated challenges, or once per
+challenge — RFC 9110 §5.3 permits both, and RFC 7616 §3.3 recommends the repeated form for Digest
+algorithm discovery. Which of the two shapes reaches the step is partly the transport's accident:
+`@dexpace/transport-fetch` comma-joins repeated values because WHATWG `Headers` does,
+`@dexpace/transport-undici` keeps them apart. The step reads *every* value and parses each on its own,
+so the offer is the same list either way, and `@dexpace/transport-conformance` carries a row asserting
+that. A challenge the SDK cannot answer — an unsupported algorithm, an `auth-int`-only `qop`, a realm
+this client cannot echo back, an empty `realm` or `nonce` — is declined and the next one is tried; a
+`401` offering nothing answerable surfaces unchanged and unclosed.
+
+**Digest `-sess` sends `cnonce` whether or not `qop` was negotiated.** `MD5-sess` and `SHA-256-sess`
+fold the client nonce into HA1 (RFC 7616 §3.4.2), so a server handed a `-sess` response without one
+cannot verify it. `nc` and `qop` stay conditional on a negotiated `qop`. `AUTH-22`'s literal wording
+says all three are conditional; the departure is a row in
+[`deviations.md`](../deviations.md).
 
 ## Redirects and credentials
 

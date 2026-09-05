@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/multipart-body.ts
 import type {Builder} from '../http/builder.js';
+import {MediaType} from '../http/media-type.js';
 import {EndOfStreamError} from '../io/errors.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
@@ -77,6 +78,31 @@ function renderPartHeader(part: MultipartPart, boundary: string): Uint8Array {
   return new TextEncoder().encode(header);
 }
 
+/**
+ * HTTP-51: the `Content-Type` a peer actually parses.
+ *
+ * RFC 2046 `bchars` and RFC 9110 `tchar` are different sets. `BOUNDARY_PATTERN` above admits ' ', ',',
+ * ':', '=', '?', '/', '(' and ')', none of which is a `tchar`, so interpolating the boundary bare
+ * produces a parameter value that stops at the first offending byte -- `boundary=a,b` reads as
+ * `boundary=a` plus a junk parameter, and the peer then never finds a delimiter. Node's own FormData
+ * parser rejects such a body outright with `TypeError: Failed to parse body as FormData`.
+ *
+ * Rendered through {@link MediaType} rather than a second quoting routine here: it is the module that
+ * owns HTTP-25's token-or-quoted-string decision, and `parse(render(x)) === x` is its guarantee. A
+ * boundary that IS a bare token still renders bare, so the generated default is byte-identical to what
+ * this class emitted before.
+ *
+ * Narrowing `validateBoundary` to `tchar` instead was rejected: HTTP-51 asks that a boundary VIOLATING
+ * the RFC 2046 grammar be refused, not that a conforming one be. The defect is in the rendering.
+ */
+function renderMediaType(boundary: string): string {
+  return MediaType.of(
+    'multipart',
+    'form-data',
+    new Map([['boundary', boundary]]),
+  ).render();
+}
+
 function trailerBytes(boundary: string): Uint8Array {
   return new TextEncoder().encode(`--${boundary}--\r\n`);
 }
@@ -144,7 +170,10 @@ function nonClosingSink(
 export class MultipartBody implements Body {
   /** Discriminates this variant within the {@link Body} union. */
   readonly kind = 'multipart' as const;
-  /** `multipart/form-data` carrying the boundary this instance frames its parts with. */
+  /**
+   * `multipart/form-data` carrying the boundary this instance frames its parts with, with the
+   * `boundary` parameter quoted whenever it is not a bare RFC 9110 token (HTTP-51).
+   */
   readonly mediaType: string;
   /** The total framed byte count, or -1 when any part's own length is unknown (BODY-2). */
   readonly contentLength: number;
@@ -157,7 +186,7 @@ export class MultipartBody implements Body {
     if (boundary !== undefined) validateBoundary(boundary);
     this.#boundary = boundary ?? generateBoundary();
     this.#parts = [...parts];
-    this.mediaType = `multipart/form-data; boundary=${this.#boundary}`;
+    this.mediaType = renderMediaType(this.#boundary);
     this.replayable = this.#parts.every(part => part.body.replayable);
     this.contentLength = computeContentLength(this.#parts, this.#boundary);
     invariant(
