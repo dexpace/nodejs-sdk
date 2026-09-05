@@ -24,6 +24,14 @@ import {
   stringBody,
   toHttpError,
 } from '@dexpace/core';
+// The two logging taps are `@internal` -- `body/index.ts` holds them and the public barrel deliberately
+// does not, so they are reached by direct `dist/` file path, exactly as `io-byte-stream.test.mjs` reaches
+// `io/`. Still the BUILT artifact, never `src/`.
+import {withRequestLogging} from '../../packages/core/dist/body/request-body-logging.js';
+import {withResponseLogging} from '../../packages/core/dist/body/response-body-logging.js';
+
+/** `Response` above is the SDK's model class, which shadows the platform global this file also needs. */
+const PlatformResponse = globalThis.Response;
 
 function streamOf(bytes) {
   return new ReadableStream({
@@ -225,5 +233,181 @@ describe('toHttpError buffering on Node', () => {
     const response = responseWith(200, streamOf([1, 2, 3]));
     assert.equal(await toHttpError(response), null);
     assert.deepEqual([...(await response.bytes())], [1, 2, 3]);
+  });
+});
+
+describe("the multipart Content-Type parses in Node's own FormData reader (HTTP-51)", () => {
+  // The reproducer for the boundary-quoting fix, and the reason it belongs here rather than only in
+  // `bun test`: Bun's `Response.formData()` tolerates an unquoted `boundary=a,b`, Node's (undici's)
+  // rejects the whole body with `TypeError: Failed to parse body as FormData`. Two independent parsers
+  // disagreeing about a header this SDK generates is precisely what this tree exists to catch.
+  for (const boundary of ['a,b', 'bound ary', 'a:b', 'a=b', 'a?b', '(a)/b']) {
+    it(`round-trips a body framed with ${JSON.stringify(boundary)}`, async () => {
+      const body = multipartBody(
+        [{name: 'field', body: stringBody('value')}],
+        boundary,
+      );
+      const parsed = await new PlatformResponse(await collect(body), {
+        headers: {'content-type': body.mediaType},
+      }).formData();
+      assert.equal(parsed.get('field'), 'value');
+    });
+  }
+
+  it('leaves a boundary that is already a bare token unquoted', () => {
+    const body = multipartBody([{name: 'a', body: stringBody('x')}], 'plain-1');
+    assert.equal(body.mediaType, 'multipart/form-data; boundary=plain-1');
+  });
+});
+
+describe('an exact-length copy refuses a zero-length delivery on Node (HTTP-39/BODY-10)', () => {
+  it('raises rather than forwarding a chunked-encoding terminator to the sink', async () => {
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(new Uint8Array(0));
+        controller.enqueue(Uint8Array.from([3]));
+        controller.close();
+      },
+    });
+    const chunkLengths = [];
+
+    await assert.rejects(
+      streamBody(source, undefined, 3).writeTo(
+        new WritableStream({write: c => void chunkLengths.push(c.length)}),
+      ),
+      error => error.name === 'SourceContractViolationError',
+    );
+    assert.deepEqual(chunkLengths, [2]);
+  });
+
+  it('still allows a declared length of 0 over a source that just closes', async () => {
+    let closed = false;
+    await streamBody(
+      new ReadableStream({
+        start: c => {
+          c.close();
+        },
+      }),
+      undefined,
+      0,
+    ).writeTo(
+      new WritableStream({
+        write: c => void c,
+        close: () => void (closed = true),
+      }),
+    );
+    assert.equal(closed, true);
+  });
+});
+
+describe('withRequestLogging over Node Web Streams (BODY-17..21)', () => {
+  it('mirrors into the tap while the full untruncated payload reaches the primary', async () => {
+    const logged = withRequestLogging(
+      byteArrayBody(Uint8Array.from([1, 2, 3, 4, 5])),
+      2,
+    );
+    assert.deepEqual([...(await collect(logged))], [1, 2, 3, 4, 5]);
+    assert.deepEqual([...logged.snapshot()], [1, 2]);
+  });
+
+  it('clears the tap between writes so a retry does not accumulate stale bytes (BODY-18)', async () => {
+    const logged = withRequestLogging(
+      byteArrayBody(Uint8Array.from([9, 9])),
+      8,
+    );
+    await collect(logged);
+    await collect(logged);
+    assert.deepEqual([...logged.snapshot()], [9, 9]);
+  });
+
+  it('aborts the real sink when the delegate refuses before ever touching the adapter', async () => {
+    // A `ConsumedBodyError` on a second write reaches neither handler on the adapter stream, so without
+    // the wrapper's own catch the primary writer stays open and locked forever -- a held connection.
+    // Whether an abort dispatched on a writer reaches the underlying sink's algorithm, and does so
+    // instead of the close algorithm, is runtime plumbing rather than logic.
+    const logged = withRequestLogging(
+      streamBody(streamOf([1, 2, 3]), undefined, 3),
+      8,
+    );
+    await collect(logged); // consumes the single-use delegate
+
+    let abortReason = 'NOT-ABORTED';
+    let closed = false;
+    const destination = new WritableStream({
+      write: chunk => void chunk,
+      close: () => void (closed = true),
+      abort: reason => void (abortReason = reason),
+    });
+    await assert.rejects(
+      logged.writeTo(destination),
+      error => error.name === 'ConsumedBodyError',
+    );
+    assert.equal(abortReason.name, 'ConsumedBodyError');
+    // Never closed: a broken message must not be committed downstream as a well-formed short one.
+    assert.equal(closed, false);
+  });
+});
+
+describe('withResponseLogging over Node Web Streams (BODY-22..28)', () => {
+  function chunked(...chunks) {
+    return new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(Uint8Array.from(chunk));
+        controller.close();
+      },
+    });
+  }
+
+  async function readAll(stream) {
+    const out = [];
+    for await (const chunk of stream) out.push(...chunk);
+    return out;
+  }
+
+  it('serves the prefix then the still-live tail, one pull at a time (BODY-24)', async () => {
+    const logged = withResponseLogging(chunked([1, 2], [3, 4, 5]), 3);
+    assert.deepEqual(await readAll(await logged.read()), [1, 2, 3, 4, 5]);
+    assert.deepEqual([...logged.snapshot()], [1, 2, 3]);
+  });
+
+  it('cancelling the tail stream cancels the delegate exactly once (BODY-27)', async () => {
+    let cancels = 0;
+    const delegate = chunked([1, 2], [3, 4]);
+    const inner = delegate.cancel.bind(delegate);
+    delegate.cancel = async reason => {
+      cancels += 1;
+      return inner(reason);
+    };
+    const logged = withResponseLogging(delegate, 1);
+
+    await (await logged.read()).cancel();
+    await logged.close();
+    assert.equal(cancels, 1);
+  });
+
+  it('close() leaves the tap inert instead of poisoning it with a detached-reader TypeError', async () => {
+    // Node reports a released reader as `TypeError [ERR_INVALID_STATE]: Invalid state: The reader is not
+    // attached to a stream`. That message used to be cached as this wrapper's drain failure and reported
+    // by error() forever, over a capture that never failed.
+    const logged = withResponseLogging(chunked([1, 2, 3]), 100);
+    await logged.close();
+
+    assert.deepEqual([...logged.snapshot()], []);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(logged.error(), null);
+    await assert.rejects(
+      logged.read(),
+      error => error.name === 'ClosedResourceError',
+    );
+  });
+
+  it('a fits-cap capture stays repeatably readable after close (BODY-23, BODY-28)', async () => {
+    const logged = withResponseLogging(chunked([1, 2, 3]), 100);
+    assert.deepEqual(await readAll(await logged.read()), [1, 2, 3]);
+    await logged.close();
+    assert.deepEqual(await readAll(await logged.read()), [1, 2, 3]);
+    assert.deepEqual([...logged.snapshot()], [1, 2, 3]);
+    assert.equal(logged.error(), null);
   });
 });

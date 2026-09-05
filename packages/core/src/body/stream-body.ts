@@ -1,12 +1,39 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/stream-body.ts
-import {EndOfStreamError} from '../io/errors.js';
+import {EndOfStreamError, SourceContractViolationError} from '../io/errors.js';
 import {invariant} from '../invariant.js';
 import type {Body} from './body.js';
 import {ConsumedBodyError} from './errors.js';
 import {freezeBody} from './freeze-body.js';
 import {assertHeaderSafeMediaType} from './media-type-safety.js';
 import {withBodyWriter} from './write-body.js';
+
+/**
+ * HTTP-39/BODY-10: a zero-length delivery during an exact-length copy is a source-contract violation,
+ * never end-of-stream and never something to spin on -- `{done: true}` is the only end signal.
+ *
+ * Two failure modes, and neither one is diagnosable anywhere else. A source that only ever yields empty
+ * chunks never ends, so the delivered-of-declared check below is never reached; and every empty chunk
+ * that gets past here reaches the transport sink, where to an HTTP/1.1 chunked-encoding transport a
+ * zero-length chunk is the TERMINATING chunk (`io/buffered-sink.ts`'s `writeString`) -- so tolerating
+ * one ends the request body early on the wire while the copy still believes it is mid-body.
+ *
+ * The wording and the error type are `io/retention-window.ts`'s deliberately: `read()` carries no
+ * requested count, so the requirement's "for a positive requested count" has no literal analog, and a
+ * request body reaches both this copy and `BufferedSource` -- a divergence would make the same upstream
+ * fail or succeed depending only on which wrapper it passed through. `body/response-body-logging.ts`
+ * makes the same call for BODY-25 on the response side.
+ *
+ * A declared length of 0 is still a legitimate empty write (BODY-10): that is a source that signals
+ * `{done: true}` immediately, which never reaches this check.
+ */
+function assertNonEmptyChunk(value: Uint8Array): void {
+  if (value.length === 0) {
+    throw new SourceContractViolationError(
+      'source delivered 0 bytes without signalling end of stream',
+    );
+  }
+}
 
 /**
  * A single-use body backed by a caller-supplied stream.
@@ -50,6 +77,8 @@ export class StreamBody implements Body {
    * @throws {@link ConsumedBodyError} on a second call -- this body is single-use (BODY-3).
    * @throws EndOfStreamError when a declared `contentLength` disagrees with the bytes the stream
    * actually yields, in either direction (HTTP-39/BODY-10).
+   * @throws SourceContractViolationError when the stream delivers a zero-length chunk without
+   * signalling end of stream during a declared-length write (HTTP-39/BODY-10).
    */
   async writeTo(sink: WritableStream<Uint8Array>): Promise<void> {
     if (this.#consumed) throw new ConsumedBodyError('stream');
@@ -80,6 +109,7 @@ export class StreamBody implements Body {
           // Serial by necessity: each read depends on the previous one advancing the cursor.
           const {done, value} = await reader.read();
           if (done) break;
+          assertNonEmptyChunk(value); // HTTP-39/BODY-10
           // Checked BEFORE the write, not after the loop: once a transport has stamped the declared
           // Content-Length, an overrun byte sits on the socket where the peer reads it as the start of
           // the next message, and a thrown error cannot recall bytes already written (HTTP-39/BODY-10).
@@ -109,6 +139,8 @@ export class StreamBody implements Body {
  * @throws ConsumedBodyError from `writeTo` when the body has already been written once (BODY-3).
  * @throws EndOfStreamError from `writeTo` when the stream yields a byte count other than the declared
  * `contentLength` (HTTP-39/BODY-10).
+ * @throws SourceContractViolationError from `writeTo` when the stream delivers a zero-length chunk
+ * without signalling end of stream during a declared-length write (HTTP-39/BODY-10).
  * @public
  */
 export function streamBody(

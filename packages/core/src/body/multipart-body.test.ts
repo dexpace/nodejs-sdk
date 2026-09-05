@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/body/multipart-body.test.ts
 // Exercises: BODY-2 (composite replayability, unknown-length collapse), HTTP-51 (shared framing routine,
-// boundary generation/validation, header quoting, and a part media type that cannot break the framing),
-// HTTP-26 (a media type is header-safe), RECOV-12 (a close failure never masks the primary failure)
+// boundary generation/validation, header quoting, a boundary parameter rendered so an RFC 9110 parser
+// can read it, and a part media type that cannot break the framing), HTTP-26 (a media type is
+// header-safe), RECOV-12 (a close failure never masks the primary failure)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {MediaTypeParseError} from '../http/errors.js';
@@ -66,9 +67,11 @@ function collectingSink(): {
   };
 }
 
-async function drain(body: {
+// `Uint8Array<ArrayBuffer>`, not the bare alias: `BodyInit` excludes a view over a `SharedArrayBuffer`,
+// so the default `ArrayBufferLike` parameter is not assignable to the platform `Response` below.
+async function drainBytes(body: {
   writeTo: (sink: WritableStream<Uint8Array>) => Promise<void>;
-}): Promise<string> {
+}): Promise<Uint8Array<ArrayBuffer>> {
   const chunks: Uint8Array[] = [];
   await body.writeTo(new WritableStream({write: c => void chunks.push(c)}));
   const total = chunks.reduce((s, c) => s + c.length, 0);
@@ -78,7 +81,13 @@ async function drain(body: {
     out.set(c, offset);
     offset += c.length;
   }
-  return new TextDecoder().decode(out);
+  return out;
+}
+
+async function drain(body: {
+  writeTo: (sink: WritableStream<Uint8Array>) => Promise<void>;
+}): Promise<string> {
+  return new TextDecoder().decode(await drainBytes(body));
 }
 
 describe('MultipartBody replayability and length (BODY-2)', () => {
@@ -184,6 +193,47 @@ describe('MultipartBody boundary generation and validation (HTTP-51)', () => {
     const b = multipartBody([{name: 'a', body: stringBody('x')}]);
     expect(a.mediaType).not.toBe(b.mediaType);
   });
+});
+
+describe('the rendered boundary parameter is a parseable one (HTTP-51)', () => {
+  // RFC 2046 `bchars` and RFC 9110 `tchar` are different sets: ' ', ',', ':', '=', '?', '/', '(' and
+  // ')' are legal in a boundary and illegal bare in a header parameter value. `validateBoundary` admits
+  // the first grammar and the renderer owes the second, so a boundary the constructor accepts must come
+  // back out quoted rather than bare.
+  test('a boundary that is not a bare token is quoted', () => {
+    expect(
+      multipartBody([{name: 'a', body: stringBody('x')}], 'a,b').mediaType,
+    ).toBe('multipart/form-data; boundary="a,b"');
+  });
+
+  test('a boundary that IS a bare token is left unquoted', () => {
+    expect(
+      multipartBody([{name: 'a', body: stringBody('x')}], 'plain-1').mediaType,
+    ).toBe('multipart/form-data; boundary=plain-1');
+    // The generated default stays byte-identical: it is drawn from ALPHA/DIGIT only.
+    expect(
+      multipartBody([{name: 'a', body: stringBody('x')}]).mediaType,
+    ).toMatch(/^multipart\/form-data; boundary=dexpace-[A-Za-z0-9]{32}$/);
+  });
+
+  test.each([['a,b'], ['bound ary'], ['a:b'], ['a=b'], ['a?b'], ['(a)/b']])(
+    'the header a peer receives round-trips through a real parameter parser: %p',
+    async boundary => {
+      // The runtime's own multipart parser, standing in for the peer. Bun's happens to tolerate the
+      // unquoted form, so this is the regression guard and NOT the reproducer: Node's (undici's)
+      // rejects the whole body with `TypeError: Failed to parse body as FormData`, which is why the
+      // same case is also in `tests/node-conformance/body-lifecycle.test.mjs`. Two independent
+      // parsers disagreeing about our own Content-Type is exactly what that tree is for.
+      const body = multipartBody(
+        [{name: 'field', body: stringBody('value')}],
+        boundary,
+      );
+      const response = new globalThis.Response(await drainBytes(body), {
+        headers: {'content-type': body.mediaType},
+      });
+      expect((await response.formData()).get('field')).toBe('value');
+    },
+  );
 });
 
 describe('MultipartBodyBuilder (HTTP-2, HTTP-3)', () => {

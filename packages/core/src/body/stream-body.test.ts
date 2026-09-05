@@ -6,11 +6,13 @@
 // delivered-of-declared, and an overrunning stream is stopped BEFORE the extra bytes reach the sink),
 // IO-3 (a contentLength below the -1 sentinel is rejected), HTTP-26/HTTP-51 (a media type is
 // header-safe), RECOV-12 (a close failure never masks the primary write failure), HTTP-1 (frozen at
-// construction so the declared length cannot be desynced from the written bytes)
+// construction so the declared length cannot be desynced from the written bytes), HTTP-39/BODY-10 again
+// (a zero-length delivery during an exact-length copy is a source-contract violation, never a no-op and
+// never spun on, and no empty chunk reaches the sink)
 import {describe, expect, test} from 'bun:test';
 import {MediaTypeParseError} from '../http/errors.js';
 import {InvariantViolation} from '../invariant.js';
-import {EndOfStreamError} from '../io/errors.js';
+import {EndOfStreamError, SourceContractViolationError} from '../io/errors.js';
 import {ConsumedBodyError} from './errors.js';
 import {streamBody} from './stream-body.js';
 
@@ -47,6 +49,16 @@ function collectingSink(): {
       return out;
     },
   };
+}
+
+/** Awaits a rejection and returns its reason, failing loudly when the promise resolves instead. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error;
+  }
+  throw new Error('expected a rejection, but the promise resolved');
 }
 
 describe('caller stream ownership (BODY-8)', () => {
@@ -227,6 +239,85 @@ describe('a mis-framed body never reaches the wire (HTTP-39/BODY-10)', () => {
     expect(state.written).toEqual([1, 2, 3]);
     expect(state.closed).toBe(true);
     expect(state.aborted).toBe(false);
+  });
+});
+
+describe('a zero-length delivery is a source-contract violation (HTTP-39/BODY-10)', () => {
+  /**
+   * The auditor's probe, bounded so an unguarded run terminates instead of hanging the suite: a source
+   * that delivers nothing but empty chunks, then finally ends. Unbounded is the real-world shape, and
+   * the pull count below is what proves the copy did not spin on it.
+   */
+  function emptyOnly(limit: number): {
+    stream: ReadableStream<Uint8Array>;
+    pulls: () => number;
+  } {
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > limit) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(0));
+      },
+    });
+    return {stream, pulls: () => pulls};
+  }
+
+  test('an empty-only source raises on the first empty chunk rather than spinning on it', async () => {
+    const {stream, pulls} = emptyOnly(1000);
+    const {state, sink} = probeSink();
+    const error = await rejection(
+      streamBody(stream, undefined, 3).writeTo(sink),
+    );
+
+    // Not EndOfStreamError after a thousand futile reads: an unbounded source of empty chunks never
+    // ends, so nothing downstream can ever diagnose it, and every one of those chunks reaches the sink.
+    expect(error).toBeInstanceOf(SourceContractViolationError);
+    // Two, not one: the default queuing strategy reads one chunk ahead, so the source is pulled again
+    // the moment our read drains its queue. What matters is that it is not `limit`.
+    expect(pulls()).toBeLessThanOrEqual(2);
+    expect(state.written).toEqual([]);
+    expect(state.aborted).toBe(true); // a mis-framed body is never signalled as a clean close
+  });
+
+  test('an empty chunk between real chunks is raised, and never reaches the sink', async () => {
+    const emptyBetween = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(new Uint8Array(0));
+        controller.enqueue(Uint8Array.from([3]));
+        controller.close();
+      },
+    });
+    const chunkLengths: number[] = [];
+    const sink = new WritableStream<Uint8Array>({
+      write: chunk => void chunkLengths.push(chunk.length),
+    });
+
+    expect(
+      await rejection(streamBody(emptyBetween, undefined, 3).writeTo(sink)),
+    ).toBeInstanceOf(SourceContractViolationError);
+    // `io/buffered-sink.ts` writeString: a zero-length chunk is HTTP/1.1 chunked encoding's TERMINATING
+    // chunk, so forwarding one ends the request body early on the wire.
+    expect(chunkLengths).toEqual([2]);
+  });
+
+  test('a declared length of 0 over a source that just closes stays a legitimate empty write (BODY-10)', async () => {
+    const {state, sink} = probeSink();
+    await streamBody(
+      new ReadableStream({
+        start: c => {
+          c.close();
+        },
+      }),
+      undefined,
+      0,
+    ).writeTo(sink);
+    expect(state.written).toEqual([]);
+    expect(state.closed).toBe(true);
   });
 });
 
