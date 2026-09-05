@@ -48,7 +48,7 @@ export interface RetryConfig {
   readonly clock: Clock;
   /** Injectable randomness -- jitter and the X-RateLimit-Reset spread both draw from it. */
   readonly random: () => number;
-  /** Highest-precedence delay source (RETRY-39). A throw is non-fatal (RETRY-40). */
+  /** Highest-precedence delay source (RETRY-39). A throw, or a non-finite result, is non-fatal (RETRY-40). */
   readonly delayOverride?:
     ((attempt: number) => number | undefined) | undefined;
 }
@@ -102,25 +102,61 @@ function overshootsBudget(delayMs: number, state: LoopState): boolean {
 }
 
 /**
- * RETRY-40: a throwing user override is ignored, never fatal. Emits http.retry.delayOverrideFailed at warning level.
+ * RETRY-40's diagnostic half, shared by both ways an override can fail. An ignored override is a
+ * schedule the operator cannot explain from the configuration alone, so neither way is silent.
+ */
+function reportOverrideFailure(cause: unknown): void {
+  try {
+    getGlobalLogger()
+      .atLevel('warning')
+      .event('http.retry.delayOverrideFailed')
+      .cause(cause)
+      .emit();
+  } catch {
+    // OBS-20: logger failure must never fail the request or retry loop
+  }
+}
+
+/**
+ * RETRY-40: a misbehaving user override is ignored, never fatal. Emits
+ * http.retry.delayOverrideFailed at warning level.
+ *
+ * TWO ways to misbehave, one answer. A throw was always handled here. A non-finite RETURN was not,
+ * and it was the more damaging of the two: `NaN` and the infinities pass every guard downstream --
+ * `overshootsBudget` and `budgetExhausted` compare false, {@link waitFor}'s `delayMs <= 0`
+ * short-circuit compares false -- and arrive at `Clock.sleep`, which rejects a non-finite duration
+ * with a `RangeError`. RETRY-33's catch-all then folds that rejection into the terminal failure, so
+ * a `delayOverride` returning `NaN` under `maxAttempts: 3` produced ONE send and surfaced a
+ * `RangeError` about `durationMs`, with the transport failure it was retrying demoted to the trail.
+ * Audit #67 / #78 reads the two as one case: drop the value, use the computed schedule, keep going.
+ *
+ * The screen is finiteness alone. A finite negative keeps its existing behaviour -- {@link waitFor}
+ * continues inline without a timer (RETRY-31), which is the same answer the budget clamp already
+ * produces -- and a fractional or very large delay is a delay RETRY-39 gives the caller precedence
+ * for.
+ *
+ * The check sits OUTSIDE the `try` on purpose: a logger that throws while reporting a non-finite
+ * result must not be re-reported as an override that threw.
  */
 function callerOverride(state: LoopState): number | undefined {
   const {delayOverride} = state.config;
   if (delayOverride === undefined) return undefined;
+  let delayMs: number | undefined;
   try {
-    return delayOverride(state.attempt);
+    delayMs = delayOverride(state.attempt);
   } catch (error) {
-    try {
-      getGlobalLogger()
-        .atLevel('warning')
-        .event('http.retry.delayOverrideFailed')
-        .cause(error)
-        .emit();
-    } catch {
-      // OBS-20: logger failure must never fail the request or retry loop
-    }
+    reportOverrideFailure(error);
     return undefined;
   }
+  if (delayMs !== undefined && !Number.isFinite(delayMs)) {
+    // A string cause, not a synthesized Error: nothing threw, and the value that was rejected is
+    // the whole diagnostic.
+    reportOverrideFailure(
+      `delayOverride returned a non-finite delay: ${String(delayMs)}`,
+    );
+    return undefined;
+  }
+  return delayMs;
 }
 
 /** RETRY-39: caller override -> server pacing hint -> fixed delay -> exponential backoff. */
@@ -292,7 +328,9 @@ function attachTrail(
  * A non-positive delay short-circuits before `sleep` is reached: it continues inline with no timer
  * (RETRY-31), which is reachable after RETRY-17's past-instant hint and after the budget clamp, and
  * it is also what keeps a caller `delayOverride` returning a negative number out of `sleep`'s
- * negative-duration rejection (RETRY-40 makes a bad override non-fatal).
+ * negative-duration rejection (RETRY-40 makes a bad override non-fatal). It does NOT catch a
+ * non-finite one -- `NaN <= 0` is false -- which is why {@link callerOverride} screens those at the
+ * source rather than here.
  *
  * Cancellation RESOLVES here rather than propagating: RETRY-26 wants the loop's next iteration to
  * observe the signal and stop through its own RETRY-32 path, so the abort rejection is the one
