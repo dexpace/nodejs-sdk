@@ -283,6 +283,85 @@ source ownership" clause, which Phase 8b marked done on documentation that named
 Known merge seams: the `deviations.md` table tail (#74 + #75), and `core.api.md` if #74 changes a `@public`
 TSDoc beside #72's new export. Supervisor resolves both, as in waves 1 and 2.
 
+## Decisions taken for wave 4 (#73 M3, #76 + #77 M4) — pre-taken 2026-09-05, before dispatch
+
+### D13 — #73: the request recovery chain runs once, above the retry loop
+`dispatchWithRetry` applies `config.requestChain` **once** and hands the prepared request to `runWithRetry`;
+each attempt then re-executes transport + response chain over `stampAttempt`'s fresh copy of that prepared
+request. That is the layering `idempotencyKeyStep`'s `@public` TSDoc has claimed since `1f48926` ("runs ONCE per
+call, upstream of retry"), and it is what RECOV-32's "one stable key across every retry" and RETRY-38's
+"preserving any idempotency key" both presuppose — a key the engine re-sends from a pre-chain template is not
+preserved, it is regenerated. **Reading of RETRY-44:** its "downstream chain" is whatever sits below the retry
+loop; in the recovery stack that is transport + response chain, and its "upstream steps MUST NOT mutate the
+shared in-flight request" clause is satisfied by construction, because upstream steps no longer run between
+attempts at all. One `deviations.md` row records the reading (D0), because the port's own test named RETRY-44
+as the reason the request chain re-ran (`retry-dispatch.test.ts:67`, to be renamed). A request-chain failure
+happens before the loop and is not retried: it never reached the wire, and it still passes through the response
+chain once so RECOV-10/11's outcome handling is unchanged. *Rejected:* memoizing the key on the template
+(`WeakMap` keyed by the `Request` instance) — a caller who deliberately sends one immutable `Request` value twice
+would replay the key and have the server drop a real second call. *Rejected:* re-running the chain over the
+*prepared* request each attempt — the chain reads its own output, which is the mutation RETRY-44 forbids in
+different clothes, and every step would have to be proven idempotent. Enumerate the shipped `RequestStep`s in
+`recovery/` and state in the ledger outcome that none needs per-attempt re-execution; the attempt ordinal is
+the engine's (RETRY-38). Tests: N attempts, one `generate()` call, the same header value on every wire send;
+rename the RETRY-44 test to what it now proves. TSDoc on `dispatchWithRetry` and the orchestrator; no
+public shape change (`dispatchWithRetry` is `@internal`). `api:local` if `idempotencyKeyStep`'s prose moves.
+*Constrains #78:* `engine.ts` is edited here; wave 5 lands on top.
+
+### D14 — #76: reject at the setter, in the `DexpaceError` tree, and say so in `@throws`
+- **Path params:** `Object.hasOwn(pathParams, name)`; a missing own property is `OperationAssemblyError`
+  (SEAM-27's "every placeholder MUST have a supplied value"). `{constructor}` with `{}` is the pin.
+- **Dates:** `ifModifiedSince` / `ifUnmodifiedSince` throw `RequestConditionsValidationError` on
+  `Number.isNaN(date.getTime())`.
+- **`timeoutMs`:** the setter rejects a non-integer and anything above `2**32 - 1` with
+  `RequestOptionsValidationError` — HTTP-35 puts the range check at the setter, and `AbortSignal.timeout()`'s
+  range is the only one a transport can honour. Rewrite the TSDoc paragraph that argues a fractional
+  millisecond is meaningful and flip the test that pins it. *Rejected:* rounding/clamping in `composeSignal`
+  (hides the caller's error where HTTP-35 says to surface it). Add `@throws` to `composeSignal` for whatever
+  it can still raise.
+- **Lone surrogates:** `String.prototype.isWellFormed()` at the call site that supplied the value —
+  `QueryParams` builder `add`/`set` (name and value) and `substitutePathParams` — throwing the error class
+  that call site already throws for invalid input (`OperationAssemblyError` for path params; for query params
+  the class the builder uses today, or `UrlConstructionError` if it has none — no new error class). Then
+  prove by test that no `URIError` can escape `encode()`, `equals()` or `buildRequest`; if one still can,
+  report the path rather than adding a second mechanism.
+- **`getAll`:** one shared frozen empty array in `Headers` and `QueryParams`; a test that the present-name
+  array is frozen too.
+- **`Headers.equals`:** direct cases (name order, value order, subset, case).
+- **`TeeSink`:** `Number.isInteger(tapLimit) || tapLimit === Number.POSITIVE_INFINITY`, else the error the
+  constructor already throws for a negative limit.
+- `api:local` on core after the `@throws` edits. No changeset (D1). Do not touch `http/media-type.ts` (#77's).
+
+### D15 — #77: contract violation on an empty chunk, quote the boundary, gate the tap on `closed`
+- **Empty chunks:** `#writeExactly` throws `SourceContractViolationError` on `value.length === 0` for a
+  positive request, same wording as `io/retention-window.ts:177-183`; a declared length of 0 stays a
+  legitimate empty write (BODY-10). Tests: an empty-only source, and an empty chunk between real chunks.
+- **Boundary:** keep RFC 2046 `bchars` as the accepted grammar (HTTP-51 says reject what *violates* it, not
+  narrow it) and **quote** the `boundary=` parameter whenever it is not a pure `tchar` token, using
+  `http/media-type.ts`'s existing token/quoted-string rendering (export an internal helper from that file if
+  the class API does not reach it; #77 owns `media-type.ts` this wave). Round-trip test through
+  `Response.formData()` on Bun, and the same case in `tests/node-conformance/body-lifecycle.test.mjs`.
+  *Rejected:* narrowing `validateBoundary` to `tchar` (rejects boundaries RFC 2046 allows for a problem the
+  renderer owns).
+- **Logging tap after `close()`:** `startDrain`, `snapshot` and `read` check `state.closed` first —
+  `snapshot()` returns the captured prefix without starting a drain, `read()` rejects with
+  `ClosedResourceError`, `error()` reports only a genuine drain failure. Tests: close-then-snapshot,
+  close-then-read, close-then-error.
+- **Node conformance:** cases for `toReadableStream`, `toWritableStream`, `TeeSink`'s bridge,
+  `withRequestLogging` and `withResponseLogging` go into the **existing** topic files
+  (`io-byte-stream.test.mjs`, `body-lifecycle.test.mjs`), not one new file per bridge — the tree is
+  topic-named and flat, and its README lists members. Pull, cancel and lock behaviour is what to assert.
+- `api:local` on core if a `@throws` changes. No changeset (D1).
+
+### Wave 4 partition
+| Task | Owns |
+|---|---|
+| #73 | `packages/core/src/recovery/**`, `packages/core/src/retry/{retry-dispatch,engine}.ts` + tests, `tests/node-conformance/recovery-chain.test.mjs` and `retry.test.mjs` if a case belongs there, `docs/deviations.md` (one row at table end), `core.api.md` if `idempotencyKeyStep`'s TSDoc moves |
+| #76 | `packages/core/src/http/{headers,query-params,request-options,request-conditions,rfc3986}.ts`, `packages/core/src/seams/{operation,transport}.ts`, `packages/core/src/io/tee-sink.ts` + their tests, `core.api.md` (`@throws` on those) |
+| #77 | `packages/core/src/body/{stream-body,multipart-body,response-body-logging}.ts` + tests, `packages/core/src/http/media-type.ts` (helper export only), `tests/node-conformance/{io-byte-stream,body-lifecycle}.test.mjs` + that tree's README, `core.api.md` if a `@throws` changes |
+Known merge seams: `core.api.md` (up to three), which the supervisor regenerates on the merged tree rather than
+hand-merging. No two tasks share a source file.
+
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
 |---|---|
