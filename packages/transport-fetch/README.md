@@ -69,6 +69,18 @@ records the decision and the four reasons the floor does not move instead.
   it (`SEAM-16`). Cancellation stays live for the whole in-flight window.
 - A timeout surfaces as the retryable `TransportFailureError`; a caller abort as the terminal
   `CancellationError` (`TRANSPORT-3`/`TRANSPORT-4`). A raw `DOMException` is never surfaced.
+- A request `fetch` refused to make — an unsupported scheme such as `ftp://`, a forbidden method, an
+  argument its own validation rejects — is a bare `TypeError` outside the `IoError` tree, so
+  `retry/classify.ts`'s allow-list makes it non-retryable (`RETRY-2`). A failed *exchange* stays the
+  retryable `TransportFailureError` (`TRANSPORT-20`). The table that tells them apart is
+  `@dexpace/transport-shared`'s, shared with `@dexpace/transport-undici`, because the runtimes report
+  the same refusal in three different shapes (audit #67 / #82).
+- A 204, a 304 and every HEAD response carry `body === null`. Node's `fetch` says so itself; Bun
+  1.3.14's returns a live `ReadableStream` for all three, which this transport cancels and replaces
+  with `null` so the shape is the SDK's rather than the runtime's.
+- `defaultTimeoutMs` must be an integer number of milliseconds in `1 .. 2**32 - 1` —
+  `AbortSignal.timeout()`'s range. Anything else is a `TypeError` out of `fetchTransport()`, not a
+  failure on the first send (`HTTP-35`).
 
 ## Conformance
 

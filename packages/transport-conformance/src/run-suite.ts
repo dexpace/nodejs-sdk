@@ -16,8 +16,12 @@
 // full proxy-challenge flow is transport-undici's challenge-handler.test.ts, and only its
 // unsupported-type refusal is a row here. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
-// asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
-// undici-transport.test.ts:614).
+// asserts it against its own (transport-fetch's fetch-transport.test.ts:123, transport-undici's
+// undici-transport.test.ts:615). TRANSPORT-9's producer-failure race is not driven from here
+// either, and for the same reason: proving that a native call still pending when the producer fails
+// is CANCELLED needs the signal the adapter handed it, which only an instrumented native client can
+// show -- a `FetchLike` in transport-fetch's suite and a bring-your-own `Dispatcher` in
+// transport-undici's, each with a call that resolves after the producer has already lost the race.
 import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
