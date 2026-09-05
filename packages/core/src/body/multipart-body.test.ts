@@ -67,9 +67,11 @@ function collectingSink(): {
   };
 }
 
+// `Uint8Array<ArrayBuffer>`, not the bare alias: `BodyInit` excludes a view over a `SharedArrayBuffer`,
+// so the default `ArrayBufferLike` parameter is not assignable to the platform `Response` below.
 async function drainBytes(body: {
   writeTo: (sink: WritableStream<Uint8Array>) => Promise<void>;
-}): Promise<Uint8Array> {
+}): Promise<Uint8Array<ArrayBuffer>> {
   const chunks: Uint8Array[] = [];
   await body.writeTo(new WritableStream({write: c => void chunks.push(c)}));
   const total = chunks.reduce((s, c) => s + c.length, 0);
