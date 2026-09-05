@@ -113,6 +113,14 @@ function configFrom(
  * `ctx.fork` is asserted rather than checked -- RETRY is in `PILLAR_STAGES`, so its absence means the
  * descriptor was installed somewhere it cannot be, which is a programmer error.
  *
+ * **What it throws when it gives up is the FINAL attempt's own error, unwrapped.** The class you
+ * catch does not depend on how many attempts ran: a transport failure surfaces as
+ * `TransportFailureError` whether `maxAttempts` was 1 or 3, and an abort that ended a backoff wait
+ * surfaces as `CancellationError` (`XCUT-1`). The earlier attempts' errors are not lost -- read them
+ * with `retryAttempts(caught)`, oldest first (`RETRY-34`). A response the loop discards is always
+ * closed first; the response that ENDS the loop is returned live and unread, and closing it is
+ * yours.
+ *
  * @param options - settings overrides and the injected clock, randomness, and delay override.
  * @returns the descriptor to install in a pipeline's RETRY slot.
  *

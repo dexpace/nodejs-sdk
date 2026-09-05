@@ -1177,6 +1177,9 @@ export type ResponseStep = (response: Response_2) => Promise<Response_2>;
 export const RETRYABLE_STATUSES: ReadonlySet<number>;
 
 // @public
+export function retryAttempts(error: unknown): readonly unknown[];
+
+// @public
 export class RetryDiscardedResponseError extends DexpaceError {
     constructor(status: number, options?: ErrorOptions);
     readonly status: number;

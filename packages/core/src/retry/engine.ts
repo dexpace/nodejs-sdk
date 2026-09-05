@@ -8,7 +8,7 @@ import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {failure, type Outcome} from '../recovery/outcome.js';
 import {releaseQuietly, withReleaseFailure} from '../recovery/release.js';
-import {suppress} from '../suppress.js';
+import {recordAttempts} from './attempt-trail.js';
 import {stampAttempt} from './attempt-stamp.js';
 import {computeDelay} from './backoff.js';
 import {RetryDiscardedResponseError} from './errors.js';
@@ -247,27 +247,35 @@ async function decideRetry(
 }
 
 /**
- * RETRY-34: prior failures ride along as `suppressed` on the surfaced error; the surfaced instance
- * itself is skipped, so a reused throwable cannot suppress itself. On success the trail is discarded
- * whole.
+ * RETRY-34: prior failures ride ALONGSIDE the surfaced error, recorded in `attempt-trail.ts`'s side
+ * table and read back through the public `retryAttempts()`. The surfaced instance itself is skipped,
+ * so a reused throwable never appears in its own trail. On success the trail is discarded whole --
+ * nothing is written, and the outcome is returned untouched.
  *
- * The suppressed pair is a binary shape, so N entries fold into a nested chain. Built through Phase
- * 4b's `suppress()` helper rather than `new SuppressedError(...)`: the native class reached Node only
- * in 24.0.0 and this package's floor is `>=20.3`, so the direct form neither type-checks nor runs
- * there. Argument order is controlled explicitly -- native `using` disposal builds the pair the other
- * way round, making the *later* error primary.
+ * **The outcome's error is returned unchanged, class and identity intact.** Until 2026-09-05 this
+ * function wrapped it in a `SuppressedError` pair instead, which made the surfaced TYPE a function of
+ * how many attempts ran: one attempt surfaced `TransportFailureError`, three surfaced a wrapper with
+ * the `TransportFailureError` at `.error`. XCUT-1's conformance clause -- "assert the surfaced error
+ * is the cancellation type" -- is the row that catches it, because a cancellation during backoff
+ * ALWAYS has a non-empty trail: `abortToSdkError` maps the abort to `CancellationError` below, and
+ * the wrapper undid that mapping on the very next line. RETRY-34 asks for the prior failures to be
+ * "attached to the surfaced exception", which is the JVM's `addSuppressed` -- the exception stays
+ * what it is and grows a list -- not for the exception to be replaced by a container.
+ *
+ * `suppress()` keeps its RECOV-12 job elsewhere in this file: `withReleaseFailure` pairs a release
+ * failure with the primary it must not mask. That is a genuine two-value pairing; an N-entry attempt
+ * history folded into a binary shape was never one.
  */
-function withTrail(
+function attachTrail(
   outcome: Outcome<Response>,
   trail: readonly unknown[],
 ): Outcome<Response> {
   if (outcome.kind === 'success') return outcome;
-  const prior = trail.filter(entry => entry !== outcome.error);
-  if (prior.length === 0) return outcome;
-  const folded = prior.reduce((accumulated, entry) =>
-    suppress(entry, accumulated, 'earlier retry attempt failed'),
+  recordAttempts(
+    outcome.error,
+    trail.filter(entry => entry !== outcome.error),
   );
-  return failure(suppress(outcome.error, folded, 'retry attempts exhausted'));
+  return outcome;
 }
 
 /**
@@ -346,12 +354,13 @@ function maybeEmitExhausted(
  * iterative, so N retries build no continuation chain and no stack growth. RETRY-33's "every
  * terminal path returns an Outcome" is honored literally -- an attempt that throws is folded into a
  * failure outcome carrying the trail, rather than left to surface as a bare rejected promise that
- * would drop RETRY-34's suppressed attempts on the floor.
+ * would drop RETRY-34's prior attempts on the floor.
  *
  * @param request - the captured template every attempt re-sends.
  * @param dispatch - performs one attempt and reports its outcome without throwing.
  * @param config - settings, clock, randomness, signal, and the optional delay override.
- * @returns the terminal outcome, with RETRY-34's suppressed trail attached on failure.
+ * @returns the terminal outcome. On failure the error is the FINAL attempt's own, unwrapped, with
+ *   RETRY-34's prior-attempt trail recorded beside it for `retryAttempts()`.
  *
  * @internal
  */
@@ -383,7 +392,7 @@ export async function runWithRetry(
     // and silently missed a cancelled backoff. The raw reason is kept as `.cause`.
     if (config.signal?.aborted === true) {
       const cancellation = abortToSdkError(config.signal, config.signal.reason);
-      return withTrail(failure(cancellation), trail);
+      return attachTrail(failure(cancellation), trail);
     }
 
     try {
@@ -396,7 +405,7 @@ export async function runWithRetry(
       const decision = await runAttempt(dispatch, state);
       if (decision.kind === 'stop') {
         maybeEmitExhausted(decision.outcome, trail.length, state);
-        return withTrail(decision.outcome, trail);
+        return attachTrail(decision.outcome, trail);
       }
 
       trail.push(decision.error);
@@ -418,7 +427,7 @@ export async function runWithRetry(
       // `stampAttempt`'s header build, `toHttpError`'s body drain, and a misbehaving injected
       // clock's `sleep` -- and letting any of them escape would discard the whole suppressed trail
       // RETRY-34 requires the surfaced failure to carry.
-      return withTrail(failure(error), trail);
+      return attachTrail(failure(error), trail);
     }
   }
 }

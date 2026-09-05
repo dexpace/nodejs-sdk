@@ -7,8 +7,9 @@ import {DexpaceError} from '../http/errors.js';
  *
  * Reachable only when a caller widens `RetrySettings.retryableStatuses` to include a non-error code:
  * the engine then retries a 2xx or 3xx, and every response it discards still owes `RETRY-34` an
- * entry in the suppressed trail. `toHttpError` correctly returns `null` for such a status
- * (`BODY-31` hands a non-error response back intact), so there is nothing for it to build.
+ * entry in the prior-attempt trail `retryAttempts()` reads. `toHttpError` correctly returns `null`
+ * for such a status (`BODY-31` hands a non-error response back intact), so there is nothing for it
+ * to build.
  *
  * Until 2026-09-02 the engine fabricated `new HttpStatusError(200, …)` here — precisely the
  * "successful exception" `XCUT-8` forbids, constructed by core itself, and contradicting
