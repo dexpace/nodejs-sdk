@@ -6,14 +6,14 @@ import type {Headers} from '../http/headers.js';
 import type {QueryParams} from '../http/query-params.js';
 import type {Method} from '../http/method.js';
 import {UrlConstructionError, DexpaceError} from '../http/errors.js';
-import {encodeRfc3986Component} from '../http/rfc3986.js';
+import {encodeRfc3986Component, hasLoneSurrogate} from '../http/rfc3986.js';
 
 /**
  * Thrown when `buildRequest()` cannot assemble a request from its descriptor: a `{name}`
  * placeholder in `pathTemplate` has no OWN value in `pathParams` — an inherited member such as
  * `constructor` does not satisfy one — or a supplied value is a dot segment (`.`/`..`) that the
- * WHATWG URL parser would normalize into a path rewrite instead of keeping as one literal
- * segment.
+ * WHATWG URL parser would normalize into a path rewrite instead of keeping as one literal segment,
+ * or a supplied value carries an unpaired surrogate and so has no percent-encoded form.
  *
  * @public
  */
@@ -131,6 +131,17 @@ function substitutePathParams(
         name,
       );
     }
+    // A string carrying an unpaired surrogate has no UTF-8 form, so `encodeRfc3986Component` — i.e.
+    // `encodeURIComponent` — throws a bare `URIError: URI malformed`. That escaped `buildRequest`
+    // outside the `DexpaceError` tree and outside its documented `@throws`. Rejected here with the
+    // class this call site already throws, rather than guarded inside the encoder, so the failure
+    // names the parameter (audit #67 / #76).
+    if (hasLoneSurrogate(value)) {
+      throw new OperationAssemblyError(
+        `path parameter "${name}" contains an unpaired surrogate and cannot be percent-encoded`,
+        name,
+      );
+    }
     return encodeRfc3986Component(value);
   });
 }
@@ -171,7 +182,8 @@ function composeQuery(
  * @returns the assembled request.
  * @throws {@link OperationAssemblyError} when a `{name}` placeholder has no own value in
  * `pathParams` (a name inherited from `Object.prototype` does not count as supplied), or a supplied
- * value is a dot segment (`.`/`..`) — fix the descriptor; no request was assembled.
+ * value is a dot segment (`.`/`..`), or a supplied value carries an unpaired surrogate — fix the
+ * descriptor; no request was assembled.
  * @throws {@link UrlConstructionError} when `baseUrl` is malformed, non-absolute, or carries a
  * fragment — supply a clean absolute base URL.
  * @throws {@link RequestBodyNotAllowedError} when the descriptor pairs a body with GET, HEAD, TRACE
