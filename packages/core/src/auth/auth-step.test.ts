@@ -9,7 +9,9 @@
 // Proxy-Authorization the hook adds to an unguarded NO_AUTH hop), AUTH-29 (the cross-origin marker skips the guard and
 // stamping, is cleared from the outbound headers, and suppresses the challenge reaction too -- so the
 // credential cannot re-enter via the 401), AUTH-25 (a 407 is answered from Proxy-Authenticate into
-// Proxy-Authorization), AUTH-30 (401 + WWW-Authenticate invokes the hook; a replacement re-drives
+// Proxy-Authorization), AUTH-12/AUTH-13 (EVERY value of the matching challenge header is parsed, each
+// value on its own, so a repeated WWW-Authenticate/Proxy-Authenticate offers its later challenges too
+// and a malformed earlier value cannot swallow them), AUTH-30 (401 + WWW-Authenticate invokes the hook; a replacement re-drives
 // exactly once through a fresh fork()), AUTH-31 (a non-replayable replacement body surfaces the
 // original challenge unchanged and unclosed), AUTH-32 (a throwing hook closes the challenge response
 // before propagating), AUTH-33 (no matching challenge header, or a hook yielding nothing -> unchanged),
@@ -124,6 +126,27 @@ function challengeResponse(
         .build(),
     )
     .build();
+  return {response, cancelCount: base.cancelCount};
+}
+
+/**
+ * A challenge response carrying the same challenge header SEVERAL times — the wire shape RFC 7616
+ * §3.3 recommends for algorithm discovery, and the one `@dexpace/transport-undici` hands over as
+ * separate entries rather than one comma-joined value.
+ *
+ * `addInbound` in a loop, never `setInbound`: `set` REPLACES, so building the fixture with it would
+ * quietly assert against a single-valued header and the row would pass against the very bug it exists
+ * to catch.
+ */
+function repeatedChallengeResponse(
+  status: number,
+  headerName: string,
+  headerValues: readonly string[],
+): {response: Response; cancelCount: () => number} {
+  const base = countingResponse(status);
+  const builder = base.response.headers.newBuilder();
+  for (const value of headerValues) builder.addInbound(headerName, value);
+  const response = base.response.newBuilder().headers(builder.build()).build();
   return {response, cancelCount: base.cancelCount};
 }
 
@@ -609,6 +632,84 @@ describe('authStep: answering a Digest challenge (AUTH-15..AUTH-22)', () => {
     expect(value?.startsWith('Digest ')).toBe(true);
     // AUTH-22: the digest-uri is the request-target, path AND query.
     expect(value).toContain('uri="/a?q=1"');
+  });
+});
+
+describe('authStep: repeated challenge headers (AUTH-12/AUTH-16/AUTH-25)', () => {
+  test('a later WWW-Authenticate entry is answered when the first is unsupported', async () => {
+    // RFC 7616 §3.3's algorithm-discovery shape: one header per algorithm, strongest first. Reading
+    // only `headers.get(...)` saw the SHA-512-256 line, found nothing satisfiable, and surfaced the
+    // 401 — while the identical pair comma-joined into ONE value authenticated (audit #67 / #74).
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="r", nonce="n", algorithm=SHA-512-256',
+      'Digest realm="r", nonce="n", algorithm=SHA-256, qop="auth"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    const value = transport.calls[1]?.request.headers.get('Authorization');
+    expect(value).toContain('algorithm=SHA-256');
+    expect(value).toContain('qop=auth');
+  });
+
+  test('a malformed FIRST entry cannot swallow a satisfiable later one (AUTH-13)', async () => {
+    // The row that fixes the parse strategy rather than only the read. Comma-joining the two values
+    // before parsing lets the unterminated quoted string in the first run on into the second — the
+    // scanner closes it at the `"` of `realm="r"`, and the whole satisfiable challenge disappears
+    // into a realm value. Parsing each value on its own bounds the damage at the value that carries
+    // it, which is what AUTH-13's "recovers to the next top-level comma" is reaching for.
+    const challenged = repeatedChallengeResponse(401, 'WWW-Authenticate', [
+      'Digest realm="unterminated',
+      'Digest realm="r", nonce="n", qop="auth"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {digest: new DigestCredential('u', 'p')},
+      tiers: tiersFor('DIGEST'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(transport.calls[1]?.request.headers.get('Authorization')).toContain(
+      'realm="r"',
+    );
+  });
+
+  test('a repeated Proxy-Authenticate is read the same way (AUTH-25)', async () => {
+    const challenged = repeatedChallengeResponse(407, 'Proxy-Authenticate', [
+      'Negotiate abc123',
+      'Basic realm="p"',
+    ]);
+    const transport = new FakeTransport([
+      challenged.response,
+      countingResponse(200).response,
+    ]);
+    const descriptor = authStep({
+      credentials: {basic: new BasicCredential('u', 'p')},
+      tiers: tiersFor('BASIC'),
+    });
+
+    await runThrough(descriptor, transport);
+
+    expect(transport.sendCount).toBe(2);
+    expect(
+      transport.calls[1]?.request.headers
+        .get('Proxy-Authorization')
+        ?.startsWith('Basic '),
+    ).toBe(true);
   });
 });
 

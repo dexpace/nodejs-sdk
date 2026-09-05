@@ -396,7 +396,8 @@ async function planOutbound(
 }
 
 interface ChallengeSelection {
-  readonly value: string;
+  /** Every value the matching challenge header carried, in wire order. */
+  readonly values: readonly string[];
   readonly isProxy: boolean;
 }
 
@@ -404,16 +405,37 @@ interface ChallengeSelection {
  * AUTH-25: a 401 is answered from `WWW-Authenticate`, a 407 from `Proxy-Authenticate`. Reading only
  * the header that matches the status keeps the pairing honest — a 401 carrying a stray
  * `Proxy-Authenticate` must not produce a `Proxy-Authorization`, and vice versa.
+ *
+ * `getAll`, not `get`. RFC 9110 §5.3 lets a server send a list-valued field either comma-joined into
+ * one line or repeated across several, and RFC 7616 §3.3 recommends the repeated form for Digest
+ * algorithm discovery — one challenge per algorithm, strongest first. `get()` returns the FIRST value
+ * only, so a 401 offering `algorithm=SHA-512-256` (unsupported here) on line one and
+ * `algorithm=SHA-256, qop="auth"` on line two ended with no `Authorization` at all, while the same two
+ * challenges comma-joined authenticated (audit #67 / #74). Which shape reaches this step is the
+ * transport's accident, not the server's intent: `@dexpace/transport-fetch` joins repeated values,
+ * `@dexpace/transport-undici` keeps them apart, and both are legal.
  */
 function pickChallengeHeader(
   response: Response,
 ): ChallengeSelection | undefined {
-  if (response.status.code === 401) {
-    const www = response.headers.get('WWW-Authenticate');
-    return www === undefined ? undefined : {value: www, isProxy: false};
-  }
-  const proxy = response.headers.get('Proxy-Authenticate');
-  return proxy === undefined ? undefined : {value: proxy, isProxy: true};
+  const isProxy = response.status.code !== 401;
+  const values = response.headers.getAll(
+    isProxy ? 'Proxy-Authenticate' : 'WWW-Authenticate',
+  );
+  return values.length === 0 ? undefined : {values, isProxy};
+}
+
+/**
+ * Every challenge the selected header offered, in wire order (AUTH-12).
+ *
+ * Each value is parsed on its OWN, and the lists are concatenated — never joined into one string
+ * first. `parseChallenges` is total (AUTH-13), but its recovery is bounded by the string it is handed:
+ * an unterminated quoted string terminates at end-of-input, so joining lets a malformed earlier value
+ * swallow a satisfiable later one whole. Parsing per value keeps the blast radius of a broken header
+ * line inside that line.
+ */
+function challengesOf(selection: ChallengeSelection): readonly Challenge[] {
+  return selection.values.flatMap(value => parseChallenges(value));
 }
 
 interface DefaultHookContext {
@@ -441,7 +463,7 @@ async function oauth2ChallengeHook(
   const rejected = request.headers.get(headerName);
   // AUTH-36: no Authorization on the rejected request -> surface the challenge unchanged.
   if (rejected === undefined) return undefined;
-  const challenges: readonly Challenge[] = parseChallenges(selection.value);
+  const challenges: readonly Challenge[] = challengesOf(selection);
   if (!challenges.some(challenge => challenge.scheme === 'bearer')) {
     return undefined; // AUTH-36: the response advertises no Bearer challenge
   }
@@ -487,7 +509,7 @@ async function basicDigestChallengeHook(
   selection: ChallengeSelection,
   context: DefaultHookContext,
 ): Promise<Request | undefined> {
-  const challenges = parseChallenges(selection.value);
+  const challenges = challengesOf(selection);
   const url = request.url; // HTTP-5: a fresh URL per access, so read it once.
   const requestTarget = `${url.pathname}${url.search}`;
   const value = await context.composing.stamp(challenges, {
