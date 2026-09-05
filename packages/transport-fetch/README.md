@@ -50,9 +50,21 @@ records the decision and the four reasons the floor does not move instead.
 
 - Redirects are **never** followed (`redirect: 'manual'`). The SDK pipeline is the redirect
   authority (`TRANSPORT-1`/`TRANSPORT-2`).
-- `Content-Length`, `Host`, `Transfer-Encoding`, and `Connection` are dropped outbound — the client
-  computes its own framing — and every drop is logged by name (never by value) through the global
-  logger, deduped per name by default (`TRANSPORT-11`/`TRANSPORT-13`).
+- `Content-Length`, `Host` and `Transfer-Encoding` are dropped outbound because the client computes
+  its own framing; `Connection`, `Expect`, `Keep-Alive` and `Upgrade` because the layer underneath
+  refuses them. WHATWG names all four forbidden request headers, but the implementations do not
+  enforce that list and disagree about what happens instead: on Node the global `fetch` is
+  undici-backed, so an undropped `Expect`/`Keep-Alive`/`Upgrade` reaches undici's own validation and
+  fails the send with the **retryable** `TransportFailureError` — a permanent misconfiguration
+  spending the caller's whole retry budget — while Bun 1.3.14 forwards the first two to the wire and
+  hangs on the third until something else times the call out. Dropping the name is the one behaviour
+  `TRANSPORT-12` asks for,
+  and it matches `@dexpace/transport-undici` (measured 2026-09-05; audit #67 / #81).
+- A header name the WHATWG `Headers` layer rejects — `@dexpace/core` admits every printable ASCII
+  byte in a name, so `X Custom` is model-valid and unsendable — degrades to the same drop, never a
+  failed send (`TRANSPORT-12`).
+- Every drop is logged by name (never by value) through the global logger, deduped per name by
+  default (`TRANSPORT-11`/`TRANSPORT-13`).
 - An abort that fires **after** `send()` resolved does not close the delivered body: the caller owns
   it (`SEAM-16`). Cancellation stays live for the whole in-flight window.
 - A timeout surfaces as the retryable `TransportFailureError`; a caller abort as the terminal
