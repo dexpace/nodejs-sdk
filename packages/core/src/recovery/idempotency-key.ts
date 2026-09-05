@@ -30,9 +30,17 @@ export interface IdempotencyKeyOptions {
 /**
  * A `RequestStep` that stamps an idempotency key on write requests (RECOV-32).
  *
- * Runs ONCE per call, upstream of retry -- not per attempt. `retry/attempt-stamp.ts` is its sibling:
- * that one writes the attempt ordinal on each per-attempt copy and preserves whatever this wrote
- * (RETRY-38), so the server sees one stable key across every retry of the same logical request.
+ * Runs ONCE per logical request, upstream of retry -- not per attempt. `retry/attempt-stamp.ts` is
+ * its sibling: that one writes the attempt ordinal on each per-attempt copy and preserves whatever
+ * this wrote (RETRY-38), so the server sees one stable key across every retry of the same logical
+ * request.
+ *
+ * **That is a property of the composition, and the SDK's own retry adapter is what supplies it**:
+ * `retry/retry-dispatch.ts` applies the `RequestRecoveryChain` once, above the retry loop, and each
+ * attempt re-sends a copy of the request it produced. On its own a step can only promise RECOV-32's
+ * letter -- `generate()` is invoked at most once per *application* to an applicable request -- so a
+ * caller who re-applies their own chain per attempt will get a fresh key per attempt. Install the
+ * chain once and let the retry layer sit below it.
  *
  * @param options - the key strategy plus the header name, method set, and existing-key policy.
  * @returns the request step to install in a `RequestRecoveryChain`.

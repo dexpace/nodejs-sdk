@@ -356,7 +356,10 @@ function maybeEmitExhausted(
  * failure outcome carrying the trail, rather than left to surface as a bare rejected promise that
  * would drop RETRY-34's prior attempts on the floor.
  *
- * @param request - the captured template every attempt re-sends.
+ * @param request - the captured template every attempt re-sends. Whatever the caller captured is
+ *   already final: the pillar adapter passes the request arriving at the RETRY stage, and the
+ *   recovery adapter passes the output of a request chain it applied ONCE, above this loop
+ *   (RECOV-32 -- one idempotency key per logical request). This loop only ever copies it.
  * @param dispatch - performs one attempt and reports its outcome without throwing.
  * @param config - settings, clock, randomness, signal, and the optional delay override.
  * @returns the terminal outcome. On failure the error is the FINAL attempt's own, unwrapped, with
