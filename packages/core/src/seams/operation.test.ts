@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/seams/operation.test.ts
 // Exercises: SEAM-26 (the four projections default to empty), SEAM-27 (buildRequest's encoding and base-URL
-// composition rules), HTTP-7 (a body projected onto a body-forbidding method fails assembly), reusing
-// HTTP-29's encodeRfc3986Component for path-segment encoding.
+// composition rules, and that a placeholder is satisfied only by an OWN property of pathParams),
+// HTTP-7 (a body projected onto a body-forbidding method fails assembly), reusing
+// HTTP-29's encodeRfc3986Component for path-segment encoding — including the unpaired-surrogate input it
+// cannot encode, which is rejected here rather than allowed to escape as a bare URIError.
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {
@@ -155,6 +157,136 @@ describe('SEAM-27: dot-segment path-param values are rejected, not silently norm
         pathParams: {id: '..'},
       }),
     ).toThrow(OperationAssemblyError);
+  });
+});
+
+describe('SEAM-27: a placeholder is satisfied only by an OWN property of pathParams', () => {
+  // `pathParams?.[name]` reached the whole prototype chain, so `{constructor}` against `{}` resolved to
+  // `Object`'s own constructor, stringified, and shipped
+  // `/users/function%20Object%28%29%20%7B%20%5Bnative%20code%5D%20%7D` instead of failing assembly. Every
+  // placeholder MUST have a *supplied* value (SEAM-27); a name the caller never supplied is a missing value
+  // whatever `Object.prototype` happens to carry. Measured on the pre-fix tree, audit #67 / #76.
+  test.each([
+    'constructor',
+    'toString',
+    'hasOwnProperty',
+    'valueOf',
+    '__proto__',
+  ])(
+    'a {%s} placeholder against empty pathParams throws OperationAssemblyError',
+    name => {
+      expect(() =>
+        buildRequest('https://api.example.com', {
+          method: 'GET',
+          pathTemplate: `/users/{${name}}`,
+          pathParams: {},
+        }),
+      ).toThrow(OperationAssemblyError);
+    },
+  );
+
+  test('the error names the placeholder, not the inherited member it resolved to', () => {
+    expect(() =>
+      buildRequest('https://api.example.com', {
+        method: 'GET',
+        pathTemplate: '/users/{constructor}',
+        pathParams: {},
+      }),
+    ).toThrow(/missing value for path parameter "constructor"/);
+  });
+
+  test('an own property named like a prototype member is still honored', () => {
+    const request = buildRequest('https://api.example.com', {
+      method: 'GET',
+      pathTemplate: '/users/{constructor}',
+      pathParams: {constructor: 'me'},
+    });
+    expect(request.url.pathname).toBe('/users/me');
+  });
+
+  test('a null-prototype pathParams object still resolves its own keys', () => {
+    const pathParams = Object.assign(Object.create(null) as object, {
+      id: 'x',
+    }) as Record<string, string>;
+    const request = buildRequest('https://api.example.com', {
+      method: 'GET',
+      pathTemplate: '/users/{id}',
+      pathParams,
+    });
+    expect(request.url.pathname).toBe('/users/x');
+  });
+});
+
+describe('SEAM-27: an unpaired surrogate in a path-param value is rejected', () => {
+  // `encodeRfc3986Component` is `encodeURIComponent`, which throws a bare `URIError: URI malformed`
+  // on a string with no UTF-8 form. Before audit #67 / #76 that escaped `buildRequest` outside the
+  // `DexpaceError` tree and outside its `@throws` list. It is now `OperationAssemblyError`, the
+  // class this call site already throws for a path-param value it cannot use.
+  test.each([
+    ['a lone high surrogate', '\uD800'],
+    ['a lone low surrogate', '\uDFFF'],
+    ['a lone surrogate inside a longer value', 'ok\uD800ok'],
+  ])('%s throws OperationAssemblyError', (_label, value) => {
+    expect(() =>
+      buildRequest('https://host', {
+        method: 'GET',
+        pathTemplate: '/things/{id}',
+        pathParams: {id: value},
+      }),
+    ).toThrow(OperationAssemblyError);
+  });
+
+  test('a well-formed surrogate pair is ordinary text and is encoded', () => {
+    const request = buildRequest('https://host', {
+      method: 'GET',
+      pathTemplate: '/things/{id}',
+      pathParams: {id: '\u{1F600}'},
+    });
+    expect(request.url.pathname).toBe('/things/%F0%9F%98%80');
+  });
+
+  test('the query projection cannot carry one either, from a builder or from parse()', () => {
+    // `composeQuery` calls `operationQuery.encode()`, the second `encodeRfc3986Component` path into
+    // `buildRequest`. Both ways of obtaining a `QueryParams` are now closed: the builder rejects an
+    // unpaired surrogate, `parse` replaces it.
+    expect(() => QueryParams.newBuilder().add('c', '\uD800')).toThrow(
+      /unpaired surrogate/,
+    );
+    const request = buildRequest('https://host', {
+      method: 'GET',
+      pathTemplate: '/things',
+      query: QueryParams.parse('c=\uD800'),
+    });
+    expect(request.url.search).toBe('?c=%EF%BF%BD');
+  });
+
+  test('no URIError escapes buildRequest, whatever the descriptor carries (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.string({
+          unit: fc.oneof(
+            fc.constantFrom('a', '/', '.', '%', ' ', '\u{1F600}'),
+            fc
+              .integer({min: 0xd800, max: 0xdfff})
+              .map(code => String.fromCharCode(code)),
+          ),
+          minLength: 1,
+          maxLength: 6,
+        }),
+        value => {
+          try {
+            buildRequest('https://host', {
+              method: 'GET',
+              pathTemplate: '/things/{id}',
+              pathParams: {id: value},
+            });
+          } catch (e: unknown) {
+            expect(e).toBeInstanceOf(OperationAssemblyError);
+          }
+        },
+      ),
+      {numRuns: 500},
+    );
   });
 });
 

@@ -30,6 +30,25 @@ function toRfc1123(date: Date): string {
   return date.toUTCString();
 }
 
+/**
+ * Copies `date` after rejecting a NaN time value.
+ *
+ * `toUTCString()` is total — it renders the literal string `Invalid Date` rather than throwing —
+ * and `Invalid Date` is HTAB-free printable ASCII, so HTTP-18's outbound header grammar accepts it
+ * and it reaches the wire as `If-Modified-Since: Invalid Date`. HTTP-50 requires an RFC 1123 date,
+ * which a NaN instant cannot produce, so the failure belongs at the setter that was handed the bad
+ * `Date` rather than several frames downstream (audit #67 / #76).
+ */
+function copyValidInstant(date: Date, headerName: string): Date {
+  const time = date.getTime();
+  if (Number.isNaN(time)) {
+    throw new RequestConditionsValidationError(
+      `${headerName}: date must be a valid instant, got an invalid Date`,
+    );
+  }
+  return new Date(time);
+}
+
 // eslint-disable-next-line max-params -- private, builder-internal plumbing; field count fixed by HTTP-50
 let createRequestConditions: (
   ifMatch: readonly ETag[],
@@ -45,7 +64,9 @@ let createRequestConditions: (
  * Multiple entity-tags emit as one comma-separated header; dates emit in RFC 1123 form.
  * {@link RequestConditions.applyTo} uses `set`, never `add`, so applying the same conditions twice
  * cannot duplicate a header. The any-tag (`*`) is mutually exclusive with concrete entity-tags, and
- * repeated `*` collapses to one — enforced when the tag is added, not at emission.
+ * repeated `*` collapses to one — enforced when the tag is added, not at emission. An invalid
+ * `Date` is likewise rejected by the setter that was handed it, so no instance can emit the literal
+ * header value `Invalid Date`.
  *
  * @example
  * ```ts
@@ -204,9 +225,12 @@ export class RequestConditionsBuilder implements Builder<RequestConditions> {
    * @param date - the instant; copied, not aliased, so a caller mutating its own `Date` after
    * `build()` cannot change what {@link RequestConditions.applyTo} emits.
    * @returns this builder, for chaining.
+   * @throws {@link RequestConditionsValidationError} when `date` carries a NaN time value. An
+   * invalid `Date` renders as the literal `Invalid Date`, which the outbound header grammar accepts
+   * and no server can evaluate, so it is rejected here rather than emitted (HTTP-50).
    */
   ifModifiedSince(date: Date): this {
-    this.#ifModifiedSince = new Date(date.getTime());
+    this.#ifModifiedSince = copyValidInstant(date, 'If-Modified-Since');
     return this;
   }
 
@@ -216,9 +240,11 @@ export class RequestConditionsBuilder implements Builder<RequestConditions> {
    * @param date - the instant; copied, not aliased, exactly as in
    * {@link RequestConditionsBuilder.ifModifiedSince}.
    * @returns this builder, for chaining.
+   * @throws {@link RequestConditionsValidationError} when `date` carries a NaN time value, for the
+   * reason given on {@link RequestConditionsBuilder.ifModifiedSince} (HTTP-50).
    */
   ifUnmodifiedSince(date: Date): this {
-    this.#ifUnmodifiedSince = new Date(date.getTime());
+    this.#ifUnmodifiedSince = copyValidInstant(date, 'If-Unmodified-Since');
     return this;
   }
 

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/query-params.ts
-import type {Builder} from './builder.js';
-import {encodeRfc3986Component} from './rfc3986.js';
+import {EMPTY_VALUE_LIST, type Builder} from './builder.js';
+import {UrlConstructionError} from './errors.js';
+import {
+  encodeRfc3986Component,
+  hasLoneSurrogate,
+  toWellFormed,
+} from './rfc3986.js';
 
 /**
  * @internal
@@ -28,6 +33,22 @@ export function decodeQueryComponent(value: string): string {
   }
 }
 
+/**
+ * The strict half of the surrogate rule, applied by `add()`.
+ *
+ * `encodeRfc3986Component` is `encodeURIComponent`, which throws a bare `URIError: URI malformed`
+ * on an unpaired surrogate — outside the `DexpaceError` tree, and out of `encode()` or `equals()`
+ * rather than out of the call that supplied the value. Rejecting here puts the failure at the call
+ * site, which is the same place HTTP-35 and HTTP-17/18 put theirs (audit #67 / #76).
+ */
+function requireWellFormed(kind: 'name' | 'value', text: string): void {
+  if (hasLoneSurrogate(text)) {
+    throw new UrlConstructionError(
+      `query parameter ${kind} contains an unpaired surrogate and cannot be percent-encoded`,
+    );
+  }
+}
+
 let createQueryParams: (
   valuesByName: ReadonlyMap<string, readonly string[]>,
   insertionOrder: readonly string[],
@@ -43,7 +64,9 @@ let createQueryParams: (
  * Encoding and parsing are deliberately asymmetric and kept as separate operations.
  * {@link QueryParams.encode} is strict RFC 3986 percent-encoding — not
  * `application/x-www-form-urlencoded`, so a space is `%20` and never `+` (HTTP-29/32).
- * {@link QueryParams.parse} is lenient and never throws (HTTP-31).
+ * {@link QueryParams.parse} is lenient and never throws (HTTP-31). The asymmetry extends to
+ * unpaired surrogates: {@link QueryParamsBuilder.add} rejects one, while
+ * {@link QueryParams.parse} substitutes U+FFFD for it.
  *
  * @example
  * ```ts
@@ -99,8 +122,10 @@ export class QueryParams {
    * (HTTP-31).
    *
    * A `null`, `undefined`, or blank input yields empty parameters; a leading `?` is tolerated; a
-   * segment with no `=` or a trailing `=` yields an empty-string value; a stray `&` is skipped; and
-   * malformed percent-encoding falls back to the raw text rather than failing.
+   * segment with no `=` or a trailing `=` yields an empty-string value; a stray `&` is skipped;
+   * malformed percent-encoding falls back to the raw text rather than failing; and an unpaired
+   * surrogate is replaced with U+FFFD rather than rejected the way
+   * {@link QueryParamsBuilder.add} rejects one, so the result is always encodable.
    *
    * @param raw - the query string, with or without its leading `?`.
    * @returns the parsed, frozen parameters.
@@ -116,9 +141,12 @@ export class QueryParams {
       const eqIndex = segment.indexOf('=');
       const rawName = eqIndex === -1 ? segment : segment.slice(0, eqIndex);
       const rawValue = eqIndex === -1 ? '' : segment.slice(eqIndex + 1);
+      // HTTP-31 is MUST-level that parsing never throws, so the strict `add()` path above cannot be
+      // the one `parse` uses on text it did not choose — exactly the split `Headers` draws between
+      // its outbound (`add`) and inbound (`addInbound`) methods for HTTP-18 against HTTP-19.
       builder.add(
-        decodeQueryComponent(rawName),
-        decodeQueryComponent(rawValue),
+        toWellFormed(decodeQueryComponent(rawName)),
+        toWellFormed(decodeQueryComponent(rawValue)),
       );
     }
     return builder.build();
@@ -138,10 +166,11 @@ export class QueryParams {
    * Returns every value stored under `name`, in insertion order.
    *
    * @param name - the parameter name.
-   * @returns a read-only, frozen list of values — empty when the name is absent.
+   * @returns a read-only, frozen list of values — the shared frozen empty list when the name is
+   * absent. Frozen on both paths, so mutating it cannot reach the model (HTTP-5).
    */
   getAll(name: string): readonly string[] {
-    return this.#valuesByName.get(name) ?? [];
+    return this.#valuesByName.get(name) ?? EMPTY_VALUE_LIST;
   }
 
   /**
@@ -201,9 +230,15 @@ export class QueryParamsBuilder implements Builder<QueryParams> {
    * @param value - the value; `null` records a value-less parameter as a single empty string
    * (HTTP-28).
    * @returns this builder, for chaining.
+   * @throws {@link UrlConstructionError} when the name or the value carries an unpaired surrogate.
+   * Such a string has no UTF-8 form, so RFC 3986 percent-encoding is undefined for it and
+   * {@link QueryParams.encode} could only fail — it is rejected here, at the call that supplied it.
+   * A well-formed surrogate pair is ordinary text and is accepted (HTTP-29).
    */
   add(name: string, value: string | null): this {
     const actualValue = value ?? '';
+    requireWellFormed('name', name);
+    requireWellFormed('value', actualValue);
     if (!this.#valuesByName.has(name)) {
       this.#insertionOrder.push(name);
       this.#valuesByName.set(name, []);

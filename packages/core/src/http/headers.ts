@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/headers.ts
-import type {Builder} from './builder.js';
+import {EMPTY_VALUE_LIST, type Builder} from './builder.js';
 import {HeaderValidationError} from './errors.js';
 import {
   hasForbiddenNameByte,
@@ -130,10 +130,14 @@ export class Headers {
    * Returns every value stored under `name`, in insertion order.
    *
    * @param name - the header name, as a string or a {@link HeaderName}.
-   * @returns a read-only, frozen list of values — empty when the name is absent.
+   * @returns a read-only, frozen list of values — the shared frozen empty list when the name is
+   * absent. Frozen on both paths, so mutating it cannot reach the model (HTTP-5).
    */
   getAll(name: string | HeaderName): readonly string[] {
-    return this.#valuesByLowerName.get(toRawName(name).toLowerCase()) ?? [];
+    return (
+      this.#valuesByLowerName.get(toRawName(name).toLowerCase()) ??
+      EMPTY_VALUE_LIST
+    );
   }
 
   /**

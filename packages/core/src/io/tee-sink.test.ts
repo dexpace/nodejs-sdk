@@ -7,7 +7,8 @@
 // IO-42 (write after close rejects with the source intact),
 // IO-13 (the tap mirrors the primary's exact encoded bytes, and refuses a label identically),
 // IO-16 (the tee's own writable bridge still feeds the tap),
-// IO-3 (a negative count is an argument error, rejected before any transfer)
+// IO-3 (a negative count is an argument error, rejected before any transfer; and a non-integral
+//        tapLimit is one too, rejected at the constructor rather than at the first write)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {BufferedSink} from './buffered-sink.js';
@@ -15,6 +16,7 @@ import {BufferedSource} from './buffered-source.js';
 import {ByteQueue} from './byte-queue.js';
 import {ClosedResourceError} from './errors.js';
 import {TeeSink} from './tee-sink.js';
+import {InvariantViolation} from '../invariant.js';
 import {writeAll} from './pump.js';
 import {
   collectingWritableStream,
@@ -299,5 +301,46 @@ describe('argument validation (IO-3)', () => {
     expect((await rejection(tee.write(new ByteQueue(), -1))).name).toBe(
       'InvariantViolation',
     );
+  });
+
+  // The constructor checked `tapLimit >= 0` only, so a fractional cap was accepted and the fault
+  // surfaced at the FIRST write instead: `#mirror` computes `room = tapLimit - tap.size`, hands it
+  // to `ByteQueue.copyTo`, and `assertCount` rejects it as `count must be a non-negative integer,
+  // got 2.5` — a message about the wrong parameter, at the wrong call, on a path where the primary
+  // write has not run yet. A byte count is integral for the same reason `count` is (IO-3, IO-26).
+  // Measured on the pre-fix tree, audit #67 / #76.
+  test.each([2.5, 0.5, -0.5, Number.NaN, Number.NEGATIVE_INFINITY])(
+    'a tapLimit of %p is rejected at the constructor',
+    tapLimit => {
+      const {stream} = collectingWritableStream();
+      expect(
+        () => new TeeSink(BufferedSink.overStream(stream), tapLimit),
+      ).toThrow(InvariantViolation);
+    },
+  );
+
+  test('the message names tapLimit, not count', () => {
+    const {stream} = collectingWritableStream();
+    expect(() => new TeeSink(BufferedSink.overStream(stream), 2.5)).toThrow(
+      /tapLimit/,
+    );
+  });
+
+  test.each([0, 1, 4096, Number.POSITIVE_INFINITY])(
+    'a tapLimit of %p is still accepted',
+    tapLimit => {
+      const {stream} = collectingWritableStream();
+      expect(
+        () => new TeeSink(BufferedSink.overStream(stream), tapLimit),
+      ).not.toThrow();
+    },
+  );
+
+  test('the unbounded default stays Infinity, which is not an integer', () => {
+    // `Number.isInteger(Infinity)` is false, so the check has to admit it explicitly — it is the
+    // documented default and the cap `#mirror` reads as "no cap" (IO-26).
+    const {stream} = collectingWritableStream();
+    const tee = new TeeSink(BufferedSink.overStream(stream));
+    expect(tee.snapshot().length).toBe(0);
   });
 });

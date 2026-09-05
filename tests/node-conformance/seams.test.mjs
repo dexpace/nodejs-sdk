@@ -12,7 +12,7 @@
 // 20.3.0. 20.3.0 is the first release carrying both.
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
-import {composeSignal, isTimeoutSignal} from '@dexpace/core';
+import {composeSignal, isTimeoutSignal, RequestOptions} from '@dexpace/core';
 
 describe('composeSignal on the declared Node floor', () => {
   it('returns a distinct AbortSignal.any() result when both a signal and a timeout are supplied', () => {
@@ -99,5 +99,39 @@ describe('Web Crypto on the declared Node floor', () => {
       'function',
       'the declared engines.node floor must expose globalThis.crypto.getRandomValues to ES modules',
     );
+  });
+});
+
+describe('composeSignal timeout range on Node (HTTP-35)', () => {
+  // Runtime-divergent by measurement, 2026-09-05: `AbortSignal.timeout(1.5)` and
+  // `AbortSignal.timeout(2 ** 32)` raise `RangeError` on Node and are accepted on Bun, and a
+  // negative delay raises `RangeError` on Node against `TypeError` on Bun. `bun test` therefore
+  // cannot assert either half of this, which is what puts the case here rather than only in
+  // `packages/core/src/seams/transport.test.ts`. Added by audit #67 / #76, which moved the range
+  // check onto `RequestOptionsBuilder.timeoutMs` for this reason.
+  it('accepts every timeout RequestOptionsBuilder accepts, at both ends of the range', () => {
+    for (const value of [1, 1000, 2 ** 32 - 1]) {
+      const accepted = RequestOptions.newBuilder()
+        .timeoutMs(value)
+        .build().timeoutMs;
+      assert.equal(accepted, value);
+      assert.ok(
+        composeSignal(undefined, accepted) instanceof AbortSignal,
+        `composeSignal must accept the timeout ${value}, which the model admits`,
+      );
+    }
+  });
+
+  it('would raise RangeError on the values the model now rejects', () => {
+    for (const value of [1.5, 2 ** 32]) {
+      assert.throws(
+        () => composeSignal(undefined, value),
+        RangeError,
+        `Node's AbortSignal.timeout() must still reject ${value}; the model is what keeps it unreachable`,
+      );
+      assert.throws(() => RequestOptions.newBuilder().timeoutMs(value), {
+        name: 'RequestOptionsValidationError',
+      });
+    }
   });
 });

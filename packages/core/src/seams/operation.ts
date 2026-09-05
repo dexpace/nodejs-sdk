@@ -6,13 +6,14 @@ import type {Headers} from '../http/headers.js';
 import type {QueryParams} from '../http/query-params.js';
 import type {Method} from '../http/method.js';
 import {UrlConstructionError, DexpaceError} from '../http/errors.js';
-import {encodeRfc3986Component} from '../http/rfc3986.js';
+import {encodeRfc3986Component, hasLoneSurrogate} from '../http/rfc3986.js';
 
 /**
  * Thrown when `buildRequest()` cannot assemble a request from its descriptor: a `{name}`
- * placeholder in `pathTemplate` has no value in `pathParams`, or a supplied value is a dot segment
- * (`.`/`..`) that the WHATWG URL parser would normalize into a path rewrite instead of keeping as
- * one literal segment.
+ * placeholder in `pathTemplate` has no OWN value in `pathParams` — an inherited member such as
+ * `constructor` does not satisfy one — or a supplied value is a dot segment (`.`/`..`) that the
+ * WHATWG URL parser would normalize into a path rewrite instead of keeping as one literal segment,
+ * or a supplied value carries an unpaired surrogate and so has no percent-encoded form.
  *
  * @public
  */
@@ -50,9 +51,10 @@ export interface OperationDescriptor {
   readonly pathTemplate: string;
 
   /**
-   * Values for `pathTemplate`'s `{name}` placeholders. Every placeholder must have a value here;
-   * each value is percent-encoded as a single path segment, so a value containing `/` cannot inject
-   * an extra segment (SEAM-27). Defaults to empty.
+   * Values for `pathTemplate`'s `{name}` placeholders. Every placeholder must have an OWN property
+   * here — a name reachable only through the prototype chain, such as `constructor`, is treated as
+   * absent — and each value is percent-encoded as a single path segment, so a value containing `/`
+   * cannot inject an extra segment (SEAM-27). Defaults to empty.
    */
   readonly pathParams?: Readonly<Record<string, string>> | undefined;
 
@@ -103,7 +105,16 @@ function substitutePathParams(
   pathParams: Readonly<Record<string, string>> | undefined,
 ): string {
   return template.replace(PATH_PARAM_RE, (_match, name: string) => {
-    const value = pathParams?.[name];
+    // `Object.hasOwn`, not `pathParams?.[name]`: the indexed read walks the prototype chain, so
+    // `{constructor}` against `{}` resolved to `Object.prototype.constructor`, stringified through
+    // `encodeRfc3986Component`, and shipped a native-code source text as a path segment instead of
+    // failing assembly. SEAM-27 requires every placeholder to have a *supplied* value, and a name
+    // the caller never supplied is missing whatever `Object.prototype` happens to carry
+    // (audit #67 / #76).
+    const value =
+      pathParams !== undefined && Object.hasOwn(pathParams, name)
+        ? pathParams[name]
+        : undefined;
     if (value === undefined) {
       throw new OperationAssemblyError(
         `missing value for path parameter "${name}"`,
@@ -117,6 +128,17 @@ function substitutePathParams(
     if (value === '.' || value === '..') {
       throw new OperationAssemblyError(
         `path parameter "${name}" must not be a dot segment ("." or "..")`,
+        name,
+      );
+    }
+    // A string carrying an unpaired surrogate has no UTF-8 form, so `encodeRfc3986Component` — i.e.
+    // `encodeURIComponent` — throws a bare `URIError: URI malformed`. That escaped `buildRequest`
+    // outside the `DexpaceError` tree and outside its documented `@throws`. Rejected here with the
+    // class this call site already throws, rather than guarded inside the encoder, so the failure
+    // names the parameter (audit #67 / #76).
+    if (hasLoneSurrogate(value)) {
+      throw new OperationAssemblyError(
+        `path parameter "${name}" contains an unpaired surrogate and cannot be percent-encoded`,
         name,
       );
     }
@@ -158,8 +180,10 @@ function composeQuery(
  * @param baseUrl - the absolute base URL to project the operation onto.
  * @param operation - the operation to assemble into a request.
  * @returns the assembled request.
- * @throws {@link OperationAssemblyError} when a `{name}` placeholder has no value in `pathParams`,
- * or a supplied value is a dot segment (`.`/`..`) — fix the descriptor; no request was assembled.
+ * @throws {@link OperationAssemblyError} when a `{name}` placeholder has no own value in
+ * `pathParams` (a name inherited from `Object.prototype` does not count as supplied), or a supplied
+ * value is a dot segment (`.`/`..`), or a supplied value carries an unpaired surrogate — fix the
+ * descriptor; no request was assembled.
  * @throws {@link UrlConstructionError} when `baseUrl` is malformed, non-absolute, or carries a
  * fragment — supply a clean absolute base URL.
  * @throws {@link RequestBodyNotAllowedError} when the descriptor pairs a body with GET, HEAD, TRACE
