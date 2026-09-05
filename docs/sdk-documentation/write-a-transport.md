@@ -44,7 +44,7 @@ export function echoTransport(): Transport {
 Note `setInbound`, not `set`: values a server sent are accepted leniently. Using the strict setter on
 a real server's headers means a response with an obs-text byte in it becomes unreadable.
 
-## Twelve rules a real transport must follow
+## Thirteen rules a real transport must follow
 
 The full contract is `docs/product-spec/17-transport-adapter-conformance-contract.md`, thirty
 `TRANSPORT-N` clauses. These are the ones that are easy to get wrong.
@@ -104,12 +104,27 @@ finds the body they already own torn out from under them.
 **7. The caller owns the response body** (`BODY-15`). Return it live and unread. Do not buffer it, do
 not close it.
 
-**8. Ownership decides who closes what** (`SEAM-14`). A dispatcher or client the caller supplied is
+**8. A response that can carry no body must report `body === null`** (`TRANSPORT-24`,
+`TRANSPORT-25`). The WHATWG null-body statuses — `101`, `103`, `204`, `205`, `304` — plus every
+`HEAD` response and a 2xx `CONNECT`. Do not forward whatever your native client produced: three of
+the four combinations the two shipped adapters meet disagree. undici's dispatcher always hands back
+a `BodyReadable`; Node's `fetch` returns `null`; Bun 1.3.14's `fetch` returns a live
+`ReadableStream`. `hasNoResponseBody(method, status)` in `@dexpace/transport-shared` is the rule, so
+that a consumer can branch on `null` instead of reading to discover there is nothing there.
+
+Whatever handle you then decline to expose is yours to release — `cancel()` it, `dump()` it — before
+you return. `Response.close()` is a no-op on a null body, so nobody else will, and an undrained
+`BodyReadable` holds a pooled connection open until the dispatcher times it out.
+
+A `Content-Length` on a body-less response is not a lie to correct: on a `HEAD` it describes the
+body a `GET` would have returned, and it must survive verbatim. Only the body is absent.
+
+**9. Ownership decides who closes what** (`SEAM-14`). A dispatcher or client the caller supplied is
 never touched by your `close()`. One you constructed is yours to close. Make that decision once, at
 construction, and make supplying both a caller-owned client *and* an option that would build one a
 construction-time `TypeError` rather than a silent win for one of them.
 
-**9. `close()` must be idempotent, concurrent-safe, and non-blocking** (`TRANSPORT-15`/`TRANSPORT-16`).
+**10. `close()` must be idempotent, concurrent-safe, and non-blocking** (`TRANSPORT-15`/`TRANSPORT-16`).
 No unbounded await — a graceful drain would stall teardown for as long as one in-flight send against
 a slow peer takes. Destroying is the sanctioned choice; in-flight sends then reject with
 `CancellationError`, and so does a `send()` issued after `close()`, because it cannot succeed over a
@@ -117,7 +132,7 @@ dispatcher that no longer exists and so is not a retryable failure. Declare your
 (`SEAM-15`) either way: `@dexpace/transport-fetch`'s `close()` is a documented no-op over a runtime
 global it does not own, and `send()` keeps working after it.
 
-**10. Recognize a file body structurally, and still write it through `writeTo`**
+**11. Recognize a file body structurally, and still write it through `writeTo`**
 (`TRANSPORT-28`, `BODY-13`). `body.kind === 'file'` widens the body to `FileBodyDescriptor` —
 `path`, `start`, `count`. Never `instanceof` against `@dexpace/body-file`: a transport must not
 depend on it.
@@ -131,14 +146,14 @@ path, treat a file body as an ordinary `Body` and let `writeTo` produce the byte
 zero-copy clause is a SHOULD, and its MUSTs — replayable, and exactly the declared range on the
 wire — are the descriptor's to keep, not yours.
 
-**11. Refuse a proxy you cannot honour, at construction** (`TRANSPORT-30`). `ProxyType` admits
+**12. Refuse a proxy you cannot honour, at construction** (`TRANSPORT-30`). `ProxyType` admits
 `socks4` and `socks5`, and core resolves both from `ALL_PROXY`, so a configuration can hand you a
 proxy your client cannot build. Reject it in the factory with a typed error that names the type,
 before you allocate anything — not on the first send, where it arrives as whatever the native
 client raises. Keep it outside the `IoError` tree: `retry/classify.ts` is an allow-list, so a
 misconfiguration no retry can fix is then non-retryable for free. Declare it in `@throws`.
 
-**12. Send a real `User-Agent`** (`NFR-15`), never a placeholder. `getBuildInfo()` supplies the tokens.
+**13. Send a real `User-Agent`** (`NFR-15`), never a placeholder. `getBuildInfo()` supplies the tokens.
 
 ## Prove it
 
@@ -171,13 +186,14 @@ The package is `private` and its `exports` name `./src/index.ts`, so it resolves
 
 `@dexpace/transport-shared` exists so the algorithm both adapters need exists once. Its exports are
 `@internal` and it is not a package to install directly, but reading it is the fastest way to see
-what a correct implementation of rules 2, 3, 4, 5, 6 and 8 looks like:
+what a correct implementation of rules 2, 3, 4, 5, 6, 8 and 9 looks like:
 
 | Module | Concern |
 |---|---|
 | `header-mapping.ts` | Rules 2 and 3: the outbound drop-and-degrade pass, and the lenient inbound copy |
 | `drop-log.ts` | Bounded, case-insensitive, drain-to-cap dedup of already-logged drop names |
 | `dispatch-classification.ts` | Rule 4: the one table deciding permanent-versus-retryable for a native rejection |
+| `body-less.ts` | Rule 8: which method/status pairs can carry no response body at all |
 | `abort-mapping.ts` | Rule 5's single mapping from an aborted signal to `TransportFailureError` or `CancellationError` |
 | `body-pump.ts` | Turning a `Body` into a request stream the transport owns, plus idempotent teardown for an abandoned producer |
 | `signal-fork.ts` | Rule 6's fork-and-detach |

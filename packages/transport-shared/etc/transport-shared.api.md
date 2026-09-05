@@ -7,6 +7,7 @@
 import type { Body as Body_2 } from '@dexpace/core';
 import { DexpaceError } from '@dexpace/core';
 import { Headers as Headers_2 } from '@dexpace/core';
+import type { Method } from '@dexpace/core';
 
 // Warning: (ae-internal-missing-underscore) The name "abortToSdkError" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -47,6 +48,11 @@ export interface ForkedSignal {
 //
 // @internal
 export function forkSignal(source: AbortSignal | undefined): ForkedSignal;
+
+// Warning: (ae-internal-missing-underscore) The name "hasNoResponseBody" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal
+export function hasNoResponseBody(method: Method, status: number): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "HeaderDropLogging" should be prefixed with an underscore because the declaration is marked as @internal
 //

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-shared/src/index.ts
 export {abortToSdkError} from './abort-mapping.js';
+export {hasNoResponseBody} from './body-less.js';
 export {
   isMaterializable,
   materializeBody,

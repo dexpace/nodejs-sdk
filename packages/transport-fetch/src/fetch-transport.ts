@@ -16,6 +16,7 @@ import {
   createDropLogger,
   degradeInboundHeaders,
   forkSignal,
+  hasNoResponseBody,
   isMaterializable,
   mapOutboundHeaders,
   materializeBody,
@@ -194,7 +195,16 @@ function adaptResponse(
       .status(Status.of(fetchResponse.status))
       .reasonPhrase(fetchResponse.statusText || undefined)
       .headers(headers)
-      .body(fetchResponse.body)
+      // Decided here, not inherited from the runtime. Node's `fetch` returns `null` for 204, 304
+      // and HEAD as the spec requires, and Bun 1.3.14's returns a live `ReadableStream` for all
+      // three (measured 2026-09-05) -- so forwarding `fetchResponse.body` made the SHAPE of a
+      // body-less response a property of the runtime rather than of this SDK. `#exchange` releases
+      // whatever handle this declines (audit #67 / #82).
+      .body(
+        hasNoResponseBody(request.method, fetchResponse.status)
+          ? null
+          : fetchResponse.body,
+      )
       .build()
   );
 }
@@ -261,7 +271,13 @@ class FetchTransport implements Transport {
 
     try {
       // TRANSPORT-22: a live socket is in hand, so any throw here must release it before propagating.
-      return adaptResponse(request, fetchResponse, this.#logDrops);
+      const response = adaptResponse(request, fetchResponse, this.#logDrops);
+      if (response.body === null && fetchResponse.body !== null) {
+        // A runtime handed a body for a response that cannot have one. Nothing references it any
+        // more, so releasing it is this transport's, not the caller's (TRANSPORT-25, SEAM-30).
+        await fetchResponse.body.cancel().catch(() => undefined);
+      }
+      return response;
     } catch (error) {
       await fetchResponse.body?.cancel().catch(() => undefined);
       // TRANSPORT-19: nothing is delivered on this path either, so the producer is owed its teardown

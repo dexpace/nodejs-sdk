@@ -18,6 +18,8 @@
 // `fetch` rejects three names Bun's forwards),
 // TRANSPORT-28/BODY-11 (a real fileBody() over the wire, whole and ranged), BODY-13 (a truncate-after-stat
 // short write fails the send on the streamed path, which only this runtime can assert),
+// TRANSPORT-24/25 (a 204 and a HEAD carry a null body on this runtime as well -- Node's `fetch`
+// returns null where Bun's returns a stream, and undici's dispatcher always returns a readable),
 // TRANSPORT-25 (the response body is a lazily-read stream and close releases it), TRANSPORT-29/SEAM-12
 // (concurrent sends), SEAM-16 (an abort after delivery must not close the delivered body).
 import assert from 'node:assert/strict';
@@ -71,6 +73,9 @@ function fixtureBytes(size) {
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 
+/** `/fixed-length`'s payload; its length is what the HEAD response advertises and never delivers. */
+const FIXED_LENGTH_BODY = 'seventeen-bytes!!';
+
 // Every hook and test lives inside this suite rather than at the file root, and that is
 // load-bearing on the declared floor. Under Node 20.3.0 -- `engines.node`, and the floor leg of
 // CI's node-conformance matrix -- an async ROOT-level `before` does not finish before subtests
@@ -99,6 +104,21 @@ describe('the transport adapters on the Node runtime', () => {
       if (pathname === '/vendor') {
         res.writeHead(520, {'content-type': 'text/plain'});
         res.end('vendor status body');
+        return;
+      }
+      if (pathname === '/no-content') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (pathname === '/fixed-length') {
+        // `node:http` suppresses the body for a HEAD request by itself and keeps the declared
+        // length, which is the trap: the header promises bytes no response will deliver.
+        res.writeHead(200, {
+          'content-type': 'text/plain',
+          'content-length': String(FIXED_LENGTH_BODY.length),
+        });
+        res.end(FIXED_LENGTH_BODY);
         return;
       }
       const chunks = [];
@@ -210,6 +230,47 @@ describe('the transport adapters on the Node runtime', () => {
           const echoed = JSON.parse(await response.text());
           assert.equal(echoed.body, 'payload');
           assert.equal(counter.writes, 1);
+        } finally {
+          await transport.close();
+        }
+      });
+
+      it('reports a null body for a 204 and a HEAD, on this runtime too (TRANSPORT-24/25)', async () => {
+        // The one place the WHATWG null-body rule can be checked against the runtime the SDK ships
+        // to. Node's `fetch` returns `null` for 204/304/HEAD by itself, Bun 1.3.14's returns a live
+        // `ReadableStream` for all three, and undici's dispatcher always hands back a
+        // `BodyReadable` -- so the Bun conformance rows prove the adapters normalise Bun's answers
+        // and this proves they did not normalise into Bun's shape (audit #67 / #82).
+        const transport = makeTransport();
+        try {
+          const empty = await transport.send(
+            Request.newBuilder().url(`${origin}/no-content`).build(),
+          );
+          assert.equal(empty.status.code, 204);
+          assert.equal(empty.body, null);
+          await empty.close();
+
+          const head = await transport.send(
+            Request.newBuilder()
+              .method('HEAD')
+              .url(`${origin}/fixed-length`)
+              .build(),
+          );
+          assert.equal(head.status.code, 200);
+          assert.equal(head.body, null);
+          // The advertised length survives; only the body a GET would have returned is absent.
+          assert.equal(
+            head.headers.get('content-length'),
+            String(FIXED_LENGTH_BODY.length),
+          );
+          await head.close();
+
+          // A body-less decision that also nulled an ordinary response would pass every assertion
+          // above, so the same route is read once more over GET.
+          const full = await transport.send(
+            Request.newBuilder().url(`${origin}/fixed-length`).build(),
+          );
+          assert.equal(await full.text(), FIXED_LENGTH_BODY);
         } finally {
           await transport.close();
         }

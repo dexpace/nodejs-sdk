@@ -34,6 +34,8 @@ import {
 } from '@dexpace/core';
 import {
   fileBodyFixture,
+  FIXED_LENGTH_BODY,
+  NOT_MODIFIED_ETAG,
   REPEATED_CHALLENGES,
   startFixtureServer,
   type TestServer,
@@ -811,6 +813,86 @@ function challengeList(values: readonly string[]): readonly string[] {
   return values.join(', ').split(/,\s+(?=Digest )/u);
 }
 
+function registerBodylessRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-24/25/27: a response that can carry no body reports none', () => {
+    // `body === null` is the WHATWG shape and the one `@dexpace/core` already types
+    // (`http/response.ts:18`); it is also the only shape a consumer can branch on without reading.
+    // Three of the four native combinations disagreed until audit #67 / #82 -- undici's dispatcher
+    // always hands back a `BodyReadable`, Node's `fetch` returns `null`, Bun 1.3.14's `fetch`
+    // returns a live `ReadableStream` -- so each adapter decides for itself now and these rows are
+    // what say so. The alternative, an empty stream on both, makes a consumer read to learn there
+    // is nothing there.
+    //
+    // `reasonPhrase` is `undefined`-or-string on purpose: `fetch` surfaces `statusText` and undici's
+    // `ResponseData` has no such field, a divergence recorded beside §10 item 13. Asserting the
+    // union is what keeps this row about the body shape.
+    test('a 204 carries a null body and no positive length', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/no-content')).build(),
+        );
+        expect(response.status.code).toBe(204);
+        expect(response.body).toBeNull();
+        // Absent on Node's `node:http`, `'0'` on Bun 1.3.14's -- what a transport is answerable for
+        // is that it never invented a length for a body that does not exist.
+        expect([undefined, '0']).toContain(
+          response.headers.get('content-length'),
+        );
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        // Idempotent and non-blocking over a response the transport already released.
+        await response.close();
+        await response.close();
+      });
+    });
+
+    test('a 304 carries a null body and still delivers its validator', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/not-modified')).build(),
+        );
+        expect(response.status.code).toBe(304);
+        expect(response.body).toBeNull();
+        // A 304 exists to carry validators; dropping the body must not drop them.
+        expect(response.headers.get('etag')).toBe(NOT_MODIFIED_ETAG);
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        await response.close();
+      });
+    });
+
+    test('a HEAD carries a null body and keeps the length it advertises', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder()
+            .method('HEAD')
+            .url(ctx.url('/fixed-length'))
+            .build(),
+        );
+        expect(response.status.code).toBe(200);
+        expect(response.body).toBeNull();
+        // The header describes the body a GET would have returned and must survive verbatim --
+        // this is the one body-less case where a length is meaningful (TRANSPORT-27).
+        expect(response.headers.get('content-length')).toBe(
+          String(FIXED_LENGTH_BODY.length),
+        );
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        await response.close();
+      });
+    });
+
+    test('the same resource over GET does carry its body', async () => {
+      // The twin of the three rows above: nulling a body-less response must not null an ordinary
+      // one, and `/fixed-length` is the same route the HEAD row just read nothing from.
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/fixed-length')).build(),
+        );
+        expect(response.body).toBeInstanceOf(ReadableStream);
+        expect(await response.text()).toBe(FIXED_LENGTH_BODY);
+      });
+    });
+  });
+}
+
 function registerInboundHeaderRows(ctx: SuiteContext): void {
   describe('TRANSPORT-14, AUTH-12/AUTH-25: a repeated inbound header keeps every value', () => {
     test('two WWW-Authenticate lines reach the pipeline as the same challenge list', async () => {
@@ -981,6 +1063,7 @@ export function runTransportConformanceSuite(
     registerHeaderRows(ctx);
     registerNativeRejectionRows(ctx);
     registerFileBodyRows(ctx);
+    registerBodylessRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerProxyRefusalRows(ctx);

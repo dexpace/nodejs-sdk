@@ -23,6 +23,7 @@ import {
   createDropLogger,
   degradeInboundHeaders,
   forkSignal,
+  hasNoResponseBody,
   isMaterializable,
   mapOutboundHeaders,
   materializeBody,
@@ -424,7 +425,15 @@ function adaptResponse(
       .protocol(Protocol.HTTP_1_1)
       .status(Status.of(result.statusCode))
       .headers(headers)
-      .body(toDemandDrivenStream(result.body))
+      // undici's dispatcher always hands back a `BodyReadable`, even for a 204, a 304 or a HEAD --
+      // so wrapping it unconditionally gave a caller an empty stream it had to read to discover
+      // was empty, where the fetch twin on Node gave `null`. The two adapters now decide by the
+      // same rule; `#exchange` dumps whatever this declines (audit #67 / #82).
+      .body(
+        hasNoResponseBody(request.method, result.statusCode)
+          ? null
+          : toDemandDrivenStream(result.body),
+      )
       .build()
   );
 }
@@ -538,6 +547,12 @@ class UndiciTransport implements Transport {
     try {
       // TRANSPORT-22: a live socket is in hand, so any throw here must release it before propagating.
       const response = adaptResponse(request, result, this.#logDrops);
+      if (response.body === null) {
+        // Nothing references the `BodyReadable` any more, and an undrained one holds the pooled
+        // connection open until the dispatcher times it out (TRANSPORT-25, SEAM-30). `dump` reads
+        // and discards, which is what returns the socket to the pool.
+        await result.body.dump().catch(() => undefined);
+      }
       this.#reportProxyChallenge(response);
       return response;
     } catch (error) {
