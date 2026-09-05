@@ -412,6 +412,18 @@ existing. The unknown-length `pipeTo` path still forwards empty chunks; out of H
 Known merge seams: `core.api.md` (up to three), which the supervisor regenerates on the merged tree rather than
 hand-merging. No two tasks share a source file.
 
+## Wave 5 — landed 2026-09-05
+PR #93 (#78), PR #95 (#80) and PR #94 (#79) merged into the umbrella at `4576658`, in that order. No conflicts:
+#78's item 17 section edit and #80's OBS-29 row edit plus two appended rows sit in disjoint regions of
+`deviations.md`. Merged tree preflighted in a throwaway worktree before the merge (byte-identical result): all
+20 steps passed. Every commit on all three branches checked as `wahbehmo20@gmail.com`.
+
+**Traps added this wave.** `gts --fix` deletes an `eslint-disable-next-line` whose next line is another
+comment (the directive binds to the comment and becomes unused): prose first, directive last. And
+`packages/core/src/io/index.ts` is a dead barrel nothing imports, whose file-level comment carries the
+`@internal` substring and so ships a broken `dist/io/index.d.ts` today; harmless only because the modules it
+re-exports emit `export {}`. Left for the release pass (deleting it is a design call).
+
 ## Decisions taken for wave 5 (M4: #78, #79, #80) — pre-taken 2026-09-05, before dispatch
 
 ### D16 — #78: `instanceof IoError` stays; it means "transport-layer failure", and item 17 says so
@@ -493,6 +505,36 @@ comment says what the cause-walk actually matches. *Rejected:* switching to `isI
 `AbortSignal.timeout()`; Node rejects `1.5`/`2**32`/`-1` with `RangeError`, Bun accepts the first two. Validate at the
 transport factory the way `RequestOptionsBuilder.timeoutMs` now does (D14), with a conformance row.
 
+
+**D16 outcome (2026-09-05, #78, PR #93).** Rule kept and written down in `classify.ts`, `io/index.ts` and item
+17. Six classify cases (five leaves plus `TransportFailureError`, each asserting `isIoError`'s answer beside the
+classifier's). Non-finite `delayOverride` is screened at the source and reported through the same
+`http.retry.delayOverrideFailed` path a throw uses (`reportOverrideFailure`); finite negatives unchanged.
+`computeDelay` short-circuits `initialDelayMs === 0`. Round 2 put the failure semantics on the `@public`
+`RetryStepOptions.delayOverride` TSDoc. `core.api.md` byte-identical.
+
+**D17 outcome (2026-09-05, #79, PR #94).** `codec-json/src/abort-race.ts` races each pending read/write; both
+Bun and Node abort cases hung to their deadlines before it. Paginator: `pageOrClose()` runs the PAGE-4
+invariants under the same `closeThenRethrow()` as `parseOrClose`; all four invariants (paginator + page) reject
+`null` as well as `undefined`. `tristate()` rejects a present `undefined` too, not only `null`
+(`NonNullable<T>` excludes both). **Correction to D17's text:** the SSE double report never came from
+`#releaseWithInFlightError` — it came from `#iterate`'s `finally` running `#releaseQuietly()` after the catch
+had already released; fixed there. A second double report survives deliberately: `bindAbort`'s hook call plus
+the `suppressed` copy when an iterator is parked in a read at abort time (the listener cannot know). Query-splice
+surrogates → `UrlConstructionError` (the strategies used no class of their own). Round 2 aligned
+`UrlConstructionError`'s TSDoc, both abort clauses in `seams/serde.ts`, and added rule 5 (PAGE-4) to
+`write-a-paging-strategy.md`.
+
+**D18 outcome (2026-09-05, #80, PR #95).** `send()` runs under `runWithSnapshot` (diagnostic store) and
+`runWithActiveSpan` (span), both `AsyncLocalStorage.run`; the handle forms stay with TSDoc on their reach. New
+`@public` `PipelineOptions {instrumentation?, operationName?}` as `PipelineBuilder`'s optional second argument;
+`StandardResilienceOptions extends PipelineOptions`; `seedFrom('flatten')` carries the options through an
+`@internal` friend accessor (beyond D18's letter, so the documented derivation path does not drop the bundle).
+`install` + span start inside one `try`; `endOnce` latch; LOGGING step's span in a `finally`.
+`http.instrumentation.bodyCaptureFailed` at `verbose`; `LoggingStepSettings.configKey`; `pipelines.md` section
+"Turning logging on from the environment". OBS-29 row closed, OBS-35 row appended. *Left for a later pass:*
+`packages/core/README.md`'s Observability bullet does not yet point at `PipelineOptions.instrumentation`.
+
 ### Wave 5 partition
 | Task | Owns |
 |---|---|
@@ -501,6 +543,57 @@ transport factory the way `RequestOptionsBuilder.timeoutMs` now does (D14), with
 | #80 | `packages/core/src/observability/{diagnostic-context,logging-step,redaction}.ts`, `packages/core/src/pipeline/{runtime,builder}.ts`, `packages/core/src/auth/preset.ts`, `packages/core/src/context/instrumentation.ts` (TSDoc), their tests, `docs/sdk-documentation/pipelines.md` and the observability guide, `docs/deviations.md` **OBS-29 row edit + one appended row**, `tests/node-conformance/observability.test.mjs`, `core.api.md` |
 Known merge seams: `deviations.md` (item 17 section vs OBS-29 row — disjoint regions); `core.api.md`
 (regenerated on the merged tree).
+
+## Decisions taken for wave 6 (M5: #81, then #82) — pre-taken 2026-09-05
+
+### D19 — #81: degrade what undici cannot carry; one short-write detector; a typed refusal for SOCKS
+- **Header rejections become logged drops (TRANSPORT-11/12).** `UNDICI_FORBIDDEN_HEADERS` gains `expect`,
+  `keep-alive` and `upgrade`; `connection` stays forwarded (§17's note) but a value other than `close` /
+  `keep-alive` is dropped and logged; every name is validated against RFC 9110 `token` in `toUndiciHeaders`
+  and a non-token name is dropped and logged, which is the degrade `fetch-transport.ts:146-152` already does
+  by `try`/`catch`. Check `FETCH_FORBIDDEN_HEADERS` against the same rows on Node's undici-backed `fetch` and
+  widen it only if a row proves a rejection. Conformance rows both transports run: `Expect: 100-continue`,
+  `Upgrade: websocket`, a non-token name — the send succeeds, the header is absent on the wire, the drop is
+  logged by name.
+- **`fileBody` goes through `writeTo` (BODY-13).** The undici file branch stops handing `createReadStream` to
+  undici and takes the same `pumpBody` path the streamed case uses, so `transferred === count` runs on both
+  transports and a truncate-after-stat fails with `TransportFailureError` naming transferred-of-total.
+  *Rejected:* a byte-counting wrapper around the read stream (a second BODY-13 implementation, which is the
+  drift the shared pump exists to prevent). Conformance row: truncate a 1 MB file to 10 bytes after `stat`,
+  both transports reject identically. If the pump path changes the framing (`content-length` vs chunked),
+  say so in the PR and keep whatever the streamed case does today.
+- **SOCKS:** `undiciTransport()` refuses `proxy.type !== 'http'` at the factory with the same `TypeError`
+  shape `toDispatchError` uses for a terminal misconfiguration (deliberately outside the `IoError` tree),
+  `@throws` documented. `ProxyType` keeps `socks4`/`socks5` — narrowing it is a public-shape decision for the
+  release pass (D1) — and one `deviations.md` row records "SOCKS is resolved by core and supported by neither
+  transport". `fetchTransport()` gets the same check if it accepts a proxy at all.
+- Rows go in `run-suite.ts` + `fixtures.ts`; #82 lands on top of them (D2). `api:local` on `transport-undici`
+  (and `transport-fetch` if touched). No changesets (D1).
+*Partition:* `packages/transport-undici/**`, `packages/transport-fetch/src/fetch-transport.ts` (forbidden set
+only, if a row proves it), `packages/transport-conformance/src/**`, `docs/sdk-documentation/write-a-transport.md`,
+`docs/deviations.md` (one appended row), the two transports' `api.md`.
+
+### D20 — #82 (after #81 merges): one classification table; `body === null` when there is none; abort the fork
+- **Permanent errors on fetch:** the fetch transport classifies a `TypeError` from an unsupported scheme, an
+  invalid URL, a forbidden method or an invalid header exactly as the undici transport classifies its
+  `TERMINAL_ARGUMENT_CODES` — a bare `TypeError` with `{cause}`, outside the `IoError` tree — and the table
+  that decides it moves to `@dexpace/transport-shared` so the two cannot drift (the precedent is
+  `abort-mapping.ts`). `fetch failed` with a network `cause` stays `TransportFailureError`. Conformance row:
+  `ftp://` (or another scheme the runtime refuses) is non-retryable on both — assert `isIoError(e) === false`.
+- **Body-less responses (204, 304, HEAD):** `Response.body` is `null` — the WHATWG shape, and what core's
+  model already types (`http/response.ts:18`); undici stops wrapping `result.body` unconditionally and
+  hands `null` for those three. Rows for 204, 304 and HEAD assert `body === null`, `contentLength`, and that
+  `reasonPhrase` is `undefined` or a string (the divergence is D7's row beside §10 item 13; the row does not
+  re-ledger it). *Rejected:* an empty stream on both (a consumer would have to read to learn there is nothing).
+- **`CONTROL_BYTE`** becomes `/[\x00-\x08\x0A-\x1F\x7F]/u`, with a test in `transport-shared` for LF.
+- **Producer-failure race:** the producer-failure branch aborts the forked signal before rethrowing, on both
+  transports, so a native call that resolves afterwards is cancelled rather than stranded with an unread body.
+  Verify with an instrumented transport whose native call resolves after the producer fails.
+- `api:local` on `transport-shared`, `transport-fetch`, `transport-undici` as touched. No changesets (D1).
+- **Carried from #76:** validate `defaultTimeoutMs` at both transport factories with the same integer
+  `1..2**32-1` rule `RequestOptionsBuilder.timeoutMs` uses (D14), typed error, `@throws`, a conformance row.
+*Partition:* the three transport packages, `packages/transport-conformance/src/**`,
+`docs/sdk-documentation/write-a-transport.md`, the three `api.md`s.
 
 ## Deferred — release machinery (recoverable list)
 | Issue / PR | Deferred item |
@@ -516,3 +609,6 @@ Known merge seams: `deviations.md` (item 17 section vs OBS-29 row — disjoint r
 | #73 / PR #90 | patch changeset for `@dexpace/core`: one idempotency key per logical request across retry attempts; `.changeset/2026-08-26-recovery-chain-primitives.md:14`'s "single `try`/`catch`" description of `dispatchWithRecovery` is now two functions (guarantee unchanged) |
 | #76 / PR #92 | patch changeset for `@dexpace/core`: `timeoutMs` rejects non-integers and values above `2**32-1` (was accepted, threw at send); lone surrogates rejected at `QueryParamsBuilder.add` and path substitution; `getAll` frozen on every path |
 | #77 / PR #91 | patch changeset for `@dexpace/core`: empty chunk in `streamBody` is a contract violation; multipart boundary quoted when not a token; logging tap safe after `close()`; `.d.ts` `@throws` prose changed |
+| #78 / PR #93 | patch changeset for `@dexpace/core`: non-finite `delayOverride` ignored with a warning (was a `RangeError` after one send); `computeDelay` returns `0` not `NaN` for `initialDelayMs: 0` at overflow |
+| #79 / PR #94 | patch changesets for `@dexpace/core` (paginator closes on malformed `PageInfo`; SSE release failure reported once; splice surrogate typed) and `@dexpace/codec-json` (abortable reads/writes; `tristate` rejects present null) |
+| #80 / PR #95 | minor changeset for `@dexpace/core`: `PipelineOptions` (new public shape), `LoggingStepSettings.configKey`, context restored after `send()`; `.changeset/2026-09-04-per-operation-span.md`'s `createRuntime(...)` example is stale |
