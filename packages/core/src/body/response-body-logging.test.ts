@@ -4,11 +4,16 @@
 // reads), BODY-24 (exceeds-cap: prefix+tail once, second read fails), BODY-26 (drain failure cached,
 // partial bytes retained, error() does not drain), BODY-27 (close-once shared guard), BODY-28 (captured
 // buffer survives close), BODY-29 (reported length), BODY-32 (negative cap rejected), BODY-25 (a
-// zero-length delegate chunk is a stream-contract violation, never end-of-stream)
+// zero-length delegate chunk is a stream-contract violation, never end-of-stream), BODY-27/BODY-28 again
+// (close() ends the drain rather than poisoning the wrapper: snapshot still serves the captured prefix,
+// read() reports IO-42's state error, error() reports only a genuine drain failure)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {InvariantViolation} from '../invariant.js';
-import {SourceContractViolationError} from '../io/errors.js';
+import {
+  ClosedResourceError,
+  SourceContractViolationError,
+} from '../io/errors.js';
 import {withResponseLogging} from './response-body-logging.js';
 
 function readableOf(...chunks: number[][]): ReadableStream<Uint8Array> {
@@ -279,6 +284,87 @@ describe('the tail path enforces the same chunk contract (BODY-25)', () => {
     );
     // BODY-26: cached like any other delegate failure, so error() still reports it.
     expect(logged.error()).toBeInstanceOf(SourceContractViolationError);
+  });
+});
+
+describe('the tap is inert after close(), not poisoned by it (BODY-27, BODY-28)', () => {
+  // closeDelegate releases the reader. Every entry point that used to start a drain unconditionally then
+  // read from a detached reader, so `snapshot()` cached a raw `TypeError: Invalid state: The reader is
+  // not attached to a stream` as the wrapper's failure -- and `error()` reported that forever, over a
+  // capture that never failed. BODY-28 says the captured bytes survive close; they cannot survive it
+  // behind a fabricated error.
+
+  test('close-then-snapshot returns the captured prefix and starts no drain', async () => {
+    const logged = withResponseLogging(readableOf([1, 2], [3, 4]), 2);
+    await logged.read(); // exceeds-cap: the prefix is captured, the delegate stays live
+    await logged.close();
+
+    expect([...logged.snapshot()]).toEqual([1, 2]);
+    await new Promise(resolve => setTimeout(resolve, 0)); // a drain started here would settle by now
+    expect(logged.error()).toBeNull();
+  });
+
+  test('close-before-any-read leaves snapshot empty and error() null', async () => {
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    await logged.close();
+
+    expect([...logged.snapshot()]).toEqual([]);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(logged.error()).toBeNull();
+  });
+
+  test('close-then-read rejects with ClosedResourceError, not a detached-reader TypeError', async () => {
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    await logged.close();
+
+    const error = await rejection(logged.read());
+    expect(error).toBeInstanceOf(ClosedResourceError);
+    expect(error.message).toBe('LoggedResponseBody is closed');
+  });
+
+  test('close-then-read in the exceeds-cap regime rejects too -- there is no live tail left', async () => {
+    // The drain stopped at the cap and nobody took the tail, so the captured prefix is NOT the whole
+    // body. Serving it would hand the consumer a silently truncated response; the delegate that held
+    // the rest is gone.
+    const logged = withResponseLogging(readableOf([1, 2], [3, 4]), 2);
+    logged.snapshot(); // starts the drain without taking the tail
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect([...logged.snapshot()]).toEqual([1, 2]);
+    await logged.close();
+
+    expect(await rejection(logged.read())).toBeInstanceOf(ClosedResourceError);
+  });
+
+  test('close-then-error reports only a genuine drain failure (BODY-26)', async () => {
+    const boom = new Error('upstream reset');
+    const failing = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+      },
+      pull(controller) {
+        controller.error(boom);
+      },
+    });
+    const logged = withResponseLogging(failing, 100);
+    expect(await rejection(logged.read())).toBe(boom);
+    // `cancel()` on an errored stream rejects with that stream's own stored error, which the
+    // 'a non-TypeError from cancel() propagates' case above already pins. Not what this test is about.
+    await logged.close().catch(() => undefined);
+
+    // The real failure is not displaced by a close-induced one, and snapshot still shows the partial
+    // capture BODY-26 asked to be retained.
+    expect(logged.error()).toBe(boom);
+    expect([...logged.snapshot()]).toEqual([1, 2]);
+  });
+
+  test('the fits-cap regime still serves repeatable reads after its own close (BODY-23, BODY-28)', async () => {
+    // The drain itself closes the delegate on this path, so "closed" must NOT mean "unreadable".
+    const logged = withResponseLogging(readableOf([1, 2, 3]), 100);
+    expect([...(await readAll(await logged.read()))]).toEqual([1, 2, 3]);
+    await logged.close();
+    expect([...(await readAll(await logged.read()))]).toEqual([1, 2, 3]);
+    expect([...logged.snapshot()]).toEqual([1, 2, 3]);
+    expect(logged.error()).toBeNull();
   });
 });
 

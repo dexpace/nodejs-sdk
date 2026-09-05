@@ -2,7 +2,10 @@
 // packages/core/src/body/response-body-logging.ts
 import {invariant} from '../invariant.js';
 import {ByteQueue} from '../io/byte-queue.js';
-import {SourceContractViolationError} from '../io/errors.js';
+import {
+  ClosedResourceError,
+  SourceContractViolationError,
+} from '../io/errors.js';
 import {MAX_BYTE_ARRAY_LENGTH} from '../io/limits.js';
 import {ConsumedBodyError} from './errors.js';
 
@@ -20,11 +23,19 @@ export interface LoggedResponseBody {
    * (BODY-22). Fits-cap regime: every call, including calls after the first, returns a fresh
    * non-consuming view over the captured bytes (BODY-23). Exceeds-cap regime: exactly one call is
    * allowed; a second throws (BODY-24). If the drain failed, every call re-throws the cached error.
+   * After `close()` in any regime but fits-cap, throws `ClosedResourceError`: the delegate is gone and
+   * the captured prefix is not the whole body (BODY-27, BODY-28).
    */
   read(): Promise<ReadableStream<Uint8Array>>;
-  /** Non-consuming; reflects whatever has been captured so far, even after a failed drain (BODY-26). */
+  /**
+   * Non-consuming; reflects whatever has been captured so far, even after a failed drain (BODY-26) and
+   * after `close()` (BODY-28), which it never restarts a drain past.
+   */
   snapshot(): Uint8Array;
-  /** The cached drain failure, or null. MUST NOT trigger a drain (BODY-26). */
+  /**
+   * The cached drain failure, or null. MUST NOT trigger a drain (BODY-26), and reports only a genuine
+   * upstream failure -- never one manufactured by reading past `close()`.
+   */
   error(): Error | null;
   /** Captured size iff fully captured within the cap, else the delegate's declared length (BODY-29). */
   readonly contentLength: number;
@@ -129,8 +140,16 @@ async function drainOnce(state: DrainState): Promise<void> {
  * The detached `.catch` matters: a snapshot-triggered drain has no awaiter, so without it a drain failure
  * becomes an unhandled rejection. Attaching a handler to a *copy* leaves the stored promise rejected, so
  * `read()` still re-throws the cached failure on every call (BODY-26).
+ *
+ * BODY-28: after `close()` there is nothing left to drain -- `closeDelegate` released the reader, so
+ * starting one here reads from a detached reader, raises a raw `TypeError: Invalid state`, and
+ * `drainOnce`'s catch caches it as this wrapper's `failure`. `error()` would then report a fabricated
+ * upstream failure forever, over a capture that never failed, and the captured bytes BODY-28 promises
+ * survive close would be reachable only past that lie. A drain already in flight is left alone: on the
+ * fits-cap path the drain closes the delegate itself, and its own promise is what `read()` awaits.
  */
 function startDrain(state: DrainState): Promise<void> {
+  if (state.closed && state.started === undefined) return Promise.resolve();
   state.started ??= drainOnce(state);
   void state.started.catch(() => undefined);
   return state.started;
@@ -226,10 +245,17 @@ export function withResponseLogging(
   return {
     async read(): Promise<ReadableStream<Uint8Array>> {
       await startDrain(state); // a cached failure re-throws here on every call (BODY-26)
+      // Ordered deliberately. `fits` first: on that path the drain closed the delegate itself, and
+      // BODY-23 still requires every later read to be a fresh non-consuming view -- "closed" there does
+      // not mean "unreadable" (BODY-28).
       if (state.regime === 'fits') return capturedStream(state);
       if (state.tailConsumed) {
         throw new ConsumedBodyError('logged-response');
       }
+      // Anything else with the delegate gone: there is no live tail to continue from, and the captured
+      // prefix is not the whole body, so serving it would hand the consumer a silently truncated
+      // response. IO-42's state error, not the raw `TypeError` a detached reader throws.
+      if (state.closed) throw new ClosedResourceError('LoggedResponseBody');
       state.tailConsumed = true;
       return tailStream(state);
     },
@@ -238,6 +264,7 @@ export function withResponseLogging(
       // so it starts the drain and returns what has been captured so far rather than awaiting it; a
       // later read() awaits the very same in-flight promise, so the delegate is still read exactly once.
       // (BODY-26's "snapshot returns the partial bytes without throwing" is why it cannot await here.)
+      // After close() `startDrain` is a no-op, so this is the post-mortem accessor BODY-28 asks for.
       void startDrain(state);
       return state.captured.snapshot();
     },
