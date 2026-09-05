@@ -544,6 +544,10 @@ surrogates → `UrlConstructionError` (the strategies used no class of their own
 Known merge seams: `deviations.md` (item 17 section vs OBS-29 row — disjoint regions); `core.api.md`
 (regenerated on the merged tree).
 
+## Wave 6a — landed 2026-09-05
+PR #96 (#81) merged into the umbrella at `808f6b0`. Single branch on the umbrella tip, so its own preflight (all 20
+steps passed, at `ca682c5`; round 2 changed a README only) is the merged tree's. Identity checked.
+
 ## Decisions taken for wave 6 (M5: #81, then #82) — pre-taken 2026-09-05
 
 ### D19 — #81: degrade what undici cannot carry; one short-write detector; a typed refusal for SOCKS
@@ -572,6 +576,19 @@ Known merge seams: `deviations.md` (item 17 section vs OBS-29 row — disjoint r
 *Partition:* `packages/transport-undici/**`, `packages/transport-fetch/src/fetch-transport.ts` (forbidden set
 only, if a row proves it), `packages/transport-conformance/src/**`, `docs/sdk-documentation/write-a-transport.md`,
 `docs/deviations.md` (one appended row), the two transports' `api.md`.
+
+
+**D19 outcome (2026-09-05, #81, PR #96).** `expect`/`keep-alive`/`upgrade` added to BOTH forbidden sets — a row
+proved Node's undici-backed `fetch` rejects them with a *retryable* `TransportFailureError`, and Bun 1.3.14
+diverges a third way (forwards two, hangs on `upgrade`). undici gains a per-header RFC 9110 token guard and a
+`connection`-value guard, all degrading to logged drops. **The undici file branch was deleted outright** rather
+than rerouted, so `prepareBody` is the same two decisions on both transports; framing for a file ≤ 1,000,000
+bytes changed from chunked to `content-length`, matching fetch. SOCKS refused at the factory with a `TypeError`;
+`ProxyType` keeps the union (narrowing it would breach `CFG-22`'s MUST for the model); one row. The streamed leg
+of the truncate row lives in `tests/node-conformance/transport.test.mjs` because Bun's `Readable.fromWeb` leaks
+the abort reason as an unhandled rejection. *Constrains #82:* new registrars `registerNativeRejectionRows`,
+`registerFileBodyRows`, `registerProxyRefusalRows`, fixture `fileBodyFixture`, `TransportCapabilities.unsupportedProxy`;
+the `fromWeb` leak sits in the producer-race code D20 edits; `ftp://` still reaches `dispatcher.request` unchecked.
 
 ### D20 — #82 (after #81 merges): one classification table; `body === null` when there is none; abort the fork
 - **Permanent errors on fetch:** the fetch transport classifies a `TypeError` from an unsupported scheme, an
@@ -612,3 +629,4 @@ only, if a row proves it), `packages/transport-conformance/src/**`, `docs/sdk-do
 | #78 / PR #93 | patch changeset for `@dexpace/core`: non-finite `delayOverride` ignored with a warning (was a `RangeError` after one send); `computeDelay` returns `0` not `NaN` for `initialDelayMs: 0` at overflow |
 | #79 / PR #94 | patch changesets for `@dexpace/core` (paginator closes on malformed `PageInfo`; SSE release failure reported once; splice surrogate typed) and `@dexpace/codec-json` (abortable reads/writes; `tristate` rejects present null) |
 | #80 / PR #95 | minor changeset for `@dexpace/core`: `PipelineOptions` (new public shape), `LoggingStepSettings.configKey`, context restored after `send()`; `.changeset/2026-09-04-per-operation-span.md`'s `createRuntime(...)` example is stale |
+| #81 / PR #96 | patch changesets for `@dexpace/transport-undici` (header degrade, file body via `writeTo`, SOCKS refusal, file framing change) and `@dexpace/transport-fetch` (three names added to the drop set); `ProxyType` narrowing declined — keep the union |
