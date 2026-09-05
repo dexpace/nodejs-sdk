@@ -8,6 +8,7 @@ import {
   type Serde,
   type Serializer,
 } from '@dexpace/core';
+import {abortRace} from './abort-race.js';
 import {
   degradeTopLevelTristate,
   tristateReplacer,
@@ -128,14 +129,22 @@ function makeSerializer(wiring: TristateWiring): Serializer {
       // Encoded before the lock is taken: a failed encode then leaves the caller's sink untouched
       // and still usable, rather than locked-and-released around a write that never happened.
       const bytes = encodeToBytes(value, wiring);
-      // Checked after the encode and before the lock, so an aborted call leaves the sink neither
-      // locked nor closed (SERDE-3). One write follows, so there is no loop to check inside.
-      options?.signal?.throwIfAborted();
+      // Checked after the encode and before the lock, so an aborted call never takes the lock at
+      // all (SERDE-3).
+      const signal = options?.signal;
+      signal?.throwIfAborted();
       const writer = sink.getWriter();
+      // After `getWriter()`, so a contended sink leaves no listener behind: the `TypeError` is
+      // thrown before there is one to remove.
+      const race = abortRace(signal);
       try {
-        await writer.write(bytes);
+        // Raced, not merely checked before: one write is still one operation that can park
+        // indefinitely against a slow sink, and the abort has to reach it (audit #67 / #79).
+        await race.race(writer.write(bytes));
       } finally {
-        // Release the lock, never close: the sink is caller-owned (SERDE-3).
+        race.release();
+        // Release the lock, never close: the sink is caller-owned (SERDE-3). A write still
+        // outstanding at this point stays outstanding — aborting it is the owner's call, not ours.
         writer.releaseLock();
       }
     },
@@ -209,24 +218,31 @@ function makeDeserializer(): Deserializer {
       // A streaming TextDecoder keeps multi-byte characters intact across chunk boundaries; decoding
       // each chunk independently would corrupt any character split across two reads.
       // Checked before the lock so an aborted call leaves the source neither locked nor cancelled
-      // (SERDE-3), and again after every read so a long drain stops promptly.
+      // (SERDE-3), and raced against every read so a stalled one stops too.
       const signal = options?.signal;
       signal?.throwIfAborted();
       const decoder = new TextDecoder('utf-8');
       const reader = source.getReader();
+      // After `getReader()`, so a contended source leaves no listener behind: the `TypeError` is
+      // thrown before there is one to remove.
+      const race = abortRace(signal);
       let text = '';
       try {
         for (;;) {
-          // Serial by necessity: each read depends on the previous one advancing the cursor.
-          const {done, value} = await reader.read();
+          // Serial by necessity: each read depends on the previous one advancing the cursor. Raced
+          // rather than checked between reads: a source that stalls mid-body parks the loop inside
+          // `read()`, where a between-chunks check never runs again (audit #67 / #79).
+          const {done, value} = await race.race(reader.read());
           if (done) break;
-          signal?.throwIfAborted();
           text += decoder.decode(value, {stream: true});
         }
         text += decoder.decode();
       } finally {
+        race.release();
         // Release the lock, never cancel: the source is caller-owned (SERDE-3). A stream failure
         // surfaces from `read()` and propagates unwrapped (SERDE-12) — it is not caught here.
+        // Releasing with a read outstanding is legal on every supported runtime and unlocks the
+        // stream; the outstanding read rejects, and `Promise.race` above still owns that rejection.
         reader.releaseLock();
       }
       return decodeText(text, target);
