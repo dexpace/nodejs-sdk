@@ -368,8 +368,19 @@ interface HeaderValueParams {
 
 /**
  * AUTH-22: quotes `username`/`realm`/`nonce`/`uri`/`response`/`cnonce`/`opaque`; leaves
- * `qop`/`nc`/`algorithm` unquoted, with the full algorithm spelling; emits `cnonce`/`nc`/`qop` only
- * when `qop` was actually negotiated.
+ * `qop`/`nc`/`algorithm` unquoted, with the full algorithm spelling; emits `nc`/`qop` only when `qop`
+ * was actually negotiated.
+ *
+ * **`cnonce` is emitted for every `-sess` algorithm, negotiated `qop` or not** — a deliberate
+ * departure from AUTH-22's letter, recorded in `docs/deviations.md`. A `-sess` HA1 is
+ * `H(H(user:realm:pass):nonce:cnonce)` (RFC 7616 §3.4.2), so a server handed a `-sess` response with
+ * no `cnonce` cannot recompute HA1 and cannot verify anything: the request is unanswerable by
+ * construction, and AUTH-30 bounds the replay to one 401, so it simply fails. RFC 7616 §3.4 states it
+ * outright — "cnonce: This parameter MUST be used by all implementations". AUTH-22's wording is RFC
+ * 2617's RFC 2069-compatibility form, which predates `-sess` entirely.
+ *
+ * `nc` stays conditional and stays out: RFC 2069's response input is `H(HA1:nonce:HA2)`, with no nonce
+ * count in it, so emitting one would advertise a count the response was not computed over.
  */
 function buildHeaderValue(params: HeaderValueParams): string {
   const {username, info, uri, response, cnonce, nc} = params;
@@ -385,6 +396,8 @@ function buildHeaderValue(params: HeaderValueParams): string {
   if (info.opaque !== undefined) parts.push(`opaque=${quote(info.opaque)}`);
   if (info.hasQopAuth)
     parts.push('qop=auth', `nc=${nc}`, `cnonce=${quote(cnonce)}`);
+  else if (info.algorithm.endsWith('-sess'))
+    parts.push(`cnonce=${quote(cnonce)}`);
   return `Digest ${parts.join(', ')}`;
 }
 
