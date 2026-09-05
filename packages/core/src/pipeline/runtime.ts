@@ -202,6 +202,12 @@ export class Runtime implements Transport {
    * tracer and no span is already active — `OBS-29`'s "one tracer instance per logical operation".
    * It is the parent of whatever per-attempt spans the LOGGING pillar step opens inside the RETRY
    * and REDIRECT pipelines, which `PIPE-2` fixes there and which are therefore per *transmission*.
+   * Supply the tracer through `PipelineOptions.instrumentation`.
+   *
+   * @remarks The caller's async context is restored when this settles, resolved or rejected: the
+   * active span and the diagnostic fields (`trace.id`, `span.id`) are what they were before the
+   * call, so an application log emitted after `await send()` carries nothing from it. Both stores
+   * are scoped with `AsyncLocalStorage.run`, which also unwinds a scope a step left open.
    */
   async send(
     request: Request,
