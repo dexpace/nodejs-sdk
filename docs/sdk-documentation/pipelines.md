@@ -177,13 +177,21 @@ Retry and redirect are worth a few notes each, because both surprise people:
       await runtime.send(request);
     } catch (error) {
       if (error instanceof TransportFailureError) {
-        const spent = retryAttempts(error).length + 1;
-        console.error(`gave up after ${String(spent)} sends`, error.message);
+        for (const prior of retryAttempts(error)) {
+          console.error('an earlier attempt failed:', prior);
+        }
       }
       throw error;
     }
   }
   ```
+
+  One entry per attempt that failed *before* the one you caught — which is not an attempt count, so
+  resist writing `length + 1`. The surfaced error is an attempt's own only when it came from one, and
+  sometimes it did not: a cancellation or timeout the engine observes between attempts is synthesized
+  at that gate, and so is a failure from stamping the attempt header, which runs before the request
+  goes out. On those paths the trail already covers every send. Narrowing the catch does not help —
+  a timeout signal is mapped to `TransportFailureError`, the same class a real send failure raises.
 
   The trail is a side table keyed by the error, not a property on it, so nothing is added to an
   object you may not own; an error that never went through a retry loop answers with an empty list.

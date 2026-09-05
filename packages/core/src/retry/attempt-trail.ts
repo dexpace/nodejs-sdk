@@ -67,8 +67,18 @@ export function recordAttempts(
  * The retry pillar surfaces the **final** attempt's own error, unwrapped: `instanceof` against it
  * answers the same for one attempt as for ten, and a cancellation that ended a backoff wait arrives
  * as `CancellationError` rather than as something carrying one. The earlier attempts are not
- * discarded — they are recorded here, so `retryAttempts(caught).length + 1` is how many sends the
- * pillar made. A worked example is in `docs/sdk-documentation/pipelines.md`.
+ * discarded — they are recorded here, one entry per attempt that failed BEFORE the error you caught.
+ * A worked example is in `docs/sdk-documentation/pipelines.md`.
+ *
+ * **That is not an attempt count, and `length + 1` is not one either.** The arithmetic holds only
+ * when the surfaced error is itself an attempt's, and on three reachable paths it is not: a
+ * cancellation or timeout the engine observes at its `RETRY-32` gate is synthesized there rather
+ * than raised by a send; a failure from stamping the attempt header is raised before the request
+ * goes out; and a `Clock.sleep` that rejects for something other than an abort fails after the
+ * attempt it followed is already in the trail. On each of those the trail already accounts for every
+ * send, so adding one overstates it. Narrowing the catch does not rescue the sum — `abortToSdkError`
+ * yields `TransportFailureError` for a timeout signal, so even that class can reach you without a
+ * send behind it.
  *
  * Oldest first, and the error you passed in is never a member of its own trail (`RETRY-34`'s
  * skip-self clause, which matters because a transport may reuse one error instance across

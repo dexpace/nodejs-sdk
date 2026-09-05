@@ -117,9 +117,10 @@ function configFrom(
  * catch does not depend on how many attempts ran: a transport failure surfaces as
  * `TransportFailureError` whether `maxAttempts` was 1 or 3, and an abort that ended a backoff wait
  * surfaces as `CancellationError` (`XCUT-1`). The earlier attempts' errors are not lost -- read them
- * with `retryAttempts(caught)`, oldest first (`RETRY-34`). A response the loop discards is always
- * closed first; the response that ENDS the loop is returned live and unread, and closing it is
- * yours.
+ * with `retryAttempts(caught)`, oldest first: one entry per attempt that failed BEFORE the error you
+ * caught, which is not the same as an attempt count (`RETRY-34`, and see `retryAttempts` for why the
+ * difference bites). A response the loop discards is always closed first; the response that ENDS the
+ * loop is returned live and unread, and closing it is yours.
  *
  * @param options - settings overrides and the injected clock, randomness, and delay override.
  * @returns the descriptor to install in a pipeline's RETRY slot.

@@ -700,13 +700,24 @@ describe('cancellation while an attempt is in flight (RETRY-32)', () => {
 });
 
 describe('a cancelled backoff surfaces the cancellation TYPE (XCUT-1)', () => {
-  test('the surfaced error is CancellationError, with the prior attempt beside it', async () => {
-    const controller = new AbortController();
-    const first = new IoError('reset');
-    const dispatch: RetryDispatch = () => {
+  /** Aborts from inside attempt 1, so the loop reaches its RETRY-32 check with a one-entry trail. */
+  function abortAfterOneAttempt(
+    controller: AbortController,
+    first: unknown,
+  ): RetryDispatch & {sends: number} {
+    const dispatch = (): Promise<Outcome<Response>> => {
+      dispatch.sends += 1;
       controller.abort();
       return Promise.resolve(failure(first));
     };
+    dispatch.sends = 0;
+    return dispatch;
+  }
+
+  test('the surfaced error is CancellationError, with the prior attempt beside it', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
 
     const outcome = await runWithRetry(GET, dispatch, {
       ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
@@ -720,6 +731,55 @@ describe('a cancelled backoff surfaces the cancellation TYPE (XCUT-1)', () => {
     // has a non-empty trail -- so `instanceof CancellationError` was false for every one of them.
     expect(outcome.error).toBeInstanceOf(CancellationError);
     expect(retryAttempts(outcome.error)).toEqual([first]);
+  });
+
+  test('the trail already covers every send, so length is NOT one less than the count', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    // The surfaced error is SYNTHESIZED at the RETRY-32 gate, not raised by a send, so it is not an
+    // attempt's error and the trail already accounts for all of them. `length + 1` would say two
+    // sends where one happened -- which is why no TSDoc here offers that arithmetic.
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
+  });
+});
+
+describe('the RETRY-32 gate can synthesize a TransportFailureError too', () => {
+  test('a TIMEOUT signal takes the same synthesized path, as TransportFailureError', async () => {
+    // `abortToSdkError` branches on `isTimeoutSignal`, so the engine's own RETRY-32 gate can
+    // synthesize a `TransportFailureError` too. Narrowing a catch to that class therefore does NOT
+    // guarantee the caught error came from a send.
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch: RetryDispatch & {sends: number} = Object.assign(
+      (): Promise<Outcome<Response>> => {
+        dispatch.sends += 1;
+        controller.abort(new DOMException('timed out', 'TimeoutError'));
+        return Promise.resolve(failure(first));
+      },
+      {sends: 0},
+    );
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(outcome.error).toBeInstanceOf(TransportFailureError);
+    expect(outcome.error).not.toBeInstanceOf(CancellationError);
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
   });
 });
 
