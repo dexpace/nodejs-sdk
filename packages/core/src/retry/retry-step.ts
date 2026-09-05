@@ -44,6 +44,11 @@ export interface RetryStepOptions {
    * RETRY-39's caller override: returns the delay in milliseconds to use for `attempt`, or
    * `undefined` to fall through to the configured schedule for that attempt.
    *
+   * A throw, or a non-finite result, is ignored: the configured schedule is used for that attempt
+   * and `http.retry.delayOverrideFailed` is logged at warning level (RETRY-40). Neither aborts the
+   * retry loop. A finite negative is honored as a delay and continues inline without a timer
+   * (RETRY-31).
+   *
    * @defaultValue absent, so every attempt uses the configured schedule
    */
   readonly delayOverride?:
