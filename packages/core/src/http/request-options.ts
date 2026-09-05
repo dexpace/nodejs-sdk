@@ -4,6 +4,13 @@ import type {AuthDescriptor} from '../auth/descriptor.js';
 import type {Builder} from './builder.js';
 import {RequestOptionsValidationError} from './errors.js';
 
+/**
+ * The largest timeout `AbortSignal.timeout()` accepts, and therefore the largest one this model
+ * will hold: the platform rejects anything above it with `RangeError: The value of "delay" is out
+ * of range. It must be >= 0 && <= 4294967295.` (HTTP-35, audit #67 / #76).
+ */
+const MAX_TIMEOUT_MS = 2 ** 32 - 1;
+
 // eslint-disable-next-line max-params -- private, builder-internal plumbing; one parameter per HTTP-34 field
 let createRequestOptions: (
   timeoutMs: number | undefined,
@@ -92,7 +99,11 @@ export class RequestOptions {
       .operationAuth(this.#operationAuth);
   }
 
-  /** The per-call timeout in milliseconds, or `undefined` to use the configured default. */
+  /**
+   * The per-call timeout in milliseconds, or `undefined` to use the configured default. Always an
+   * integer in `1 .. 2**32 - 1` when defined — {@link RequestOptionsBuilder.timeoutMs} admits
+   * nothing else, so a transport can pass it to `AbortSignal.timeout()` unchecked.
+   */
   get timeoutMs(): number | undefined {
     return this.#timeoutMs;
   }
@@ -172,20 +183,31 @@ export class RequestOptionsBuilder implements Builder<RequestOptions> {
    * The range check is the FULL range, not merely its lower bound. `Infinity` and `NaN` are as out
    * of range as `-1`: a non-finite deadline is one no clock can compare against, so it degrades to
    * "no deadline" silently rather than failing at the call site that supplied it, which is exactly
-   * what HTTP-35 exists to prevent. Not required to be integral, unlike `maxRetries` -- a timeout is
-   * a duration and a fractional millisecond is meaningful.
+   * what HTTP-35 exists to prevent.
+   *
+   * The range is `AbortSignal.timeout()`'s — an integer in `1 .. 2**32 - 1` — because that is the
+   * only range a transport can honor. `composeSignal` is the one consumer of this value and it
+   * hands it straight to `AbortSignal.timeout()`, which throws a `RangeError` on a fractional
+   * millisecond and on anything above `4294967295`. A timeout this setter accepted and a transport
+   * then refused is the failure HTTP-35 exists to move to the call site, so integrality is checked
+   * here and not treated as an implementation detail of one transport (audit #67 / #76 flipped the
+   * earlier reading, which accepted `1.5` on the argument that a duration may be fractional; no
+   * consumer of this field can express one).
    *
    * @param value - the timeout in milliseconds, or `undefined` for no override. Zero is rejected
    * rather than reinterpreted: it means "no timeout" in one transport and is an error in another
    * (HTTP-35).
    * @returns this builder, for chaining.
-   * @throws {@link RequestOptionsValidationError} when a defined value is zero, negative, or not
-   * finite.
+   * @throws {@link RequestOptionsValidationError} when a defined value is zero, negative, not
+   * finite, not an integer, or greater than `2**32 - 1`.
    */
   timeoutMs(value: number | undefined): this {
-    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+    if (
+      value !== undefined &&
+      !(Number.isInteger(value) && value > 0 && value <= MAX_TIMEOUT_MS)
+    ) {
       throw new RequestOptionsValidationError(
-        `timeout must be a finite positive duration, got ${String(value)}`,
+        `timeout must be an integer number of milliseconds in 1..${String(MAX_TIMEOUT_MS)}, got ${String(value)}`,
       );
     }
     this.#timeoutMs = value;
