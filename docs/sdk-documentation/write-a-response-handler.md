@@ -82,6 +82,18 @@ release failure. **`instanceof SuppressedError` is not a valid test**: the class
 project's declared Node floor and a structurally identical stand-in is built there instead. Test the
 shape, or read `.error` unconditionally.
 
+**A failed release is the only thing in this SDK that builds one.** Every site that constructs the
+pairing — the response chain, the redirect and auth and retry pillars, the serde handlers, the SSE
+stream, the paginator — is doing this one job: a `close()` that threw while an error was already in
+flight. It is a genuine two-value shape, which is why it fits.
+
+The retry pillar used to build one for a *second* reason, folding N prior attempt errors into a
+nested chain of pairs so that what you caught after three attempts was a wrapper rather than the
+failure. It no longer does: it surfaces the last attempt's error unwrapped and records the earlier
+ones beside it, read back with `retryAttempts()` (see [`pipelines.md`](./pipelines.md#the-four-shipped-pillars)).
+So if you catch a `'SuppressedError'` from this SDK, `.suppressed` is a teardown failure, never an
+earlier attempt.
+
 **3. Only payload failures are re-typed.** `SERDE-12`: a malformed body or a shape mismatch becomes a
 `DeserializationError` with the original chained; a genuine stream failure propagates untouched,
 because re-wrapping it would tell a caller their payload was malformed when their socket dropped.
