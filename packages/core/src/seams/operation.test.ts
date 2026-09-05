@@ -158,6 +158,63 @@ describe('SEAM-27: dot-segment path-param values are rejected, not silently norm
   });
 });
 
+describe('SEAM-27: a placeholder is satisfied only by an OWN property of pathParams', () => {
+  // `pathParams?.[name]` reached the whole prototype chain, so `{constructor}` against `{}` resolved to
+  // `Object`'s own constructor, stringified, and shipped
+  // `/users/function%20Object%28%29%20%7B%20%5Bnative%20code%5D%20%7D` instead of failing assembly. Every
+  // placeholder MUST have a *supplied* value (SEAM-27); a name the caller never supplied is a missing value
+  // whatever `Object.prototype` happens to carry. Measured on the pre-fix tree, audit #67 / #76.
+  test.each([
+    'constructor',
+    'toString',
+    'hasOwnProperty',
+    'valueOf',
+    '__proto__',
+  ])(
+    'a {%s} placeholder against empty pathParams throws OperationAssemblyError',
+    name => {
+      expect(() =>
+        buildRequest('https://api.example.com', {
+          method: 'GET',
+          pathTemplate: `/users/{${name}}`,
+          pathParams: {},
+        }),
+      ).toThrow(OperationAssemblyError);
+    },
+  );
+
+  test('the error names the placeholder, not the inherited member it resolved to', () => {
+    expect(() =>
+      buildRequest('https://api.example.com', {
+        method: 'GET',
+        pathTemplate: '/users/{constructor}',
+        pathParams: {},
+      }),
+    ).toThrow(/missing value for path parameter "constructor"/);
+  });
+
+  test('an own property named like a prototype member is still honored', () => {
+    const request = buildRequest('https://api.example.com', {
+      method: 'GET',
+      pathTemplate: '/users/{constructor}',
+      pathParams: {constructor: 'me'},
+    });
+    expect(request.url.pathname).toBe('/users/me');
+  });
+
+  test('a null-prototype pathParams object still resolves its own keys', () => {
+    const pathParams = Object.assign(Object.create(null) as object, {
+      id: 'x',
+    }) as Record<string, string>;
+    const request = buildRequest('https://api.example.com', {
+      method: 'GET',
+      pathTemplate: '/users/{id}',
+      pathParams,
+    });
+    expect(request.url.pathname).toBe('/users/x');
+  });
+});
+
 describe('a path-param value containing / is encoded, not split (property)', () => {
   test('holds for arbitrary generated path-param values', () => {
     fc.assert(
