@@ -14,7 +14,7 @@
 // unsupported-type refusal is a row here. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
 // asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
-// undici-transport.test.ts:503).
+// undici-transport.test.ts:614).
 import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -660,6 +660,10 @@ const TRUNCATED_FILE_BYTES = 64;
 /** How far a truncate-after-stat cuts the file back; small enough that no read can be a full one. */
 const TRUNCATED_TO_BYTES = 10;
 
+/** The intact file-body fixture's size, and the byte range the ranged row asks for inside it. */
+const INTACT_FILE_BYTES = 64;
+const INTACT_RANGE = {start: 10, count: 20} as const;
+
 /** Distinguishable bytes, so a misaligned send fails on content and not merely on length. */
 function fileFixtureBytes(size: number): Uint8Array {
   const bytes = new Uint8Array(size);
@@ -705,18 +709,22 @@ function messageChain(error: unknown): string {
 function registerFileBodyRows(ctx: SuiteContext): void {
   describe('TRANSPORT-28, BODY-13: a file body is dispatched through its own writeTo', () => {
     test('an intact ranged file body puts exactly its declared bytes on the wire', async () => {
-      await withFixtureFile(64, async path => {
+      await withFixtureFile(INTACT_FILE_BYTES, async path => {
         const writes = {count: 0};
         await withTransport(ctx.makeTransport, async transport => {
           const response = await transport.send(
             Request.newBuilder()
               .method('POST')
               .url(ctx.url('/echo-body'))
-              .body(fileBodyFixture(path, {start: 10, count: 20, writes}))
+              .body(fileBodyFixture(path, {...INTACT_RANGE, writes}))
               .build(),
           );
+          // TRANSPORT-28's "assert exactly that byte range reaches the wire".
           expect([...(await response.bytes())]).toEqual([
-            ...fileFixtureBytes(64).slice(10, 30),
+            ...fileFixtureBytes(INTACT_FILE_BYTES).slice(
+              INTACT_RANGE.start,
+              INTACT_RANGE.start + INTACT_RANGE.count,
+            ),
           ]);
         });
         // TRANSPORT-17's counterpart for a replayable body: a transport that reads `path` itself
