@@ -32,6 +32,37 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** How long a raced abort is given to settle a parked read or write before the case fails. */
+const SETTLE_MS = 250;
+
+/**
+ * Fails with a named error instead of letting the runner time out, so a regression reads as "the
+ * abort never settled the call" rather than as a five-second stall with no diagnosis.
+ *
+ * `Promise.race` keeps a handler on `promise`, so a later rejection of the losing side is never an
+ * unhandled one.
+ */
+async function settleWithin<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`did not settle within ${String(ms)}ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One macrotask, which is long enough for a drain loop to reach its second, parked read. */
+function untilParked(): Promise<void> {
+  return new Promise<void>(resolve => {
+    setTimeout(resolve, 5);
+  });
+}
+
 test('declares application/json as its wire media type', () => {
   expect(jsonSerde().mediaType).toBe('application/json');
 });
@@ -671,5 +702,142 @@ describe('the options argument stays optional on both stream methods', () => {
     expect(
       await serde.deserializer.deserializeFrom(source, {schema: passthrough}),
     ).toEqual({a: 1});
+  });
+});
+
+// Module-scope, not describe-local: the pending-abort suite is split across sibling describes to
+// stay inside `max-lines-per-function`, and both halves need these.
+const PENDING_ABORT_SERDE = jsonSerde();
+const passthroughSchema: Schema<unknown> = {parse: (i: unknown) => i};
+
+/**
+ * Hands over one chunk and then never produces another, so the drain parks *inside*
+ * `reader.read()` — the state a between-chunks signal check structurally cannot observe.
+ */
+function stallingSource(
+  first: string,
+  onCancel?: () => void,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(first));
+    },
+    pull() {
+      return new Promise<never>(() => undefined);
+    },
+    cancel() {
+      onCancel?.();
+    },
+  });
+}
+
+describe('an abort that lands while a READ is pending (audit #67 / #79)', () => {
+  test('deserializeFrom settles with the caller reason and unlocks the source (SERDE-3)', async () => {
+    let cancelled = false;
+    const source = stallingSource('{"a":', () => {
+      cancelled = true;
+    });
+    const controller = new AbortController();
+    const reason = new Error('the caller gave up mid-drain');
+
+    const settled = rejection(
+      PENDING_ABORT_SERDE.deserializer.deserializeFrom(
+        source,
+        {schema: passthroughSchema},
+        {signal: controller.signal},
+      ),
+    );
+    await untilParked();
+    controller.abort(reason);
+
+    expect(await settleWithin(settled, SETTLE_MS)).toBe(reason);
+    // The whole point of the fix: the caller gets its stream back, still usable.
+    expect(source.locked).toBe(false);
+    expect(cancelled).toBe(false);
+  });
+
+  test('an abort with no reason surfaces the platform AbortError the seam documents', async () => {
+    const source = stallingSource('{"a":');
+    const controller = new AbortController();
+
+    const settled = rejection(
+      PENDING_ABORT_SERDE.deserializer.deserializeFrom(
+        source,
+        {schema: passthroughSchema},
+        {signal: controller.signal},
+      ),
+    );
+    await untilParked();
+    controller.abort();
+
+    expect(await settleWithin(settled, SETTLE_MS)).toMatchObject({
+      name: 'AbortError',
+    });
+    expect(source.locked).toBe(false);
+  });
+});
+
+describe('an abort that lands while a WRITE is pending (audit #67 / #79)', () => {
+  test('serializeTo settles with the caller reason and unlocks the sink (SERDE-3)', async () => {
+    let closed = false;
+    let aborted = false;
+    const sink = new WritableStream<Uint8Array>({
+      write() {
+        return new Promise<never>(() => undefined);
+      },
+      close() {
+        closed = true;
+      },
+      abort() {
+        aborted = true;
+      },
+    });
+    const controller = new AbortController();
+    const reason = new Error('the caller gave up mid-write');
+
+    const settled = rejection(
+      PENDING_ABORT_SERDE.serializer.serializeTo({a: 1}, sink, {
+        signal: controller.signal,
+      }),
+    );
+    await untilParked();
+    controller.abort(reason);
+
+    expect(await settleWithin(settled, SETTLE_MS)).toBe(reason);
+    expect(sink.locked).toBe(false);
+    expect(closed).toBe(false);
+    expect(aborted).toBe(false);
+  });
+
+  test('a signal that never fires leaves both directions unchanged', async () => {
+    const controller = new AbortController();
+    const source = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new TextEncoder().encode('{"a":'));
+        streamController.enqueue(new TextEncoder().encode('1}'));
+        streamController.close();
+      },
+    });
+    const written: string[] = [];
+    const sink = new WritableStream<Uint8Array>({
+      write(chunk) {
+        written.push(new TextDecoder().decode(chunk));
+      },
+    });
+
+    expect(
+      await PENDING_ABORT_SERDE.deserializer.deserializeFrom(
+        source,
+        {schema: passthroughSchema},
+        {signal: controller.signal},
+      ),
+    ).toEqual({a: 1});
+    await PENDING_ABORT_SERDE.serializer.serializeTo({a: 1}, sink, {
+      signal: controller.signal,
+    });
+
+    expect(written.join('')).toBe('{"a":1}');
+    expect(source.locked).toBe(false);
+    expect(sink.locked).toBe(false);
   });
 });

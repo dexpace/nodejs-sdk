@@ -1,9 +1,40 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pagination/query-splice.ts
+import {UrlConstructionError} from '../http/errors.js';
 import {
   decodeQueryComponent,
   encodeQueryComponent,
 } from '../http/query-params.js';
+import {hasLoneSurrogate} from '../http/rfc3986.js';
+
+/**
+ * `encodeQueryComponent` is `encodeURIComponent`, which throws a bare `URIError: URI malformed` on a string
+ * carrying an unpaired surrogate — such a string has no UTF-8 form, so RFC 3986 percent-encoding is undefined
+ * for it (PAGE-22, HTTP-29).
+ *
+ * Reachable here without any caller mistake, which is what separates this call site from the others #76 closed:
+ * a cursor is SERVER-supplied, and `{"next":"\ud800"}` is well-formed JSON that `JSON.parse` hands back
+ * verbatim. The failure was a bare `URIError` from inside a strategy's `parse`, outside the `DexpaceError` tree
+ * and naming neither the parameter nor the page it came from (audit #67 / #79).
+ *
+ * The same class `QueryParamsBuilder.add` throws for the same input, since it is the same defect in the same
+ * encoder; `hasLoneSurrogate` is the single-sourced predicate, so the two cannot drift. The value itself is
+ * never echoed — a cursor is opaque server state and can carry a session token.
+ */
+function requireEncodable(
+  what: 'name' | 'value',
+  parameterName: string,
+  text: string,
+): void {
+  if (!hasLoneSurrogate(text)) return;
+  const subject =
+    what === 'name'
+      ? 'a query parameter name'
+      : `the value of query parameter "${parameterName}"`;
+  throw new UrlConstructionError(
+    `${subject} contains an unpaired surrogate and cannot be percent-encoded`,
+  );
+}
 
 /**
  * Rewrite one query parameter, splicing the raw query string rather than re-rendering it (PAGE-21–PAGE-24).
@@ -19,6 +50,9 @@ import {
  * Passing `undefined` removes the parameter. Setting replaces the first occurrence in place and drops later
  * duplicates — the single-value convention paging parameters follow. Everything else is copied byte-for-byte.
  *
+ * @throws UrlConstructionError when `name` or `value` carries an unpaired surrogate, and so has no
+ * percent-encoded form.
+ *
  * @internal
  */
 export function spliceQueryParam(
@@ -26,6 +60,8 @@ export function spliceQueryParam(
   name: string,
   value: string | undefined,
 ): URL {
+  requireEncodable('name', name, name);
+  if (value !== undefined) requireEncodable('value', name, value);
   const encodedName = encodeQueryComponent(name);
   const segments = splitQuery(url.search);
 
@@ -60,9 +96,12 @@ export function spliceQueryParam(
  * A literal `+` reads back as `+`, `%20` as a space, a value-less flag as the empty string, and an absent name
  * as `undefined`. First match wins.
  *
+ * @throws UrlConstructionError when `name` carries an unpaired surrogate, and so has no percent-encoded form.
+ *
  * @internal
  */
 export function readQueryParam(url: URL, name: string): string | undefined {
+  requireEncodable('name', name, name);
   const encodedName = encodeQueryComponent(name);
   for (const segment of splitQuery(url.search)) {
     if (nameOf(segment) !== encodedName) continue;

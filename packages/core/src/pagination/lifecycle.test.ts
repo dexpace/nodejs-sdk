@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pagination/lifecycle.test.ts
-// Exercises: PAGE-11 (close BEFORE yielding items — the assertion appendix B does not make), PAGE-12
-// (close-on-abandon), PAGE-13 (parse failure closes inline, close error suppressed), PAGE-14 (single-use page
-// view), PAGE-15 (close errors surface), PAGE-27 (exactly once on every path), PAGE-32 (consumer throw keeps
-// consumer error primary, discarding return-phase close error).
+// Exercises: PAGE-4 (a malformed parse result closes the response and names the invariant), PAGE-11 (close
+// BEFORE yielding items — the assertion appendix B does not make), PAGE-12 (close-on-abandon), PAGE-13 (parse
+// failure closes inline, close error suppressed), PAGE-14 (single-use page view), PAGE-15 (close errors
+// surface), PAGE-27 (exactly once on every path), PAGE-32 (consumer throw keeps consumer error primary,
+// discarding return-phase close error).
 import {expect, test} from 'bun:test';
 import {FakeTransport, countingResponse} from '../testing/fake-transport.js';
 import {IoError} from '../io/errors.js';
@@ -451,3 +452,78 @@ test.each([
     }
   },
 );
+
+// A strategy is caller code, and `parse`'s declared return type does not survive the seam: an
+// `any`-typed JSON decode, a forgotten `return`, or a server field the caller trusted all land here
+// as a shape the engine's own types say cannot exist (PAGE-4). The casts below ARE the test — they
+// reproduce the four values that reach `#walk` in practice.
+function malformedStrategy(result: unknown): PaginationStrategy<string> {
+  return {parse: () => Promise.resolve(result as PageInfo<string>)};
+}
+
+test.each([
+  ['undefined', undefined, /never null or undefined/],
+  ['null', null, /never null or undefined/],
+  ['{items: null}', {items: null, nextRequest: undefined}, /PageInfo\.items/],
+  ['{items: undefined}', {nextRequest: undefined}, /PageInfo\.items/],
+])(
+  'a strategy that returns %s closes the response exactly once and names the invariant (PAGE-4, PAGE-27)',
+  async (_name, result, message) => {
+    const closed: number[] = [];
+    const transport = transportOf(1, index => closed.push(index));
+    const paginator = new Paginator({
+      transport,
+      initialRequest: initialRequest(),
+      strategy: malformedStrategy(result),
+    });
+
+    let caught: unknown;
+    try {
+      for await (const page of paginator.pages()) {
+        void page;
+      }
+    } catch (e: unknown) {
+      caught = e;
+    }
+
+    // Before the fix `items: null` reached the spread in `Page`'s constructor and surfaced as a
+    // bare `TypeError` from array iteration, which names nothing a caller can act on.
+    expect((caught as Error).message).toMatch(message);
+    expect(closed).toEqual([0]);
+  },
+);
+
+test('a close failure while rejecting a malformed PageInfo is suppressed, not masking (PAGE-4, PAGE-13)', async () => {
+  const closeFailure = new IoError('close failed');
+  const transport = new FakeTransport([
+    countingResponse({
+      status: 200,
+      headers: {},
+      body: '{}',
+      onCancel: () => {
+        throw closeFailure;
+      },
+    }),
+  ]);
+  const paginator = new Paginator({
+    transport,
+    initialRequest: initialRequest(),
+    strategy: malformedStrategy(undefined),
+  });
+
+  let caught: unknown;
+  try {
+    for await (const page of paginator.pages()) {
+      void page;
+    }
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  const suppressed = caught as SuppressedErrorLike;
+  expect(suppressed.name).toBe('SuppressedError');
+  expect((suppressed.error as Error).message).toMatch(
+    /never null or undefined/,
+  );
+  expect(suppressed.suppressed).toBe(closeFailure);
+});

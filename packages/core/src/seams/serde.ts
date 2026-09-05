@@ -94,8 +94,10 @@ export interface Serializer {
    * because the caller owns it (SERDE-3).
    *
    * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
-   * `'AbortError'` when none was given. Checked before the writer lock is taken, so an aborted call
-   * never leaves the caller's sink locked and never closes it (SERDE-3).
+   * `'AbortError'` when none was given. Checked before the writer lock is taken, and then raced
+   * against each pending write, so an aborted call never leaves the caller's sink locked and never
+   * closes it (SERDE-3). A write parked against a slow sink is the case the pre-check cannot cover;
+   * the write itself is left outstanding, because aborting it would be taking ownership.
    *
    * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
    * project-wide test for whether an API owes one. Buffered-bytes APIs — `serialize`,
@@ -210,8 +212,11 @@ export interface Deserializer {
    * not re-typed, because a contended source is a programmer error rather than a decode failure.
    *
    * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
-   * `'AbortError'` when none was given. Checked before the reader lock is taken and between reads,
-   * so an aborted call never leaves the caller's source locked and never cancels it (SERDE-3).
+   * `'AbortError'` when none was given. Checked before the reader lock is taken, and then raced
+   * against each pending read, so an aborted call never leaves the caller's source locked and never
+   * cancels it (SERDE-3). Racing is the load-bearing half: a source that stalls mid-body parks the
+   * drain inside a read that a between-reads check can never reach again, and an implementation
+   * that only checks between reads leaves that call unsettled and that source locked forever.
    *
    * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
    * project-wide test for whether an API owes one. The abort reaches the drain loop; the CPU-bound

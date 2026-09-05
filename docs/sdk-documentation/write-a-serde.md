@@ -61,6 +61,33 @@ import {
 
 const TEXT = new TextEncoder();
 
+/**
+ * Settle when `operation` settles, or as soon as `signal` aborts — whichever comes first, with the
+ * caller's own `reason` surfaced verbatim. `throwIfAborted()` alone cannot interrupt a `read()` or
+ * `write()` that never resolves, which is the case that leaves a caller's stream locked forever.
+ */
+const raceAbort = async <T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> => {
+  if (signal === undefined) return operation;
+  signal.throwIfAborted();
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      reject(signal.reason as unknown);
+    };
+    signal.addEventListener('abort', onAbort, {once: true});
+  });
+  try {
+    // The loser of the race keeps `Promise.race`'s own handler, so a `read()` that rejects after
+    // the lock is released never becomes an unhandled rejection.
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+};
+
 export function csvSerde(): Serde {
   const encode = (value: unknown): string => {
     if (!Array.isArray(value)) {
@@ -106,7 +133,8 @@ export function csvSerde(): Serde {
         options?.signal?.throwIfAborted(); // before the lock: an aborted call leaves the sink free
         const writer = sink.getWriter(); // TypeError if contended — a programmer error, not re-typed
         try {
-          await writer.write(TEXT.encode(encode(value)));
+          // Raced, not just checked: a slow sink parks this write, and the abort must reach it.
+          await raceAbort(writer.write(TEXT.encode(encode(value))), options?.signal);
         } finally {
           writer.releaseLock(); // never close or abort: the caller owns the sink (SERDE-3)
         }
@@ -115,14 +143,15 @@ export function csvSerde(): Serde {
     deserializer: {
       deserialize: (data, target) => decode(new TextDecoder().decode(data), target),
       async deserializeFrom(source, target, options) {
-        options?.signal?.throwIfAborted(); // before the lock, and again after every read below
+        options?.signal?.throwIfAborted(); // before the lock: an aborted call never takes one
         const reader = source.getReader();
         const chunks: Uint8Array[] = [];
         try {
           for (;;) {
-            const {done, value} = await reader.read();
+            // Raced, not checked between chunks: a source that stalls mid-body parks the loop
+            // inside `read()`, where a between-chunks check never runs again.
+            const {done, value} = await raceAbort(reader.read(), options?.signal);
             if (done) break;
-            options?.signal?.throwIfAborted();
             chunks.push(value);
           }
         } finally {
@@ -141,7 +170,7 @@ export function csvSerde(): Serde {
 }
 ```
 
-Six rules, all visible above:
+Seven rules, all visible above:
 
 1. **Raise `SerializationError` / `DeserializationError`, never a raw error** — with one stated
    exception: `serializeInto`'s out-of-range or does-not-fit case is a plain `RangeError` with no
@@ -160,6 +189,17 @@ Six rules, all visible above:
    target, on **every** entry point (`SERDE-13`), never return a `null` that detonates at a later
    field access. The fallback label is the literal `'the target type'`; each codec repeats it,
    because `SEAM-1` leaves core with no exported constant to share.
+7. **An abort must race the pending operation, not sit between two of them** (`SERDE-3`). The seam
+   promises that "an aborted call never leaves the caller's source locked", and a
+   `throwIfAborted()` between chunks cannot keep it: a source that stalls mid-body parks the drain
+   inside `read()`, so the call never settles and the lock is never released. Race each pending
+   `read()`/`write()` against the signal, remove the listener in a `finally`, then release the lock
+   as usual. Releasing a reader with a read still outstanding is legal on every supported runtime
+   and does unlock the stream — the outstanding read rejects, differently per runtime
+   (`AbortError` on Bun 1.3.14, `TypeError: Invalid state: Releasing reader` on Node 20.3 and 26,
+   measured 2026-09-05), which is why the caller must see the signal's `reason` instead.
+   `@dexpace/codec-json` holds **one** listener for the whole drive rather than one per chunk; the
+   example above takes the simpler per-operation form.
 
 `mediaType` is the default `Content-Type` — `serdeBody(value, serde)` reads it, and a caller may
 override per body.

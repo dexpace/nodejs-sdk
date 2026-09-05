@@ -2,6 +2,7 @@
 // packages/codec-json/src/tristate-schema.ts
 import {
   absent,
+  DeserializationError,
   nullValue,
   present,
   type Schema,
@@ -31,6 +32,8 @@ export const MISSING: unique symbol = Symbol('@dexpace/codec-json.missing');
  * @param inner - the schema for the value a Present carries.
  * @returns a schema producing `Tristate<T>`: a missing-key sentinel or `undefined` yields Absent, a wire
  * `null` yields Null, anything else runs through `inner` and yields Present.
+ * @throws DeserializationError when `inner` resolves a present value to `null` or `undefined`. SERDE-14
+ * has three states; a Present carrying nothing would be a fourth, and the wire said the key was there.
  * @public
  */
 export function tristate<T>(inner: Schema<T>): Schema<Tristate<T>> {
@@ -40,9 +43,23 @@ export function tristate<T>(inner: Schema<T>): Schema<Tristate<T>> {
     parse(input: unknown): Tristate<T> {
       if (input === MISSING || input === undefined) return absent();
       if (input === null) return nullValue();
-      // `as NonNullable<T>`: the null and undefined branches returned above, so the value cannot be
-      // nullish — a fact the compiler cannot derive through `inner.parse`'s unconstrained `T`.
-      return present<T>(inner.parse(input) as NonNullable<T>);
+      const value = inner.parse(input);
+      // The type system alone cannot hold SERDE-14's third state to non-null values: `present` takes
+      // `NonNullable<T>`, but `T` here is whatever the caller's schema declares, so a schema that
+      // NORMALIZES to null — a Zod `.transform()`, a "" → null cleanup — type-checks and produces
+      // `{kind: 'present', value: null}`, the fourth state the union exists to forbid. Checked at
+      // run time, and reported as a decode failure rather than an assertion: the input came off the
+      // wire, and the pairing of that input with that schema is what has no Tristate (audit #67 /
+      // #79). `undefined` is rejected with it — `NonNullable<T>` excludes both, and a Present of
+      // `undefined` is Absent wearing the wrong label.
+      if (value === null || value === undefined) {
+        throw new DeserializationError(
+          'a present Tristate cannot carry null or undefined; the inner schema resolved a wire value to one (SERDE-14)',
+        );
+      }
+      // `as NonNullable<T>`: the nullish cases have all returned or thrown above, a fact the
+      // compiler cannot derive through `inner.parse`'s unconstrained `T`.
+      return present<T>(value);
     },
   });
 }
@@ -62,6 +79,8 @@ export function tristate<T>(inner: Schema<T>): Schema<Tristate<T>> {
  * @param shape - a schema per Tristate-decoded field, keyed by wire name.
  * @returns a schema producing an object whose named keys are `Tristate`-wrapped.
  * @throws TypeError when the value being parsed is not a non-null object, or is an array.
+ * @throws DeserializationError when a field's own schema resolves a present wire value to `null` or
+ * `undefined`, which is {@link tristate}'s check applied per field (SERDE-14).
  * @public
  */
 export function tristateObject<S extends Record<string, Schema<unknown>>>(

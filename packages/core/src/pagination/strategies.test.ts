@@ -5,8 +5,10 @@
 // PAGE-18/19/20 (link header: rel=next, RFC 3986 reference resolution, query-only reference preserves the path,
 // unresolvable target ends the stream without throwing, and the spec's own `<not a url>` conformance fixture
 // resolving as a relative reference instead -- recorded as a deliberate reading in docs/deviations.md under
-// "Deviations recorded outside a phase" (2026-09-04, audit #67 / #69)).
+// "Deviations recorded outside a phase" (2026-09-04, audit #67 / #69)), PAGE-22 (a server-supplied cursor with
+// no UTF-8 form fails inside the error tree).
 import {expect, test} from 'bun:test';
+import {DexpaceError, UrlConstructionError} from '../http/errors.js';
 import type {Request} from '../http/request.js';
 import type {Response} from '../http/response.js';
 import {
@@ -293,4 +295,41 @@ test('one strategy instance is safe across two concurrent walks (PAGE-5)', async
   ]);
   expect(first.nextRequest?.url.search).toBe('?page=2');
   expect(second.nextRequest?.url.search).toBe('?page=10');
+});
+
+// ---- a server-supplied component with no UTF-8 form (PAGE-22, audit #67 / #79) ----
+
+test('a cursor carrying an unpaired surrogate fails as UrlConstructionError, not URIError', async () => {
+  // `{"next":"\ud800"}` is well-formed JSON, so `extract` can hand one back without the caller
+  // having done anything wrong. Before the fix this surfaced as a bare `URIError: URI malformed`
+  // from inside `encodeURIComponent`, outside the `DexpaceError` tree.
+  const strategy = cursorStrategy<string>({
+    extract: () => Promise.resolve({items: ['a'], cursor: 'next\uD800'}),
+  });
+
+  let caught: unknown;
+  try {
+    await strategy.parse(response({}), template('https://api.test/items'));
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(UrlConstructionError);
+  expect(caught).toBeInstanceOf(DexpaceError);
+});
+
+test('a page-number parameter name carrying an unpaired surrogate fails the same way', async () => {
+  const strategy = pageNumberStrategy<string>({
+    extract: () => Promise.resolve(['a']),
+    parameterName: 'p\uD800',
+  });
+
+  let caught: unknown;
+  try {
+    await strategy.parse(response({}), template('https://api.test/items'));
+  } catch (e: unknown) {
+    caught = e;
+  }
+
+  expect(caught).toBeInstanceOf(UrlConstructionError);
 });

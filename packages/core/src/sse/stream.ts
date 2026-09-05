@@ -28,6 +28,11 @@ export interface SseStreamOptions {
    * Called when a release fails on a clean automatic terminal path, where SSE-30 requires the failure to be
    * reported out-of-band and swallowed rather than thrown (throwing would discard events already delivered).
    *
+   * Called on **that** path only, which is SSE-30's own scope: "no error in flight". A release that fails
+   * while an error is already propagating is attached to that error as `suppressed` instead, and a release
+   * that fails during an explicit `close()` rejects that call — reporting either one here as well would
+   * deliver a single failure twice.
+   *
    * Defaults to a no-op. Phase 7 wires a real `Logger` in here without reshaping this class — the same
    * "mechanism now, wiring later" split Phase 3b used for its logging tees.
    */
@@ -121,6 +126,9 @@ export class SseStream implements AsyncIterable<SseEvent> {
   }
 
   async *#iterate(): AsyncGenerator<SseEvent> {
+    // Whether the catch below already released and already accounted for a release failure. A local,
+    // not a field: it is read exactly once, by the `finally` of this one generator activation.
+    let releasedWithError = false;
     try {
       for (;;) {
         // A close observed between pulls ends iteration cleanly, without reading from a torn-down resource.
@@ -132,10 +140,17 @@ export class SseStream implements AsyncIterable<SseEvent> {
     } catch (e: unknown) {
       // SSE-29: release BEFORE the error propagates, and attach a release failure as suppressed rather than
       // letting it mask the real cause.
+      releasedWithError = true;
       await this.#releaseWithInFlightError(e);
     } finally {
       // Covers clean end-of-stream and early `break` (the runtime calls `.return()`, which runs this block).
-      await this.#releaseQuietly();
+      //
+      // Skipped after the catch, which has already released. Running it there awaited the same rejected
+      // `#closing` promise and handed the close failure to `onReleaseFailure` as well — so one failure was
+      // reported twice, once out-of-band and once as `suppressed` on the error the consumer catches. SSE-30
+      // scopes the hook to the automatic CLEAN terminal path, where there is nothing to throw to; with an
+      // error in flight there is (audit #67 / #79).
+      if (!releasedWithError) await this.#releaseQuietly();
     }
   }
 
@@ -176,7 +191,10 @@ export class SseStream implements AsyncIterable<SseEvent> {
     }
   }
 
-  /** SSE-29 / SSE-36: an error is already in flight, so it stays primary and the close error is suppressed. */
+  /**
+   * SSE-29 / SSE-36: an error is already in flight, so it stays primary and the close error is suppressed —
+   * and NOT also handed to `onReleaseFailure`, which is the clean-terminal path's channel.
+   */
   async #releaseWithInFlightError(primary: unknown): Promise<never> {
     this.#closed = true;
     const releasePromise = (this.#closing ??= this.#resource.close());
