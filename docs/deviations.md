@@ -141,9 +141,9 @@ non-bridge clause survives and is enforced as an ordinary obligation on `send()`
 
 ## 3. Two retry stacks collapse into one, with the total-timeout budget explicitly opt-in
 
-**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:358`) — with exactly two thin
-callers: the pillar step (`packages/core/src/retry/retry-step.ts:142`) and the dispatch adapter
-(`packages/core/src/retry/retry-dispatch.ts:53`). `totalTimeoutMs` is `readonly totalTimeoutMs?: number |
+**Verified.** One engine — `runWithRetry` (`packages/core/src/retry/engine.ts:367`) — with exactly two thin
+callers: the pillar step (`packages/core/src/retry/retry-step.ts:151`) and the dispatch adapter
+(`packages/core/src/retry/retry-dispatch.ts:55`). `totalTimeoutMs` is `readonly totalTimeoutMs?: number |
 undefined` and undefined by default (`packages/core/src/retry/settings.ts:27`), pinned by a test named for
 `RETRY-28` (`packages/core/src/retry/settings.test.ts:20`).
 

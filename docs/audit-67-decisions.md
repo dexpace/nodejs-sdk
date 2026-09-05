@@ -149,6 +149,19 @@ than its letter. `scripts/verify-consumer-types.mjs`'s fixture changed because n
 **Trap for later subtasks (api-extractor).** `{@link SomeError.message}` does not resolve (`message` is
 inherited from `Error`; `ae-unresolved-link`). Write it as backticked prose.
 
+## Wave 3 — landed 2026-09-05
+PR #87 (#75), PR #89 (#74) and PR #88 (#72) merged into the umbrella at `2ea8b3e`, in that order. One
+conflict (the `deviations.md` table tail: #75's `ASYNC-21` row and #74's `AUTH-22` row), unioned. Merged tree
+preflighted in a throwaway worktree before the merge (byte-identical result): all 20 steps passed. The three
+stale `retry/*` citations in `deviations.md` item 3 that #72 shifted were re-anchored on the umbrella after the
+merge (`engine.ts:367`, `retry-step.ts:151`, `retry-dispatch.ts:55`).
+
+**Trap for every later subtask (git identity).** The #72 agent committed with
+`git -c user.email="oaljarrah@dexpace.org"`, lifted from the harness's "user's email address" context line —
+that address is the Claude login, and GitHub attributes it to a different account. Rewritten with
+`--reset-author` and force-pushed before the merge; nothing on the umbrella carries it. Contract item 10 now
+forbids any author override; the supervisor checks `git log --format=%ae` on a branch before merging it.
+
 ## Decisions taken for wave 3 (M3) — pre-taken 2026-09-05, before dispatch
 
 ### D10 — #72: the final typed error is surfaced as-is; the trail rides in a side table, read through `retryAttempts()`
@@ -226,6 +239,41 @@ afterwards"), and `packages/rx/README.md` says the same beside its `for await` g
 *Rejected:* dropping `release` (above). *Rejected:* a caller-facing `{ownership}` option (two behaviours to
 document for a case with one correct answer). No changeset (D1).
 
+
+**D10 outcome (2026-09-05, #72, PR #88).** `withTrail` became `attachTrail`; the trail lives in a new leaf
+module `packages/core/src/retry/attempt-trail.ts` (`recordAttempts` internal, `retryAttempts` public, one
+shared frozen empty list). An empty trail *deletes* a prior entry for a reused error instance; symbols are
+excluded as weak keys rather than probed. Round 2 removed a public claim that `retryAttempts(e).length + 1` is
+the send count — false on three reachable paths (the RETRY-32 gate, `stampAttempt` throwing, a non-abort
+`Clock.sleep` rejection), and the `pipelines.md` example was unsound even narrowed to
+`TransportFailureError`, because `abortToSdkError` synthesizes one for a timeout signal. Two engine cases pin
+sends against trail length. `tests/node-conformance/retry.test.mjs` was outside the partition and edited anyway:
+its case asserted the wrapper by name and was red the moment D10 landed. *Correction to D10's text:*
+`classify.ts` never walked `.error`, and it ran per attempt before the terminal wrap, so the "hop" the
+constraint on #78 described was not live; the end state it names is right.
+
+**D11 outcome (2026-09-05, #74, PR #89).** `pickChallengeHeader` returns every value (`getAll`), parsed per value
+by a new `challengesOf`; a test with an unterminated quoted string in the first value discriminates parse-each
+from comma-join. `cnonce` emitted for any `-sess` algorithm (row in `deviations.md`). Empty `realm`/`nonce`
+decline (`!== ''`, not trimmed). **Deviation from D11's letter, accepted:** the conformance row cannot assert the
+*parsed* list — `parseChallenges` is `@internal` and D11 forbade a new core export, and a real `authStep` drive is
+blocked by AUTH-28 on the plain-`http` fixture — so `run-suite.ts`'s `challengeList()` splits the joined
+`getAll` at `, Digest ` boundaries, scoped to the fixture's own two challenges and documented as not a parser.
+The transport is answerable only for surfacing both values, which the row proves (red against a one-line
+fixture). Found and fixed on the way: `run-suite.ts`'s header claimed TRANSPORT-10..14 were asserted elsewhere
+while labelling rows with them; `node:http`'s `writeHead` rejects a `readonly string[]` header value, and
+`gts lint` did not catch it — only `typecheck` did. *Constrains #82:* the new fixture route
+`/repeated-challenge` and `registerInboundHeaderRows` exist; the `TRANSPORT-14` label is the closest MUST.
+
+**D12 outcome (2026-09-05, #75, PR #87).** No behaviour change. Ten `sse.test.ts` cases count the release the
+*owned resource* sees (a structural `ReadableStream` double counting `reader.cancel()` and `body.cancel()`
+separately) plus one in `tests/node-conformance/rx-bridge.test.mjs`. Measured counterfactual: deleting both
+`release` arguments turns the two suspended-pull cases and two pre-existing idle-unsubscribe assertions red while
+every exactly-once count stays green — so only the suspended-pull case discriminates the design; the counts pin
+against a future double release, and the row says which is which. The row also closes `SSE-41`'s "documented
+source ownership" clause, which Phase 8b marked done on documentation that named unsubscription only. New
+`packages/rx/README.md` section "Who owns the stream"; `rx.api.md` regenerated byte-identical (prose only).
+
 ### Wave 3 partition
 | Task | Owns | Shared, append-only |
 |---|---|---|
@@ -243,3 +291,6 @@ TSDoc beside #72's new export. Supervisor resolves both, as in waves 1 and 2.
 | #70 / PR #85 | patch changeset for `@dexpace/core`: redirect error messages now carry redacted URLs (and `[malformed url]` for unparseable input); `http.redirect.rejected` gained `url.full` |
 | #71 / PR #86 | minor changeset for `@dexpace/core`: `BasicCredential`/`DigestCredential` become classes (breaking for object-literal callers); patch note for `authStep`'s `@throws PlaintextCredentialError` prose; `docs/first-release.md` untouched though this is its "free before the first bump" class |
 | #69 / PR #84 | patch changeset for `@dexpace/core`: `noopInstrumentationBundle.activeSpan` changed from `undefined` to `NOOP_SPAN` (documented default of a `@public` interface) |
+| #72 / PR #88 | minor changeset for `@dexpace/core`: retry surfaces the final typed error (was a `SuppressedError` wrapper); new `retryAttempts()` export |
+| #74 / PR #89 | patch changeset for `@dexpace/core`: every `WWW-Authenticate`/`Proxy-Authenticate` value is read; `cnonce` emitted for `-sess`; empty `realm`/`nonce` declined |
+| #75 / PR #87 | changeset for `@dexpace/rx` (issue says minor; only `.d.ts` prose moved, so patch is arguable): SSE ownership transfer documented |
