@@ -39,6 +39,59 @@ describe('exponential schedule', () => {
     expect(() => computeDelay(0, SETTINGS, never)).toThrow();
     expect(() => computeDelay(-1, SETTINGS, never)).toThrow();
   });
+
+  test('a zero initial delay stays zero where the power overflows (RETRY-11)', () => {
+    // `0 * Infinity` is NaN, and NaN is the one value the saturation above cannot absorb: `Math.min`
+    // propagates it, `overshootsBudget` reads false for it, the engine's `delayMs <= 0` guard reads
+    // false for it, and it lands in `Clock.sleep` as a RangeError that replaces the real failure.
+    // `retrySettings` accepts both of these (`initialDelayMs >= 0`, finite `multiplier >= 1`), so
+    // "overflow-safe, saturating rather than throwing" has to hold for them too.
+    const hugeMultiplier: BackoffSettings = {
+      ...SETTINGS,
+      initialDelayMs: 0,
+      multiplier: 1e200,
+    };
+    expect(computeDelay(3, hugeMultiplier, never)).toBe(0);
+
+    const manyAttempts: BackoffSettings = {...SETTINGS, initialDelayMs: 0};
+    // 2 ** 1099 is Infinity: the first attempt at which the doubling schedule overflows a double.
+    expect(computeDelay(1100, manyAttempts, never)).toBe(0);
+  });
+
+  test('a zero initial delay stays zero under jitter too (RETRY-10/11)', () => {
+    const jitteredZero: BackoffSettings = {
+      ...SETTINGS,
+      initialDelayMs: 0,
+      multiplier: 1e200,
+      jitter: 1,
+    };
+    expect(computeDelay(4, jitteredZero, () => 0)).toBe(0);
+    expect(computeDelay(4, jitteredZero, () => 1)).toBe(0);
+  });
+
+  test('property: every accepted schedule is finite and non-negative (RETRY-11)', () => {
+    // The ranges are exactly what `retrySettings()` admits, so a passing property means no
+    // configuration a caller can build reaches the engine as a non-finite delay. `initialDelayMs`
+    // is drawn through an explicit `constant(0)` arm: the failing region needs a zero base AND an
+    // overflowing power together, and 100 runs of an unbiased double never produced the pair.
+    fc.assert(
+      fc.property(
+        fc.integer({min: 1, max: 5000}),
+        fc.oneof(fc.constant(0), fc.double({min: 0, max: 1e9, noNaN: true})),
+        fc.double({min: 1, max: 1e300, noNaN: true}),
+        fc.double({min: 0, max: 1, noNaN: true}),
+        (attempt, initialDelayMs, multiplier, jitter) => {
+          const delay = computeDelay(
+            attempt,
+            {initialDelayMs, multiplier, maxDelayMs: 8000, jitter},
+            never,
+          );
+          expect(Number.isFinite(delay)).toBe(true);
+          expect(delay).toBeGreaterThanOrEqual(0);
+        },
+      ),
+    );
+  });
 });
 
 describe('symmetric jitter', () => {
