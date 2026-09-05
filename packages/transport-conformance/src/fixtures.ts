@@ -35,11 +35,65 @@ export const REPEATED_CHALLENGES: readonly string[] = [
   'Digest realm="conformance", nonce="n1", algorithm=SHA-256, qop="auth"',
 ];
 
+/**
+ * `/fixed-length`'s payload. Its length is what a HEAD response advertises and does not deliver, so
+ * it is exported: the row asserts the header survived the body-less decision rather than asserting
+ * a number written twice.
+ */
+export const FIXED_LENGTH_BODY = 'seventeen-bytes!!';
+
+/** `/not-modified`'s validator, the one header a 304 exists to carry. */
+export const NOT_MODIFIED_ETAG = '"conformance-v1"';
+
+/**
+ * The three fixtures whose responses can carry no body at all, in their own function because the
+ * main switch is at the 70-line lint cap -- and because they are one topic (TRANSPORT-24/25).
+ * `req` is not needed: `node:http` suppresses the body of a HEAD response by itself.
+ *
+ * @param pathname - the requested path.
+ * @param res - the response to write.
+ * @returns `true` when this function answered, `false` to fall through to {@link route}.
+ */
+function routeBodyless(pathname: string, res: ServerResponse): boolean {
+  switch (pathname) {
+    case '/no-content':
+      // TRANSPORT-24 with the WHATWG null-body rule: a 204 has no body and no framing to describe
+      // one. Node's `node:http` sends no `Content-Length` here at all; Bun 1.3.14's sends `0`. The
+      // row therefore asserts the header is absent-or-zero, never a positive length -- what a
+      // transport is answerable for is the body SHAPE, which is the same on both.
+      res.writeHead(204);
+      res.end();
+      return true;
+    case '/not-modified':
+      // Deliberately WITHOUT a `Content-Length`, though RFC 9110 15.4.5 permits a 304 to carry the
+      // one a 200 would have had. undici 6.28.0 believes it: a 304 declaring 17 bytes leaves the
+      // dispatcher waiting for a body that cannot come, and the exchange dies with
+      // `UND_ERR_SOCKET: other side closed` (measured 2026-09-05, Node and Bun alike). That is
+      // undici's bug to have, not this suite's to provoke -- the row is about the ETag surviving.
+      res.writeHead(304, {etag: NOT_MODIFIED_ETAG});
+      res.end();
+      return true;
+    case '/fixed-length':
+      // The HEAD row's target. The declared length describes the body a GET would return, so the
+      // header promises bytes the HEAD response will not deliver: a transport that framed a stream
+      // from it hands the caller a read that never completes.
+      res.writeHead(200, {
+        'content-type': 'text/plain',
+        'content-length': String(FIXED_LENGTH_BODY.length),
+      });
+      res.end(FIXED_LENGTH_BODY);
+      return true;
+    default:
+      return false;
+  }
+}
+
 function route(
   pathname: string,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  if (routeBodyless(pathname, res)) return;
   switch (pathname) {
     case '/echo-headers':
       res.writeHead(200, {'content-type': 'application/json'});

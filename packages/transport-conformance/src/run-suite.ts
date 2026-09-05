@@ -2,6 +2,9 @@
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
 // drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..29, BODY-13,
+// RETRY-2 (a permanent misconfiguration is outside the retryable IoError tree),
+// HTTP-35 (a transport-wide default timeout outside AbortSignal.timeout()'s range is refused at the
+// factory),
 // SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
@@ -13,8 +16,12 @@
 // full proxy-challenge flow is transport-undici's challenge-handler.test.ts, and only its
 // unsupported-type refusal is a row here. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
-// asserts it against its own (transport-fetch's fetch-transport.test.ts:118, transport-undici's
-// undici-transport.test.ts:614).
+// asserts it against its own (transport-fetch's fetch-transport.test.ts:123, transport-undici's
+// undici-transport.test.ts:615). TRANSPORT-9's producer-failure race is not driven from here
+// either, and for the same reason: proving that a native call still pending when the producer fails
+// is CANCELLED needs the signal the adapter handed it, which only an instrumented native client can
+// show -- a `FetchLike` in transport-fetch's suite and a bring-your-own `Dispatcher` in
+// transport-undici's, each with a call that resolves after the producer has already lost the race.
 import {mkdtemp, rm, truncate, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -33,6 +40,8 @@ import {
 } from '@dexpace/core';
 import {
   fileBodyFixture,
+  FIXED_LENGTH_BODY,
+  NOT_MODIFIED_ETAG,
   REPEATED_CHALLENGES,
   startFixtureServer,
   type TestServer,
@@ -73,6 +82,19 @@ export interface TransportCapabilities {
    * be handed — the row then asserts that omission is the truth rather than skipping.
    */
   readonly unsupportedProxy?: UnsupportedProxy;
+  /**
+   * HTTP-35: builds a transport whose transport-wide default timeout is `value`.
+   *
+   * Required, not a capability flag, because §17 assumes every transport has one — TRANSPORT-5 is
+   * written as "a per-call override … overriding the configured default for that call only". The
+   * rows hand it values `AbortSignal.timeout()` cannot take and expect the factory to refuse them,
+   * because a default nobody checked is the last path by which such a value reaches a deadline
+   * (`RequestOptions.timeoutMs` has been checked at its setter since audit #67 / #76).
+   *
+   * Typed `number` on purpose: `0`, `-1`, `1.5`, `2**32` and `NaN` are all legitimately `number`,
+   * so the row needs no cast to express what it is testing.
+   */
+  buildWithDefaultTimeoutMs(value: number): Transport;
 }
 
 /** What every row below needs: a transport factory, the live fixture origin, and the capability flags. */
@@ -345,6 +367,41 @@ function registerProducerRows(ctx: SuiteContext): void {
         await response.close();
         // Outlives the producer, so the rejection has actually happened by the time the row ends.
         await new Promise(resolve => setTimeout(resolve, POST_DELIVERY_MS * 3));
+      });
+    });
+  });
+}
+
+/**
+ * A scheme every runtime under test refuses and `@dexpace/core` accepts.
+ *
+ * `Request` validates a URL by handing it to WHATWG `URL`, which parses `ftp:` perfectly well and
+ * gives it a real origin — so an `ftp://` request reaches the native client, which refuses it.
+ * `foo://` would be refused too, but its `origin` is the string `"null"`, which changes what undici
+ * is even asked; `ftp:` keeps the two adapters answering the same question.
+ */
+const UNSUPPORTED_SCHEME_URL = 'ftp://example.com/anything';
+
+function registerPermanentFailureRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-20, RETRY-2: a permanent misconfiguration is not a retryable failure', () => {
+    test('an unsupported URL scheme fails outside the IoError tree', async () => {
+      // The two adapters answered this oppositely until audit #67 / #82. undici's dispatcher
+      // rejects `ftp://` with `UND_ERR_INVALID_ARG`, which `transport-undici` already mapped to a
+      // TypeError; `fetch` rejects with a TypeError whose shape depends on the runtime -- Node's
+      // undici-backed one says `fetch failed` with an `unknown scheme` cause, Bun 1.3.14 says
+      // `protocol must be http:, https: or s3:` with `code: ERR_INVALID_ARG_VALUE` -- and
+      // `transport-fetch` classified all of it as the RETRYABLE TransportFailureError.
+      //
+      // `classify.ts` returns true for every IoError, so that verdict spends the caller's entire
+      // retry budget re-proving a URL no retry can fix. `isIoError(e) === false` is the assertion
+      // because it is exactly what the retry engine asks.
+      await withTransport(ctx.makeTransport, async transport => {
+        const request = Request.newBuilder()
+          .url(UNSUPPORTED_SCHEME_URL)
+          .build();
+        const error = await rejection(transport.send(request));
+        expect(isIoError(error)).toBe(false);
+        expect(error).toBeInstanceOf(TypeError);
       });
     });
   });
@@ -775,6 +832,86 @@ function challengeList(values: readonly string[]): readonly string[] {
   return values.join(', ').split(/,\s+(?=Digest )/u);
 }
 
+function registerBodylessRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-24/25/27: a response that can carry no body reports none', () => {
+    // `body === null` is the WHATWG shape and the one `@dexpace/core` already types
+    // (`http/response.ts:18`); it is also the only shape a consumer can branch on without reading.
+    // Three of the four native combinations disagreed until audit #67 / #82 -- undici's dispatcher
+    // always hands back a `BodyReadable`, Node's `fetch` returns `null`, Bun 1.3.14's `fetch`
+    // returns a live `ReadableStream` -- so each adapter decides for itself now and these rows are
+    // what say so. The alternative, an empty stream on both, makes a consumer read to learn there
+    // is nothing there.
+    //
+    // `reasonPhrase` is `undefined`-or-string on purpose: `fetch` surfaces `statusText` and undici's
+    // `ResponseData` has no such field, a divergence recorded beside §10 item 13. Asserting the
+    // union is what keeps this row about the body shape.
+    test('a 204 carries a null body and no positive length', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/no-content')).build(),
+        );
+        expect(response.status.code).toBe(204);
+        expect(response.body).toBeNull();
+        // Absent on Node's `node:http`, `'0'` on Bun 1.3.14's -- what a transport is answerable for
+        // is that it never invented a length for a body that does not exist.
+        expect([undefined, '0']).toContain(
+          response.headers.get('content-length'),
+        );
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        // Idempotent and non-blocking over a response the transport already released.
+        await response.close();
+        await response.close();
+      });
+    });
+
+    test('a 304 carries a null body and still delivers its validator', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/not-modified')).build(),
+        );
+        expect(response.status.code).toBe(304);
+        expect(response.body).toBeNull();
+        // A 304 exists to carry validators; dropping the body must not drop them.
+        expect(response.headers.get('etag')).toBe(NOT_MODIFIED_ETAG);
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        await response.close();
+      });
+    });
+
+    test('a HEAD carries a null body and keeps the length it advertises', async () => {
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder()
+            .method('HEAD')
+            .url(ctx.url('/fixed-length'))
+            .build(),
+        );
+        expect(response.status.code).toBe(200);
+        expect(response.body).toBeNull();
+        // The header describes the body a GET would have returned and must survive verbatim --
+        // this is the one body-less case where a length is meaningful (TRANSPORT-27).
+        expect(response.headers.get('content-length')).toBe(
+          String(FIXED_LENGTH_BODY.length),
+        );
+        expect(['undefined', 'string']).toContain(typeof response.reasonPhrase);
+        await response.close();
+      });
+    });
+
+    test('the same resource over GET does carry its body', async () => {
+      // The twin of the three rows above: nulling a body-less response must not null an ordinary
+      // one, and `/fixed-length` is the same route the HEAD row just read nothing from.
+      await withTransport(ctx.makeTransport, async transport => {
+        const response = await transport.send(
+          Request.newBuilder().url(ctx.url('/fixed-length')).build(),
+        );
+        expect(response.body).toBeInstanceOf(ReadableStream);
+        expect(await response.text()).toBe(FIXED_LENGTH_BODY);
+      });
+    });
+  });
+}
+
 function registerInboundHeaderRows(ctx: SuiteContext): void {
   describe('TRANSPORT-14, AUTH-12/AUTH-25: a repeated inbound header keeps every value', () => {
     test('two WWW-Authenticate lines reach the pipeline as the same challenge list', async () => {
@@ -854,6 +991,60 @@ function registerProxyRefusalRows(ctx: SuiteContext): void {
       expect(isIoError(thrown)).toBe(false);
       // "Discoverable": the message names the type that was refused, not merely that something was.
       expect((thrown as Error).message).toContain(unsupported.type);
+    });
+  });
+}
+
+/**
+ * Defaults `AbortSignal.timeout()` refuses. `1.5` and `2**32` are the two Bun 1.3.14 accepts and
+ * Node rejects with a `RangeError`, which is what made an unvalidated default a per-runtime
+ * behaviour rather than a per-caller error.
+ */
+const UNHONOURABLE_TIMEOUTS: readonly number[] = [
+  0,
+  -1,
+  1.5,
+  2 ** 32,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+];
+
+function registerDefaultTimeoutRows(ctx: SuiteContext): void {
+  describe('HTTP-35, TRANSPORT-5: an unhonourable default timeout is refused at construction', () => {
+    for (const value of UNHONOURABLE_TIMEOUTS) {
+      test(`a default of ${String(value)} fails the factory, not the first send`, () => {
+        let thrown: unknown;
+        try {
+          // A transport that returns instead of throwing has deferred the failure to the first
+          // send, where it arrives as a raw `RangeError` out of `AbortSignal.timeout()` on Node --
+          // or, on Bun, as no failure at all and a deadline nobody asked for.
+          void ctx.capabilities.buildWithDefaultTimeoutMs(value);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(TypeError);
+        // The same shape every other construction-time refusal in these transports has, and
+        // outside the IoError tree for the same reason (RETRY-2).
+        expect(isIoError(thrown)).toBe(false);
+        // "Discoverable": the message names the value that was refused.
+        expect((thrown as Error).message).toContain(String(value));
+      });
+    }
+
+    test('a default inside the range builds a transport that still sends', async () => {
+      // The twin: narrowing the accepted range must not reject a legitimate default. 30s is the
+      // shape a caller actually configures, and the send proves the value reached `composeSignal`
+      // without tripping it.
+      await withTransport(
+        () => ctx.capabilities.buildWithDefaultTimeoutMs(30_000),
+        async transport => {
+          const response = await transport.send(
+            Request.newBuilder().url(ctx.url('/echo-headers')).build(),
+          );
+          expect(response.status.code).toBe(200);
+          await response.close();
+        },
+      );
     });
   });
 }
@@ -939,14 +1130,17 @@ export function runTransportConformanceSuite(
     registerBodyRows(ctx);
     registerProducerRows(ctx);
     registerFailureRows(ctx);
+    registerPermanentFailureRows(ctx);
     registerCancellationRows(ctx);
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);
     registerNativeRejectionRows(ctx);
     registerFileBodyRows(ctx);
+    registerBodylessRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerProxyRefusalRows(ctx);
+    registerDefaultTimeoutRows(ctx);
     registerScopedRows(ctx);
   });
 }

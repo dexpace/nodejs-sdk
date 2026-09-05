@@ -110,6 +110,19 @@ silently misbehaving (`TRANSPORT-30`):
   (`TRANSPORT-12`), never a failed send.
 - Destroying the dispatcher mid-flight surfaces as the terminal `CancellationError`, while a timeout
   on the same path stays the retryable `TransportFailureError` (`TRANSPORT-8`).
+- An argument undici refuses outright — a non-`http(s)` origin such as `ftp://`, `CONNECT` as a
+  method, a per-request `Proxy-Authorization` on a bring-your-own `ProxyAgent` — is a bare
+  `TypeError` outside the `IoError` tree, so `retry/classify.ts`'s allow-list makes it non-retryable
+  (`RETRY-2`). A failed *exchange* stays the retryable `TransportFailureError` (`TRANSPORT-20`). The
+  table that tells them apart moved to `@dexpace/transport-shared` on 2026-09-05 so
+  `@dexpace/transport-fetch` answers identically (audit #67 / #82).
+- A 204, a 304 and every HEAD response carry `body === null`. undici's dispatcher always hands back a
+  `BodyReadable`, so this transport `dump()`s the one it declines to expose — returning the
+  connection to the pool — rather than wrapping an empty stream the caller would have to read to
+  discover was empty.
+- `defaultTimeoutMs` must be an integer number of milliseconds in `1 .. 2**32 - 1` —
+  `AbortSignal.timeout()`'s range. Anything else is a `TypeError` out of `undiciTransport()`, raised
+  before any dispatcher is allocated, not a failure on the first send (`HTTP-35`).
 - `Response.protocol` is always `HTTP_1_1`: undici's `ResponseData` does not surface the negotiated
   version. A Deviation Ledger row, not a silent gap.
 

@@ -16,11 +16,14 @@ import {
   createDropLogger,
   degradeInboundHeaders,
   forkSignal,
+  hasNoResponseBody,
   isMaterializable,
   mapOutboundHeaders,
   materializeBody,
   producerFailure,
   pumpBody,
+  requireValidDefaultTimeoutMs,
+  toDispatchFailure,
   type ForkedSignal,
   type HeaderDropLogging,
 } from '@dexpace/transport-shared';
@@ -83,7 +86,13 @@ const MAX_MATERIALIZED_BODY_BYTES = 1_000_000;
 export interface FetchTransportOptions {
   /** How dropped header names are logged (TRANSPORT-13); defaults to `'first-per-name'`. */
   readonly headerDropLogging?: HeaderDropLogging;
-  /** A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own. */
+  /**
+   * A timeout applied to every call that supplies no `RequestOptions.timeoutMs` of its own.
+   *
+   * An integer number of milliseconds in `1 .. 2**32 - 1`, which is `AbortSignal.timeout()`'s
+   * range and so the only one any transport can honour; anything else is refused by
+   * {@link fetchTransport} rather than by the first send (HTTP-35).
+   */
   readonly defaultTimeoutMs?: number;
   /** A custom `fetch` implementation; defaults to `globalThis.fetch`. */
   readonly fetch?: FetchLike;
@@ -193,7 +202,16 @@ function adaptResponse(
       .status(Status.of(fetchResponse.status))
       .reasonPhrase(fetchResponse.statusText || undefined)
       .headers(headers)
-      .body(fetchResponse.body)
+      // Decided here, not inherited from the runtime. Node's `fetch` returns `null` for 204, 304
+      // and HEAD as the spec requires, and Bun 1.3.14's returns a live `ReadableStream` for all
+      // three (measured 2026-09-05) -- so forwarding `fetchResponse.body` made the SHAPE of a
+      // body-less response a property of the runtime rather than of this SDK. `#exchange` releases
+      // whatever handle this declines (audit #67 / #82).
+      .body(
+        hasNoResponseBody(request.method, fetchResponse.status)
+          ? null
+          : fetchResponse.body,
+      )
       .build()
   );
 }
@@ -212,6 +230,9 @@ class FetchTransport implements Transport {
   readonly #defaultTimeoutMs: number | undefined;
 
   constructor(options: FetchTransportOptions) {
+    // Before anything else: a default no `AbortSignal.timeout()` can take is a caller error, and
+    // HTTP-35 puts it where it was supplied rather than at the first send (audit #67 / #82).
+    requireValidDefaultTimeoutMs(options.defaultTimeoutMs);
     this.#logDrops = createDropLogger(
       options.headerDropLogging ?? 'first-per-name',
     );
@@ -260,7 +281,13 @@ class FetchTransport implements Transport {
 
     try {
       // TRANSPORT-22: a live socket is in hand, so any throw here must release it before propagating.
-      return adaptResponse(request, fetchResponse, this.#logDrops);
+      const response = adaptResponse(request, fetchResponse, this.#logDrops);
+      if (response.body === null && fetchResponse.body !== null) {
+        // A runtime handed a body for a response that cannot have one. Nothing references it any
+        // more, so releasing it is this transport's, not the caller's (TRANSPORT-25, SEAM-30).
+        await fetchResponse.body.cancel().catch(() => undefined);
+      }
+      return response;
     } catch (error) {
       await fetchResponse.body?.cancel().catch(() => undefined);
       // TRANSPORT-19: nothing is delivered on this path either, so the producer is owed its teardown
@@ -284,7 +311,7 @@ class FetchTransport implements Transport {
     };
     if (prepared.init !== undefined) init.body = prepared.init;
     if (prepared.duplex !== undefined) init.duplex = prepared.duplex;
-    if (signal !== undefined) init.signal = signal;
+    init.signal = signal;
 
     try {
       // Raced, not sequenced: a producer failure must surface even while `fetch` is still pending,
@@ -294,12 +321,23 @@ class FetchTransport implements Transport {
         producerFailure(prepared.done),
       ]);
     } catch (error) {
+      // Read BEFORE the fork is pulled below, or every producer failure would look like a caller
+      // abort and surface as a CancellationError.
+      const abortedByCaller = signal.aborted;
       await prepared.abandon(error);
-      if (signal?.aborted) throw abortToSdkError(signal, error);
-      throw new TransportFailureError(
-        error instanceof Error ? error.message : 'fetch failed',
-        {cause: error},
-      );
+      if (abortedByCaller) throw abortToSdkError(signal, error);
+      // TRANSPORT-9: when the producer lost the race, `fetch` is still pending. Nothing awaits it
+      // any more, so a response that arrives later would be dropped with its body neither read nor
+      // cancelled -- a leaked connection for as long as the pool keeps it. Pulling the fork takes
+      // the native call down instead. On the path where `fetch` itself rejected there is nothing
+      // left to cancel and this is inert (audit #67 / #82).
+      plan.fork.abort(error);
+      // TRANSPORT-20 versus RETRY-2, decided by the table in `@dexpace/transport-shared` rather
+      // than here: until audit #67 / #82 every native rejection became `TransportFailureError`,
+      // which `classify.ts` reports retryable for being an `IoError`, so an `ftp://` URL or a
+      // `CONNECT` method spent the caller's whole retry budget re-proving a permanent
+      // misconfiguration. The undici twin already refused those; the two must not disagree.
+      throw toDispatchFailure(error, 'fetch failed');
     }
   }
 
@@ -349,6 +387,9 @@ if (typeof Symbol.asyncDispose === 'symbol') {
  *
  * @param options - optional transport settings.
  * @returns a transport ready to send; release it with `close()`.
+ * @throws `TypeError` when `defaultTimeoutMs` is not an integer number of milliseconds in
+ * `1 .. 2**32 - 1` — `AbortSignal.timeout()`'s range, and therefore the only one a per-call
+ * deadline can be built from.
  *
  * @public
  */

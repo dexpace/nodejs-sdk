@@ -12,6 +12,9 @@ runTransportConformanceSuite('undiciTransport', () => undiciTransport(), {
   dropsConnectionHeader: false,
   // TRANSPORT-30: core resolves `ALL_PROXY=socks5://host:1080` to this type (CFG-22), and undici's
   // `ProxyAgent` is an HTTP CONNECT tunnel that cannot carry it.
+  // HTTP-35: the factory is where a default `AbortSignal.timeout()` could not take is refused.
+  buildWithDefaultTimeoutMs: value =>
+    undiciTransport({defaultTimeoutMs: value}),
   unsupportedProxy: {
     type: 'socks5',
     build: () =>
