@@ -97,6 +97,66 @@ function scriptedDispatch(
   return Object.assign(dispatch, {calls});
 }
 
+/** A clock that records every duration it is asked to sleep for, and returns immediately. */
+function recordingClock(slept: number[]): Clock {
+  return {
+    now: () => 0,
+    monotonic: () => 0,
+    sleep: durationMs => {
+      slept.push(durationMs);
+      return Promise.resolve();
+    },
+  };
+}
+
+/**
+ * `defaultClock`'s own precondition, modelled: `Clock.sleep` rejects a non-finite duration with a
+ * `RangeError` (`config/clock.ts:148-157`). A fake that slept for any duration at all would hide the
+ * bug; this guard is what surfaces it.
+ */
+function guardingClock(): Clock {
+  return {
+    now: () => 0,
+    monotonic: () => 0,
+    sleep: durationMs =>
+      Number.isFinite(durationMs)
+        ? Promise.resolve()
+        : Promise.reject(
+            new RangeError(
+              `Clock.sleep: durationMs must be a non-negative finite number, got ${String(durationMs)}`,
+            ),
+          ),
+  };
+}
+
+/** One retryable failure, then a 200: the shortest script that drives exactly one delay decision. */
+function oneFailureThenSuccess(): RetryDispatch {
+  return scriptedDispatch([
+    failure(new IoError('first')),
+    success(countingResponse(200).response),
+  ]);
+}
+
+/** Installs a capturing global logger for the duration of `body` and returns what it emitted. */
+async function captureLogEvents(
+  body: () => Promise<void>,
+): Promise<Map<string, unknown>[]> {
+  const {createLogger, setGlobalLogger, NOOP_LOGGER} =
+    await import('../observability/logger.js');
+  const events: Map<string, unknown>[] = [];
+  setGlobalLogger(
+    createLogger((_level, fields) => {
+      events.push(new Map(fields));
+    }),
+  );
+  try {
+    await body();
+  } finally {
+    setGlobalLogger(NOOP_LOGGER);
+  }
+  return events;
+}
+
 describe('eligibility (RETRY-7/8)', () => {
   test('a non-retryable failure is surfaced after exactly one attempt', async () => {
     const dispatch = scriptedDispatch([failure(new TypeError('bad'))]);
@@ -231,98 +291,12 @@ describe('delay resolution (RETRY-39/40)', () => {
     expect(dispatch.calls).toHaveLength(2);
   });
 
-  test('a non-finite override falls back to the schedule, like a throwing one (RETRY-40)', async () => {
-    // RETRY-40 makes a bad override non-fatal. A throw was handled; a non-finite RETURN was not, and
-    // it is the worse of the two, because `NaN` fails every comparison downstream instead of failing
-    // loudly here. Audit #67 / #78 reads the two as one case: drop the value, use the computed
-    // schedule, keep going. Asserted on the delays the clock was ASKED for -- three sends alone would
-    // also pass on a clock that quietly slept for `NaN`.
-    for (const bad of [
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      Number.NEGATIVE_INFINITY,
-    ]) {
-      const slept: number[] = [];
-      const config: RetryConfig = {
-        settings: retrySettings({
-          maxAttempts: 3,
-          initialDelayMs: 200,
-          multiplier: 2,
-          jitter: 0,
-        }),
-        clock: {
-          now: () => 0,
-          monotonic: () => 0,
-          sleep: durationMs => {
-            slept.push(durationMs);
-            return Promise.resolve();
-          },
-        },
-        random: () => 0.5,
-        delayOverride: () => bad,
-      };
-      const dispatch = scriptedDispatch([
-        failure(new TransportFailureError('connection refused')),
-      ]);
-
-      const outcome = await runWithRetry(GET, dispatch, config);
-
-      expect(dispatch.calls).toHaveLength(3);
-      expect(slept).toEqual([200, 400]);
-      expect(outcome.kind).toBe('failure');
-    }
-  });
-
-  test('a non-finite override never reaches Clock.sleep as a duration (RETRY-40)', async () => {
-    // The reported symptom, with a clock that guards its input the way `defaultClock` does: the
-    // rejection was folded into the terminal failure by RETRY-33's catch-all, so `delayOverride:
-    // () => NaN` with `maxAttempts: 3` gave ONE send and surfaced a `RangeError` about `durationMs`
-    // in place of the transport failure being retried -- with the real error demoted to the trail.
-    const config: RetryConfig = {
-      settings: retrySettings({maxAttempts: 3, fixedDelayMs: 0}),
-      clock: {
-        now: () => 0,
-        monotonic: () => 0,
-        sleep: durationMs =>
-          Number.isFinite(durationMs)
-            ? Promise.resolve()
-            : Promise.reject(
-                new RangeError(
-                  `Clock.sleep: durationMs must be a non-negative finite number, got ${String(durationMs)}`,
-                ),
-              ),
-      },
-      random: () => 0.5,
-      delayOverride: () => Number.NaN,
-    };
-    const dispatch = scriptedDispatch([
-      failure(new TransportFailureError('first')),
-      failure(new TransportFailureError('second')),
-      failure(new TransportFailureError('third')),
-    ]);
-
-    const outcome = await runWithRetry(GET, dispatch, config);
-
-    expect(dispatch.calls).toHaveLength(3);
-    expect(outcome.kind).toBe('failure');
-    if (outcome.kind !== 'failure') return;
-    expect(outcome.error).toBeInstanceOf(TransportFailureError);
-    expect((outcome.error as Error).message).toBe('third');
-    expect(retryAttempts(outcome.error)).toHaveLength(2);
-  });
-
   test('a finite override is honored unchanged, fractional and huge alike (RETRY-39)', async () => {
-    // The finiteness guard screens `NaN` and the two infinities and nothing else. A fractional or
-    // very large delay is still a delay, and RETRY-39 gives the caller precedence over the schedule.
+    // The finiteness guard below screens `NaN` and the two infinities and nothing else. A fractional
+    // or very large delay is still a delay, and RETRY-39 gives the caller precedence over the
+    // schedule -- 5000 ms of `fixedDelayMs` here, which neither run waits.
     const slept: number[] = [];
-    const clock: Clock = {
-      now: () => 0,
-      monotonic: () => 0,
-      sleep: durationMs => {
-        slept.push(durationMs);
-        return Promise.resolve();
-      },
-    };
+    const clock = recordingClock(slept);
 
     for (const override of [0.5, Number.MAX_SAFE_INTEGER]) {
       await runWithRetry(
@@ -338,6 +312,71 @@ describe('delay resolution (RETRY-39/40)', () => {
     }
 
     expect(slept).toEqual([0.5, Number.MAX_SAFE_INTEGER]);
+  });
+});
+
+/**
+ * RETRY-40 makes a bad override non-fatal. A throw was handled; a non-finite RETURN was not, and it
+ * is the worse of the two, because `NaN` fails every comparison downstream instead of failing loudly
+ * at the override. Audit #67 / #78 reads the two as one case: drop the value, use the computed
+ * schedule, keep going.
+ */
+describe('a non-finite delayOverride is the throwing case (RETRY-40)', () => {
+  test('every non-finite value falls back to the computed schedule', async () => {
+    // Asserted on the delays the clock was ASKED for. Three sends alone would also pass against a
+    // fake that quietly slept for `NaN`, which is most of them.
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      const slept: number[] = [];
+      const dispatch = scriptedDispatch([
+        failure(new TransportFailureError('connection refused')),
+      ]);
+
+      const outcome = await runWithRetry(GET, dispatch, {
+        settings: retrySettings({
+          maxAttempts: 3,
+          initialDelayMs: 200,
+          multiplier: 2,
+          jitter: 0,
+        }),
+        clock: recordingClock(slept),
+        random: () => 0.5,
+        delayOverride: () => bad,
+      });
+
+      expect(dispatch.calls).toHaveLength(3);
+      expect(slept).toEqual([200, 400]);
+      expect(outcome.kind).toBe('failure');
+    }
+  });
+
+  test('it never reaches Clock.sleep as a duration, so the real failure survives', async () => {
+    // The reported symptom, against a clock that guards its input the way `defaultClock` does: the
+    // rejection was folded into the terminal failure by RETRY-33's catch-all, so `() => NaN` with
+    // `maxAttempts: 3` gave ONE send and surfaced a `RangeError` about `durationMs` in place of the
+    // transport failure being retried -- with the real error demoted to the trail.
+    const dispatch = scriptedDispatch([
+      failure(new TransportFailureError('first')),
+      failure(new TransportFailureError('second')),
+      failure(new TransportFailureError('third')),
+    ]);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      settings: retrySettings({maxAttempts: 3, fixedDelayMs: 0}),
+      clock: guardingClock(),
+      random: () => 0.5,
+      delayOverride: () => Number.NaN,
+    });
+
+    expect(dispatch.calls).toHaveLength(3);
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(outcome.error).toBeInstanceOf(TransportFailureError);
+    expect((outcome.error as Error).message).toBe('third');
+    expect(retryAttempts(outcome.error)).toHaveLength(2);
   });
 });
 
@@ -1102,106 +1141,66 @@ describe('per-call state (RETRY-42, RECOV-28)', () => {
 
 describe('Phase 7b retrofit: structured retry logging', () => {
   test('emits attemptFailed per retry and exhausted when attempts run out', async () => {
-    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
-      await import('../observability/logger.js');
-    const events: Map<string, unknown>[] = [];
-    const testLogger = createLogger((_level, fields) => {
-      events.push(new Map(fields));
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(
+        GET,
+        scriptedDispatch([
+          failure(new IoError('first')),
+          failure(new IoError('second')),
+          failure(new IoError('third')),
+        ]),
+        configOf({maxAttempts: 3, fixedDelayMs: 0}),
+      );
     });
-    setGlobalLogger(testLogger);
 
-    try {
-      const config = configOf({maxAttempts: 3, fixedDelayMs: 0});
-      const dispatch = scriptedDispatch([
-        failure(new IoError('first')),
-        failure(new IoError('second')),
-        failure(new IoError('third')),
-      ]);
+    const failedEvents = events.filter(
+      e => e.get('event') === 'http.retry.attemptFailed',
+    );
+    expect(failedEvents).toHaveLength(2);
+    expect(failedEvents[0]?.get('attempt')).toBe(1);
+    expect(failedEvents[1]?.get('attempt')).toBe(2);
 
-      await runWithRetry(GET, dispatch, config);
-
-      const failedEvents = events.filter(
-        e => e.get('event') === 'http.retry.attemptFailed',
-      );
-      expect(failedEvents).toHaveLength(2);
-      expect(failedEvents[0]?.get('attempt')).toBe(1);
-      expect(failedEvents[1]?.get('attempt')).toBe(2);
-
-      const exhaustedEvents = events.filter(
-        e => e.get('event') === 'http.retry.exhausted',
-      );
-      expect(exhaustedEvents).toHaveLength(1);
-      expect(exhaustedEvents[0]?.get('attempts')).toBe(3);
-    } finally {
-      setGlobalLogger(NOOP_LOGGER);
-    }
+    const exhaustedEvents = events.filter(
+      e => e.get('event') === 'http.retry.exhausted',
+    );
+    expect(exhaustedEvents).toHaveLength(1);
+    expect(exhaustedEvents[0]?.get('attempts')).toBe(3);
   });
 
   test('emits delayOverrideFailed when delayOverride throws', async () => {
-    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
-      await import('../observability/logger.js');
-    const events: Map<string, unknown>[] = [];
-    const testLogger = createLogger((_level, fields) => {
-      events.push(new Map(fields));
-    });
-    setGlobalLogger(testLogger);
-
-    try {
-      const config: RetryConfig = {
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(GET, oneFailureThenSuccess(), {
         ...configOf({maxAttempts: 2, fixedDelayMs: 0}),
         delayOverride: () => {
           throw new Error('bad override');
         },
-      };
-      const dispatch = scriptedDispatch([
-        failure(new IoError('first')),
-        success(countingResponse(200).response),
-      ]);
+      });
+    });
 
-      await runWithRetry(GET, dispatch, config);
-
-      const overrideFailed = events.filter(
-        e => e.get('event') === 'http.retry.delayOverrideFailed',
-      );
-      expect(overrideFailed).toHaveLength(1);
-    } finally {
-      setGlobalLogger(NOOP_LOGGER);
-    }
+    const overrideFailed = events.filter(
+      e => e.get('event') === 'http.retry.delayOverrideFailed',
+    );
+    expect(overrideFailed).toHaveLength(1);
+    expect(overrideFailed[0]?.get('cause')).toBe('Error: bad override');
   });
 
   test('emits delayOverrideFailed when delayOverride returns a non-finite delay', async () => {
-    // "Treated exactly like one that throws" (RETRY-40) is a claim about the diagnostic too: a
-    // silently-ignored override is a schedule the operator cannot explain. Same event, same level,
-    // same emit path -- only the cause differs, and it names the value that was rejected.
-    const {createLogger, setGlobalLogger, NOOP_LOGGER} =
-      await import('../observability/logger.js');
-    const events: Map<string, unknown>[] = [];
-    const testLogger = createLogger((_level, fields) => {
-      events.push(new Map(fields));
-    });
-    setGlobalLogger(testLogger);
-
-    try {
-      const config: RetryConfig = {
+    // "Treated exactly like one that throws" (RETRY-40) is a claim about the diagnostic too: an
+    // override dropped in silence is a schedule the operator cannot explain from the configuration.
+    // Same event, same level, same emit path -- only the cause differs, and it names the value.
+    const events = await captureLogEvents(async () => {
+      await runWithRetry(GET, oneFailureThenSuccess(), {
         ...configOf({maxAttempts: 2, fixedDelayMs: 0}),
         delayOverride: () => Number.NaN,
-      };
-      const dispatch = scriptedDispatch([
-        failure(new IoError('first')),
-        success(countingResponse(200).response),
-      ]);
+      });
+    });
 
-      await runWithRetry(GET, dispatch, config);
-
-      const overrideFailed = events.filter(
-        e => e.get('event') === 'http.retry.delayOverrideFailed',
-      );
-      expect(overrideFailed).toHaveLength(1);
-      expect(overrideFailed[0]?.get('cause')).toBe(
-        'delayOverride returned a non-finite delay: NaN',
-      );
-    } finally {
-      setGlobalLogger(NOOP_LOGGER);
-    }
+    const overrideFailed = events.filter(
+      e => e.get('event') === 'http.retry.delayOverrideFailed',
+    );
+    expect(overrideFailed).toHaveLength(1);
+    expect(overrideFailed[0]?.get('cause')).toBe(
+      'delayOverride returned a non-finite delay: NaN',
+    );
   });
 });
