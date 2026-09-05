@@ -668,6 +668,7 @@ export function loggingStep(settings?: LoggingStepSettings): StepDescriptor;
 // @public
 export interface LoggingStepSettings {
     readonly clock?: Clock | undefined;
+    readonly configKey?: string | undefined;
     readonly droppedHeaderPolicy?: DroppedHeaderPolicy | undefined;
     readonly granularity?: LoggingGranularity | undefined;
     readonly logger?: Logger | undefined;

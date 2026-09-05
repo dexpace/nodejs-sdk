@@ -59,8 +59,24 @@ export interface LoggingStepSettings {
    * Default: 'info' (failures always emit at 'error').
    */
   readonly severity?: LogLevel | undefined;
-  /** Granularity of logging (default: resolved from Configuration via CFG_KEY_LOG_LEVEL, fallback 'none'). */
+  /** Granularity of logging (default: resolved from Configuration via {@link LoggingStepSettings.configKey}, fallback 'none'). */
   readonly granularity?: LoggingGranularity | undefined;
+  /**
+   * The configuration key the ambient granularity is read from when `granularity` is omitted (OBS-35).
+   *
+   * OBS-35 says the SDK MUST NOT bake in a default key name, and `CFG_KEY_LOG_LEVEL`
+   * (`DEXPACE_LOG_LEVEL`) is exactly that — CFG-14's well-known key, kept as the default because a
+   * required key would mean no caller gets ambient logging without naming one first. Set this to read
+   * a host application's own key instead; the resolution is the same layered, tolerant one either way.
+   *
+   * Nothing installs a configuration that reads the process environment by default: the global slot
+   * starts empty (CFG-13), so `setGlobalConfiguration(defaultConfiguration())` is the wiring that
+   * makes any environment variable — this one included — reachable. See
+   * `docs/sdk-documentation/pipelines.md`, "Turning logging on from the environment".
+   *
+   * @defaultValue {@link CFG_KEY_LOG_LEVEL}
+   */
+  readonly configKey?: string | undefined;
   /** Byte limit for request/response body previews (default: 8192). */
   readonly previewSizeBytes?: number | undefined;
   /** Optional custom tracer factory. */
@@ -82,7 +98,7 @@ function resolveGranularity(settings: LoggingStepSettings): LoggingGranularity {
     return 'none';
   }
   const raw = getGlobalConfiguration()
-    .getString(CFG_KEY_LOG_LEVEL, 'none')
+    .getString(settings.configKey ?? CFG_KEY_LOG_LEVEL, 'none')
     ?.trim()
     .toLowerCase();
   if (raw === 'headers' || raw === 'body') return raw;
@@ -160,6 +176,32 @@ function safeEmit(logger: Logger, build: () => void): void {
       // swallowed per OBS-20
     }
   }
+}
+
+/**
+ * OBS-20's body-drain clause. A capture failure is contained -- the request completes and the caller's
+ * body is untouched -- but containment is not silence: the failure re-surfaces as a best-effort
+ * `http.instrumentation.*` diagnostic, through the same {@link safeEmit} every other emission uses, so a
+ * secondary failure while reporting it is swallowed in turn.
+ *
+ * `verbose`, the level its sibling `http.instrumentation.logFailure` already emits at: nothing about the
+ * request changed, and what was lost is a diagnostic preview. Before 2026-09-05 both catches returned an
+ * empty capture and emitted nothing at all, so a `fileBody()` over a deleted file logged
+ * `"http.request.body.preview": ""` with no trace of why (audit #67 / #80).
+ */
+function emitBodyCaptureFailure(
+  logger: Logger,
+  direction: 'request' | 'response',
+  error: unknown,
+): void {
+  safeEmit(logger, () => {
+    logger
+      .atLevel('verbose')
+      .event('http.instrumentation.bodyCaptureFailed')
+      .field('http.message.direction', direction)
+      .cause(error)
+      .emit();
+  });
 }
 
 /**
@@ -273,12 +315,13 @@ function resolveTracer(
 /** Captures response body preview safely when content-length is declared (OBS-36, OBS-37). */
 async function captureResponseBody(
   response: Response,
-  previewSizeBytes: number,
+  context: EmitContext,
 ): Promise<{
   readonly response: Response;
   readonly preview: string | undefined;
   readonly size: number | undefined;
 }> {
+  const previewSizeBytes = context.previewSizeBytes;
   try {
     const hasContentLength = response.headers.has('content-length');
     if (response.body === null || !hasContentLength) {
@@ -306,33 +349,34 @@ async function captureResponseBody(
     );
     const size = snap.length > 0 ? snap.length : undefined;
     return {response: captured, preview, size};
-  } catch {
-    // OBS-20: body-drain failure must never fail the request
+  } catch (error) {
+    // OBS-20: a body-drain failure must never fail the request -- and must not vanish either.
+    emitBodyCaptureFailure(context.logger, 'response', error);
     return {response, preview: undefined, size: undefined};
   }
 }
 
 async function prepareRequestBody(
   request: Request,
-  granularity: LoggingGranularity,
-  previewSizeBytes: number,
+  context: EmitContext,
 ): Promise<{
   readonly outbound: Request;
   readonly preview: string | undefined;
   readonly size: number | undefined;
 }> {
-  if (granularity !== 'body' || request.body === undefined) {
+  if (context.granularity !== 'body' || request.body === undefined) {
     return {outbound: request, preview: undefined, size: undefined};
   }
-  const logged = withRequestLogging(request.body, previewSizeBytes);
+  const logged = withRequestLogging(request.body, context.previewSizeBytes);
   if (logged.replayable) {
     const probeSink = new WritableStream<Uint8Array>({
       write: () => undefined,
     });
     try {
       await logged.writeTo(probeSink);
-    } catch {
-      // probe error is ignored per OBS-20
+    } catch (error) {
+      // OBS-20: the probe is diagnostic-only, so its failure is contained -- and reported.
+      emitBodyCaptureFailure(context.logger, 'request', error);
     }
   }
   const snap = logged.snapshot();
@@ -368,7 +412,7 @@ interface PipelineExecutionArgs {
 
 async function executePipeline(args: PipelineExecutionArgs): Promise<Response> {
   const {ctx, plan, outbound, startedAt, span} = args;
-  const {emitContext, instruments, previewSizeBytes} = plan;
+  const {emitContext, instruments} = plan;
   try {
     const response = await ctx.next(outbound);
     const {
@@ -376,7 +420,7 @@ async function executePipeline(args: PipelineExecutionArgs): Promise<Response> {
       preview,
       size,
     } = emitContext.granularity === 'body'
-      ? await captureResponseBody(response, previewSizeBytes)
+      ? await captureResponseBody(response, emitContext)
       : {response, preview: undefined, size: undefined};
 
     const elapsedMs = instruments.clock.monotonic() - startedAt;
@@ -395,7 +439,6 @@ async function executePipeline(args: PipelineExecutionArgs): Promise<Response> {
       size,
     });
 
-    span.end();
     return captured;
   } catch (caught) {
     const error = toError(caught);
@@ -412,7 +455,6 @@ async function executePipeline(args: PipelineExecutionArgs): Promise<Response> {
     emitFailureEvent(emitContext, {error, elapsedMs});
 
     span.recordException(error);
-    span.end();
     throw caught;
   }
 }
@@ -422,7 +464,7 @@ async function handleRequestExecution(
   ctx: StepContext,
   plan: ExecutionPlan,
 ): Promise<Response> {
-  const {settings, emitContext, instruments, previewSizeBytes} = plan;
+  const {settings, emitContext, instruments} = plan;
   const tracer = resolveTracer(settings, ctx);
   const span = tracer.startSpan('http.client.request');
   const scope = activateSpanForCorrelation(span);
@@ -431,8 +473,7 @@ async function handleRequestExecution(
   try {
     const {outbound, preview, size} = await prepareRequestBody(
       request,
-      emitContext.granularity,
-      previewSizeBytes,
+      emitContext,
     );
     emitRequestEvent(emitContext, outbound, {preview, size});
     return await executePipeline({
@@ -443,7 +484,17 @@ async function handleRequestExecution(
       span,
     });
   } finally {
-    scope.close();
+    // ONE exit for `end()`, and it is here rather than on each path inside `executePipeline`: an
+    // `end()` that threw on the success path used to land in that function's own `catch`, which
+    // recorded the exception and called `end()` a second time on a span the tracer had already
+    // closed (OBS-21's idempotent-end clause is the tracer's promise, not this step's licence).
+    // Nested rather than sequential so a throwing `end()` -- which OBS-20 deliberately does not
+    // catch, because OBS-30 makes it the SPI's promise not to -- still cannot leak the scope.
+    try {
+      span.end();
+    } finally {
+      scope.close();
+    }
   }
 }
 
