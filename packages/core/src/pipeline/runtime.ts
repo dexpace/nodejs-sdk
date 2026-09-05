@@ -137,6 +137,14 @@ let create: (
 ) => Runtime;
 
 /**
+ * The read half of the same friend-class hook: `PipelineBuilder.seedFrom(runtime, 'flatten')` builds
+ * the pipeline that replaces `runtime`, so it has to recover the options `runtime` was built with,
+ * and `#contextInit` is private. Surfaced as {@link pipelineOptionsOf} rather than as a getter,
+ * because a getter on this `@public` class would publish `ContextInit`'s in-package `key` slot.
+ */
+let readContextInit: (runtime: Runtime) => RuntimeContextInit;
+
+/**
  * The built, immutable pipeline (PIPE-10, PIPE-25). Implements `Transport` itself (PIPE-26) -- Phase 2's
  * `Transport` SPI has one method (`send`), so there is no second `sendAsync` entry point to delegate through.
  * `close()` deliberately never touches the wrapped transport (PIPE-27): the pipeline never owns it.
@@ -172,6 +180,7 @@ export class Runtime implements Transport {
   static {
     create = (steps, transport, contextInit) =>
       new Runtime(steps, transport, contextInit);
+    readContextInit = runtime => runtime.#contextInit;
   }
 
   /**
@@ -340,4 +349,19 @@ export function createRuntime(
   contextInit: RuntimeContextInit = {},
 ): Runtime {
   return create(steps, transport, contextInit);
+}
+
+/**
+ * What `runtime` was built to carry into every call — the instrumentation bundle and the advisory
+ * operation name. The `key` slot of `ContextInit` rides along in the returned object when the
+ * in-package caller pinned one; `PipelineBuilder` never does.
+ *
+ * @param runtime - the built pipeline to read.
+ * @returns its context init, by reference. Not a copy: `createDispatchContext` and
+ *   `promoteToRequest` only read it, and the object came from a caller that already owns it.
+ *
+ * @internal
+ */
+export function pipelineOptionsOf(runtime: Runtime): RuntimeContextInit {
+  return readContextInit(runtime);
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/auth/preset.ts
-import {PipelineBuilder} from '../pipeline/builder.js';
+import {PipelineBuilder, type PipelineOptions} from '../pipeline/builder.js';
 import type {Runtime} from '../pipeline/runtime.js';
 import type {RedirectSettings} from '../redirect/settings.js';
 import {withRedirect} from '../redirect/strip-marker-step.js';
@@ -20,7 +20,7 @@ import {
  *
  * @public
  */
-export interface StandardResilienceOptions {
+export interface StandardResilienceOptions extends PipelineOptions {
   /** Retry settings and injected seams; omitted yields 5a's spec defaults. */
   readonly retry?: RetryStepOptions | undefined;
   /** Redirect policy overrides; omitted yields 5b's spec defaults. */
@@ -61,6 +61,12 @@ function noAuthSettings(): AuthStepSettings {
  *
  * `LOGGING` installs {@link loggingStep} to emit telemetry and metrics around dispatches. `SERDE` remains
  * reserved with no shipped behavior anywhere in this roadmap's current scope.
+ *
+ * The two inherited {@link PipelineOptions} fields are pipeline-wide rather than per-pillar:
+ * `instrumentation` is the bundle every context of every call carries, and the source of the one
+ * `http.client.operation` span each `send()` opens (`OBS-29`); `operationName` is `CTX-16`'s advisory
+ * label. Omitting `instrumentation` leaves the no-op bundle in place, which opens no span at all — it
+ * is the only way to switch tracing on for a preset-built pipeline.
  *
  * This function only assembles the pipeline. The failures below surface from the returned runtime's
  * `send()`, and are documented here because this factory is where a caller chooses the auth
@@ -104,7 +110,12 @@ export function standardResilience(
   transport: Transport,
   options: StandardResilienceOptions = {},
 ): Runtime {
-  const builder = new PipelineBuilder(transport);
+  // The two `PipelineOptions` fields are pipeline-wide rather than per-pillar, so they go to the
+  // builder rather than into a step's settings; everything below installs one pillar each.
+  const builder = new PipelineBuilder(transport, {
+    instrumentation: options.instrumentation,
+    operationName: options.operationName,
+  });
   return withRedirect(builder, options.redirect)
     .append(retryStep(options.retry))
     .append(authStep(options.auth ?? noAuthSettings()))

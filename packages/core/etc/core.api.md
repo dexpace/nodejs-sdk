@@ -914,7 +914,7 @@ export class PillarCollisionError extends DexpaceError {
 
 // @public
 export class PipelineBuilder {
-    constructor(transport: Transport);
+    constructor(transport: Transport, options?: PipelineOptions);
     append(descriptor: StepDescriptor): this;
     appendAll(descriptors: readonly StepDescriptor[]): this;
     build(): Runtime;
@@ -926,6 +926,12 @@ export class PipelineBuilder {
     remove(type: symbol): this;
     replace(anchorType: symbol, descriptor: StepDescriptor): this;
     static seedFrom(runtime: Runtime, mode: 'flatten' | 'nest'): PipelineBuilder;
+}
+
+// @public
+export interface PipelineOptions {
+    readonly instrumentation?: InstrumentationBundle | undefined;
+    readonly operationName?: string | undefined;
 }
 
 // @public
@@ -1380,7 +1386,7 @@ export const STAGE_ORDER: readonly Stage[];
 export function standardResilience(transport: Transport, options?: StandardResilienceOptions): Runtime;
 
 // @public
-export interface StandardResilienceOptions {
+export interface StandardResilienceOptions extends PipelineOptions {
     readonly auth?: AuthStepSettings | undefined;
     readonly logging?: LoggingStepSettings | undefined;
     readonly redirect?: Partial<RedirectSettings> | undefined;

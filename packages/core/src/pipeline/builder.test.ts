@@ -8,13 +8,20 @@
 // scratch), PIPE-23 (a colliding reload leaves prior content untouched, and a same-type pillar repeat inside
 // one batch seats only one step), PIPE-25 (flatten order), PIPE-38 (appendAll preserves batch order;
 // prependAll reverses it), PIPE-1/PIPE-2 (a built pipeline, driven: entry in STAGE_ORDER, exit reversed),
-// PIPE-35 (seedFrom's explicit, non-defaulted flatten-vs-nest modes)
+// PIPE-35 (seedFrom's explicit, non-defaulted flatten-vs-nest modes), OBS-29 + CTX-16 (the public
+// instrumentation options bag: the supplied bundle opens the operation span, the operation name reaches
+// the request context, and flatten seeding carries both)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
+import {
+  createInstrumentationBundle,
+  type Span,
+  type Tracer,
+} from '../observability/tracing.js';
 import type {Transport} from '../seams/transport.js';
 import {PipelineBuilder} from './builder.js';
 import {
@@ -543,5 +550,100 @@ describe('PipelineBuilder.seedFrom nest mode (PIPE-35)', () => {
 
     expect(labelsOf(runtime)).toEqual(['retry-outer']);
     expect(runtime.transport).toBe(seeded);
+  });
+});
+
+/** Records the name of every span it is asked to open, so a test can count operations. */
+function countingTracer(): {tracer: Tracer; names: string[]} {
+  const names: string[] = [];
+  const span: Span = {
+    isRecording: true,
+    setAttribute: (): Span => span,
+    recordException: (): Span => span,
+    end: (): void => undefined,
+  };
+  return {
+    names,
+    tracer: {
+      startSpan(name: string): Span {
+        names.push(name);
+        return span;
+      },
+    },
+  };
+}
+
+/** Captures what the drive's `RequestContext` says, from inside the pipeline. */
+function contextProbe(seen: {
+  operationName?: string | undefined;
+}): StepDescriptor {
+  return {
+    type: Symbol('context-probe'),
+    stage: 'PRE_SERDE',
+    fn: async (request, ctx) => {
+      seen.operationName =
+        'operationName' in ctx.context ? ctx.context.operationName : undefined;
+      return ctx.next(request);
+    },
+  };
+}
+
+describe('PipelineBuilder instrumentation options (OBS-29, CTX-16)', () => {
+  test('the supplied bundle is what opens the per-operation span', async () => {
+    const {tracer, names} = countingTracer();
+    const runtime = new PipelineBuilder(new RecordingTransport(), {
+      instrumentation: createInstrumentationBundle(() => tracer),
+    })
+      .append(descriptor('probe', 'PRE_SERDE'))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(names).toEqual(['http.client.operation', 'http.client.operation']);
+  });
+
+  test('operationName reaches the request context every step reads (CTX-16)', async () => {
+    const seen: {operationName?: string | undefined} = {};
+    const runtime = new PipelineBuilder(new RecordingTransport(), {
+      operationName: 'GetUser',
+    })
+      .append(contextProbe(seen))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(seen.operationName).toBe('GetUser');
+  });
+
+  test('no options bag means the no-op bundle and no operation name', async () => {
+    const seen: {operationName?: string | undefined} = {};
+    const runtime = new PipelineBuilder(new RecordingTransport())
+      .append(contextProbe(seen))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(seen.operationName).toBeUndefined();
+  });
+
+  test('flatten seeding carries the seed runtime’s options (PIPE-35)', async () => {
+    const {tracer, names} = countingTracer();
+    const seen: {operationName?: string | undefined} = {};
+    const seeded = new PipelineBuilder(new RecordingTransport(), {
+      instrumentation: createInstrumentationBundle(() => tracer),
+      operationName: 'GetUser',
+    })
+      .append(descriptor('seeded', 'LOGGING'))
+      .build();
+
+    const runtime = PipelineBuilder.seedFrom(seeded, 'flatten')
+      .append(contextProbe(seen))
+      .build();
+
+    await runtime.send(aRequest('https://example.com'));
+
+    expect(names).toEqual(['http.client.operation']);
+    expect(seen.operationName).toBe('GetUser');
   });
 });
