@@ -3,7 +3,9 @@
 // Exercises: RETRY-7/8 (both axes gate), RETRY-20 (a hint replaces the schedule, unjittered), RETRY-22
 // (a pacing failure never masks the upstream failure), RETRY-26/31 (cancellable wait, zero delay
 // inline), RETRY-27/RECOV-20 (total-timeout budget with per-attempt shrinking), RETRY-32 (no attempts
-// after cancellation), RETRY-34 (suppressed trail on failure, discarded on success, skip-self),
+// after cancellation), RETRY-34 (the prior-attempt trail rides BESIDE the surfaced error, discarded
+// on success, skip-self), XCUT-1 (the surfaced type does not depend on how many attempts ran -- the
+// final attempt's own error is what the engine hands back, cancellation included),
 // RETRY-35/RECOV-16 (body released before the wait, bounded buffering), RETRY-36/RECOV-19 (503,503,200
 // terminates on the 200; a surviving response is returned LIVE), RETRY-39/40 (delay precedence; a
 // throwing override is non-fatal), RETRY-42/RECOV-28 (per-call state).
@@ -15,10 +17,12 @@ import {Protocol} from '../http/protocol.js';
 import {Request} from '../http/request.js';
 import {Response} from '../http/response.js';
 import {Status} from '../http/status.js';
-import {IoError} from '../io/errors.js';
+import {IoError, TransportFailureError} from '../io/errors.js';
 import {failure, success, type Outcome} from '../recovery/outcome.js';
+import {CancellationError} from '../seams/transport.js';
 import type {SuppressedErrorLike} from '../suppress.js';
 import {countingResponse} from '../testing/fake-transport.js';
+import {retryAttempts} from './attempt-trail.js';
 import {runWithRetry, type RetryConfig, type RetryDispatch} from './engine.js';
 import {retrySettings, type RetrySettings} from './settings.js';
 
@@ -29,9 +33,13 @@ const BARE_POST = Request.newBuilder()
   .build();
 
 /**
- * The suppressed pair is asserted on SHAPE, never `instanceof SuppressedError`: the native class is
- * absent on this package's Node floor (>=20.3), where `suppress()` returns a structural stand-in and
- * an `instanceof` assertion would silently assert nothing.
+ * The one remaining pairing this engine can build is RECOV-12's -- a release failure riding along
+ * with the primary it must not mask. The retry TRAIL is no longer a `SuppressedError` chain, so the
+ * only assertions below that use this predicate are the release ones.
+ *
+ * Asserted on SHAPE, never `instanceof SuppressedError`: the native class is absent on this
+ * package's Node floor (>=20.3), where `suppress()` returns a structural stand-in and an
+ * `instanceof` assertion would silently assert nothing.
  */
 function isSuppressedShape(value: unknown): value is SuppressedErrorLike {
   return (
@@ -364,12 +372,11 @@ describe('cancellation (RETRY-26/32)', () => {
   });
 });
 
-describe('suppressed trail (RETRY-34)', () => {
-  test('prior attempt failures ride along as suppressed on the surfaced error', async () => {
-    const dispatch = scriptedDispatch([
-      failure(new IoError('first')),
-      failure(new IoError('second')),
-    ]);
+describe('the prior-attempt trail (RETRY-34)', () => {
+  test('the FINAL attempt error is surfaced, with the priors reachable beside it', async () => {
+    const first = new IoError('first');
+    const second = new IoError('second');
+    const dispatch = scriptedDispatch([failure(first), failure(second)]);
 
     const outcome = await runWithRetry(
       GET,
@@ -379,12 +386,45 @@ describe('suppressed trail (RETRY-34)', () => {
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
+    // Not a wrapper: the surfaced value IS attempt 2's own error, so a caller's `instanceof` reads
+    // the same here as it does after a single attempt.
+    expect(outcome.error).toBe(second);
+    expect(retryAttempts(outcome.error)).toEqual([first]);
+  });
+
+  test('the surfaced TYPE does not depend on how many attempts ran (XCUT-1)', async () => {
+    const one = await runWithRetry(
+      GET,
+      scriptedDispatch([failure(new TransportFailureError('refused'))]),
+      configOf({maxAttempts: 1, fixedDelayMs: 0}),
+    );
+    // Distinct instances, because `scriptedDispatch` repeats its last entry and RETRY-34's
+    // skip-self guard would otherwise empty the trail this row needs to be non-empty.
+    const three = await runWithRetry(
+      GET,
+      scriptedDispatch([
+        failure(new TransportFailureError('refused')),
+        failure(new TransportFailureError('refused')),
+        failure(new TransportFailureError('refused')),
+      ]),
+      configOf({maxAttempts: 3, fixedDelayMs: 0}),
+    );
+
+    expect(one.kind).toBe('failure');
+    expect(three.kind).toBe('failure');
+    if (one.kind !== 'failure' || three.kind !== 'failure') return;
+    // Until 2026-09-05 the second of these was a `SuppressedError` and this row was false: the
+    // surfaced CLASS was a function of the attempt budget, which is what XCUT-1's conformance
+    // clause ("assert the surfaced error is the cancellation type") catches on the abort path.
+    expect(one.error).toBeInstanceOf(TransportFailureError);
+    expect(three.error).toBeInstanceOf(TransportFailureError);
+    expect(retryAttempts(three.error)).toHaveLength(2);
   });
 
   test('the trail is discarded entirely on eventual success', async () => {
+    const first = new IoError('first');
     const dispatch = scriptedDispatch([
-      failure(new IoError('first')),
+      failure(first),
       success(countingResponse(200).response),
     ]);
 
@@ -395,10 +435,12 @@ describe('suppressed trail (RETRY-34)', () => {
     );
 
     expect(outcome.kind).toBe('success');
+    // Nothing was recorded anywhere: the discarded failure carries no trail of its own either.
+    expect(retryAttempts(first)).toEqual([]);
   });
 });
 
-describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', () => {
+describe('the trail -- skip-self and single-attempt shapes (RETRY-34)', () => {
   test('a reused instance never suppresses itself (RETRY-34 skip-self)', async () => {
     const reused = new IoError('same instance every time');
     const dispatch = scriptedDispatch([failure(reused)]);
@@ -410,6 +452,8 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
     );
 
     expect(outcome).toEqual(failure(reused));
+    // Skip-self leaves nothing at all for a transport that reuses one instance across attempts.
+    expect(retryAttempts(reused)).toEqual([]);
   });
 
   test('a single failed attempt surfaces its error unwrapped', async () => {
@@ -419,6 +463,7 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
     expect(await runWithRetry(GET, dispatch, configOf())).toEqual(
       failure(only),
     );
+    expect(retryAttempts(only)).toEqual([]);
   });
 
   test('a discarded 503 becomes a buffered HttpStatusError in the trail (RECOV-16)', async () => {
@@ -438,10 +483,8 @@ describe('suppressed trail -- skip-self and single-attempt shapes (RETRY-34)', (
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(IoError);
-    expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
+    expect(outcome.error).toBeInstanceOf(IoError);
+    expect(retryAttempts(outcome.error)[0]).toBeInstanceOf(HttpStatusError);
   });
 });
 
@@ -469,13 +512,10 @@ describe('a discarded response OUTSIDE the 400-599 band (V14/N2, XCUT-8)', () =>
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.suppressed).toBeInstanceOf(
-      RetryDiscardedResponseError,
-    );
-    expect(outcome.error.suppressed).not.toBeInstanceOf(HttpStatusError);
-    expect((outcome.error.suppressed as {status: number}).status).toBe(200);
+    const [discarded] = retryAttempts(outcome.error);
+    expect(discarded).toBeInstanceOf(RetryDiscardedResponseError);
+    expect(discarded).not.toBeInstanceOf(HttpStatusError);
+    expect((discarded as {status: number}).status).toBe(200);
   });
 
   test('a discarded 404 still becomes an HttpStatusError -- the band is unchanged', async () => {
@@ -496,9 +536,7 @@ describe('a discarded response OUTSIDE the 400-599 band (V14/N2, XCUT-8)', () =>
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.suppressed).toBeInstanceOf(HttpStatusError);
+    expect(retryAttempts(outcome.error)[0]).toBeInstanceOf(HttpStatusError);
   });
 });
 
@@ -599,9 +637,7 @@ describe('the inter-attempt wait -- degenerate and hostile delays', () => {
     // instead of silently becoming an extra attempt.
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(RangeError);
+    expect(outcome.error).toBeInstanceOf(RangeError);
     expect(dispatch.calls).toHaveLength(1);
   });
 });
@@ -663,6 +699,90 @@ describe('cancellation while an attempt is in flight (RETRY-32)', () => {
   });
 });
 
+describe('a cancelled backoff surfaces the cancellation TYPE (XCUT-1)', () => {
+  /** Aborts from inside attempt 1, so the loop reaches its RETRY-32 check with a one-entry trail. */
+  function abortAfterOneAttempt(
+    controller: AbortController,
+    first: unknown,
+  ): RetryDispatch & {sends: number} {
+    const dispatch = (): Promise<Outcome<Response>> => {
+      dispatch.sends += 1;
+      controller.abort();
+      return Promise.resolve(failure(first));
+    };
+    dispatch.sends = 0;
+    return dispatch;
+  }
+
+  test('the surfaced error is CancellationError, with the prior attempt beside it', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    // `abortToSdkError` maps the abort to this type one line before the trail is attached; until
+    // 2026-09-05 the trail wrapper undid the mapping immediately, and a cancelled backoff ALWAYS
+    // has a non-empty trail -- so `instanceof CancellationError` was false for every one of them.
+    expect(outcome.error).toBeInstanceOf(CancellationError);
+    expect(retryAttempts(outcome.error)).toEqual([first]);
+  });
+
+  test('the trail already covers every send, so length is NOT one less than the count', async () => {
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch = abortAfterOneAttempt(controller, first);
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    // The surfaced error is SYNTHESIZED at the RETRY-32 gate, not raised by a send, so it is not an
+    // attempt's error and the trail already accounts for all of them. `length + 1` would say two
+    // sends where one happened -- which is why no TSDoc here offers that arithmetic.
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
+  });
+});
+
+describe('the RETRY-32 gate can synthesize a TransportFailureError too', () => {
+  test('a TIMEOUT signal takes the same synthesized path, as TransportFailureError', async () => {
+    // `abortToSdkError` branches on `isTimeoutSignal`, so the engine's own RETRY-32 gate can
+    // synthesize a `TransportFailureError` too. Narrowing a catch to that class therefore does NOT
+    // guarantee the caught error came from a send.
+    const controller = new AbortController();
+    const first = new IoError('reset');
+    const dispatch: RetryDispatch & {sends: number} = Object.assign(
+      (): Promise<Outcome<Response>> => {
+        dispatch.sends += 1;
+        controller.abort(new DOMException('timed out', 'TimeoutError'));
+        return Promise.resolve(failure(first));
+      },
+      {sends: 0},
+    );
+
+    const outcome = await runWithRetry(GET, dispatch, {
+      ...configOf({fixedDelayMs: 60_000, maxAttempts: 5}),
+      signal: controller.signal,
+    });
+
+    expect(outcome.kind).toBe('failure');
+    if (outcome.kind !== 'failure') return;
+    expect(outcome.error).toBeInstanceOf(TransportFailureError);
+    expect(outcome.error).not.toBeInstanceOf(CancellationError);
+    expect(dispatch.sends).toBe(1);
+    expect(retryAttempts(outcome.error)).toHaveLength(1);
+  });
+});
+
 describe('a throwing attempt still carries the trail (RETRY-33/34)', () => {
   test('a throw from inside the attempt is folded into a failure outcome, trail intact', async () => {
     const calls: number[] = [];
@@ -681,16 +801,14 @@ describe('a throwing attempt still carries the trail (RETRY-33/34)', () => {
     expect(calls).toEqual([1, 2]);
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect(outcome.error.error).toBeInstanceOf(RangeError);
+    expect(outcome.error).toBeInstanceOf(RangeError);
     // RETRY-34: attempt 1's failure would have been lost had the throw escaped as a rejection.
-    expect((outcome.error.suppressed as Error).message).toBe('first');
+    expect((retryAttempts(outcome.error)[0] as Error).message).toBe('first');
   });
 });
 
-describe('the suppressed trail with more than two entries (RETRY-34)', () => {
-  test('three distinct attempt failures fold into a nested chain', async () => {
+describe('the trail with more than two entries (RETRY-34)', () => {
+  test('three distinct attempt failures list flat, oldest first', async () => {
     const dispatch = scriptedDispatch([
       failure(new IoError('first')),
       failure(new IoError('second')),
@@ -705,15 +823,12 @@ describe('the suppressed trail with more than two entries (RETRY-34)', () => {
 
     expect(outcome.kind).toBe('failure');
     if (outcome.kind !== 'failure') return;
-    expect(isSuppressedShape(outcome.error)).toBe(true);
-    if (!isSuppressedShape(outcome.error)) return;
-    expect((outcome.error.error as Error).message).toBe('third');
-    // The two priors folded into a nested pair, oldest innermost.
-    const folded = outcome.error.suppressed;
-    expect(isSuppressedShape(folded)).toBe(true);
-    if (!isSuppressedShape(folded)) return;
-    expect((folded.error as Error).message).toBe('second');
-    expect((folded.suppressed as Error).message).toBe('first');
+    expect((outcome.error as Error).message).toBe('third');
+    // A flat list in wire order. The `SuppressedError` pair is binary, so N priors used to fold
+    // into a nested chain a caller had to walk; nothing about RETRY-34 asked for that shape.
+    expect(
+      retryAttempts(outcome.error).map(entry => (entry as Error).message),
+    ).toEqual(['first', 'second']);
   });
 });
 

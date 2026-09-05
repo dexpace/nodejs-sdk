@@ -42,7 +42,9 @@ function attemptVia(config: RetryDispatchConfig): RetryDispatch {
  * @param request - the request to prepare, send, and possibly re-send.
  * @param config - the recovery chains, transport, and retry policy.
  * @returns the response of the terminal successful attempt.
- * @throws Whatever the terminal Failure carries, with RETRY-34's suppressed trail attached.
+ * @throws Whatever the FINAL attempt failed with, unwrapped -- the same class a single-attempt run
+ *   would have thrown. RETRY-34's earlier attempts are recorded beside it and read back through
+ *   `retryAttempts()`.
  *
  * @internal
  */

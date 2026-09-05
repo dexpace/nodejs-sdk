@@ -9,9 +9,13 @@
 //      `AbortSignal.timeout()`, whose class and `name` are the runtime's, not this package's -- if
 //      Node named it anything but `TimeoutError`, every timed-out request would silently stop being
 //      retried and `bun test` would still be green.
-//   2. RETRY-34's suppressed trail goes through `suppress()`, which picks the native `SuppressedError`
-//      or the shape-compatible fallback depending on the runtime. Bun has the global; the declared
-//      floor (`engines.node >=20.3`) does not. The trail's SHAPE has to be identical either way.
+//   2. RETRY-34's trail used to go through `suppress()`, which picks the native `SuppressedError` or
+//      the shape-compatible fallback depending on the runtime -- Bun has the global, the declared
+//      floor (`engines.node >=20.3`) does not, and this suite's matrix runs both legs. #72 took that
+//      branch off the retry path entirely: the final attempt's own error is surfaced and the trail
+//      rides in a side table. So the assertion moved with it, from "the wrapper has the same shape on
+//      either runtime" to "neither runtime produces a wrapper", which is the stronger claim and the
+//      one a reintroduced `suppress()` would break differently on Node 20 than on Node 24.
 //   3. RETRY-35/RECOV-16's "release the discarded response" rides on Web Streams: a retired response is
 //      drained to EOF by `toHttpError()`, an abandoned one is cancelled by `Response.close()`. Node's
 //      `cancel()`/`pull()` timing is an independent implementation of Bun's.
@@ -24,7 +28,14 @@
 // `dist/` file path, per this suite's import rule.
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
-import {Protocol, Request, Response, Status} from '@dexpace/core';
+import {
+  CancellationError,
+  Protocol,
+  Request,
+  Response,
+  retryAttempts,
+  Status,
+} from '@dexpace/core';
 import {
   isRetryableFailure,
   RETRYABLE_STATUSES,
@@ -123,13 +134,12 @@ describe('retry classification on the declared Node floor', () => {
 });
 
 describe('the retry engine on the declared Node floor', () => {
-  it('folds the suppressed trail into the same shape whether or not the runtime has SuppressedError', async () => {
+  it('surfaces the final attempt error itself, on a runtime that may lack SuppressedError', async () => {
     // Timeout aborts, because they are the retryable throwable this suite can build without reaching
-    // into another `dist/` module -- two of them exhaust the budget and produce a two-entry trail.
-    const dispatch = scriptedDispatch([
-      failure(new DOMException('timed out', 'TimeoutError')),
-      failure(new DOMException('timed out again', 'TimeoutError')),
-    ]);
+    // into another `dist/` module -- two of them exhaust the budget and produce a one-entry trail.
+    const first = new DOMException('timed out', 'TimeoutError');
+    const last = new DOMException('timed out again', 'TimeoutError');
+    const dispatch = scriptedDispatch([failure(first), failure(last)]);
 
     const outcome = await runWithRetry(
       GET,
@@ -139,9 +149,13 @@ describe('the retry engine on the declared Node floor', () => {
 
     assert.equal(dispatch.calls.length, 2);
     assert.equal(outcome.kind, 'failure');
-    assert.equal(outcome.error.name, 'SuppressedError');
-    assert.ok('error' in outcome.error);
-    assert.ok('suppressed' in outcome.error);
+    assert.equal(outcome.error, last);
+    assert.notEqual(outcome.error.name, 'SuppressedError');
+    // RETRY-34's trail, read through the accessor as a CONSUMER reaches it -- the `@dexpace/core`
+    // specifier and the built `dist/`, not the engine's own module path.
+    const priors = retryAttempts(outcome.error);
+    assert.equal(priors.length, 1);
+    assert.equal(priors[0], first);
   });
 
   it('releases a discarded response through the drain route, over Node Web Streams (RETRY-35)', async () => {
@@ -217,5 +231,9 @@ describe('the retry engine on the declared Node floor', () => {
     assert.equal(outcome.kind, 'failure');
     // The point of the case: it returned instead of sleeping out the full 60s backoff.
     assert.ok(defaultClock.monotonic() - startedAt < 5_000);
+    // XCUT-1 over a REAL AbortSignal and a REAL timer, which is the half the unit suite's injected
+    // clock cannot reach. The trail is non-empty here by construction, so before #72 this was a
+    // `SuppressedError` and the assertion below was false.
+    assert.ok(outcome.error instanceof CancellationError);
   });
 });

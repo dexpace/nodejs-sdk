@@ -153,8 +153,50 @@ All three carry the same `InstrumentationBundle`, so trace and span identity sur
 | Auth | `authStep(settings)` | `credentials`, `tiers`, `challengeHook`, `bearerMarginMs` — see [`auth.md`](./auth.md) |
 | Logging | `loggingStep(settings?)` | `granularity`, `severity`, `previewSizeBytes`, `droppedHeaderPolicy`, `logger`, `meter`, `tracerFactory` |
 
-Retry and redirect are worth two notes each, because both surprise people:
+Retry and redirect are worth a few notes each, because both surprise people:
 
+- **What retry throws is the last attempt's own error.** The class you catch does not depend on how
+  many attempts ran: a refused connection is a `TransportFailureError` whether `maxAttempts` was 1 or
+  3, and an abort that lands during a backoff wait is a `CancellationError` (`XCUT-1`). The earlier
+  attempts are not thrown away — `retryAttempts(caught)` returns them, oldest first, with the error
+  you passed in excluded from its own trail (`RETRY-34`):
+
+  ```typescript
+  import {
+    retryAttempts,
+    TransportFailureError,
+    type Request,
+    type Runtime,
+  } from '@dexpace/core';
+
+  declare const runtime: Runtime;
+  declare const request: Request;
+
+  export async function send(): Promise<void> {
+    try {
+      await runtime.send(request);
+    } catch (error) {
+      if (error instanceof TransportFailureError) {
+        for (const prior of retryAttempts(error)) {
+          console.error('an earlier attempt failed:', prior);
+        }
+      }
+      throw error;
+    }
+  }
+  ```
+
+  One entry per attempt that failed *before* the one you caught — which is not an attempt count, so
+  resist writing `length + 1`. The surfaced error is an attempt's own only when it came from one, and
+  sometimes it did not: a cancellation or timeout the engine observes between attempts is synthesized
+  at that gate, and so is a failure from stamping the attempt header, which runs before the request
+  goes out. On those paths the trail already covers every send. Narrowing the catch does not help —
+  a timeout signal is mapped to `TransportFailureError`, the same class a real send failure raises.
+
+  The trail is a side table keyed by the error, not a property on it, so nothing is added to an
+  object you may not own; an error that never went through a retry loop answers with an empty list.
+  Until 2026-09-05 the pillar wrapped its terminal failure in a `SuppressedError` instead, which made
+  the surfaced class a function of the attempt budget.
 - **Retry pacing honours the server.** `Retry-After`, `X-RateLimit-Reset` and friends are parsed in a
   fixed precedence and win over computed backoff. Every computed delta is clamped to a 365-day
   ceiling that `RETRY-18` mandates — so a server that sends `X-RateLimit-Reset` in milliseconds

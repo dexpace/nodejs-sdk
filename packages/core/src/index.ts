@@ -113,6 +113,11 @@ export {
   ReservedStageError,
 } from './pipeline/errors.js';
 export {retryStep} from './retry/retry-step.js';
+// RETRY-34's read side. The retry pillar surfaces the FINAL attempt's own error, so `instanceof`
+// against it does not depend on how many attempts ran; this is how the earlier ones are reached.
+// Exported alongside `retryStep` because the two are one contract: nothing else in the barrel can
+// tell a caller that the error they caught is the third of three.
+export {retryAttempts} from './retry/attempt-trail.js';
 // The trail entry for a response the engine discarded whose status is outside 400-599 — reachable
 // only through a caller-widened `retryableStatuses`.
 export {RetryDiscardedResponseError} from './retry/errors.js';

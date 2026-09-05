@@ -9,7 +9,12 @@
 // These run the invariants through the fully composed retry+redirect+auth+logging pipeline over a
 // real socket, which is what this suite adds over 5a's and Phase 2's own unit-level coverage.
 import {afterAll, beforeAll, describe, expect, test} from 'bun:test';
-import {CancellationError, Request} from '@dexpace/core';
+import {
+  CancellationError,
+  HttpStatusError,
+  Request,
+  retryAttempts,
+} from '@dexpace/core';
 import {buildComposedPipeline} from './fixtures/composed-pipeline.js';
 import {startFixtureServer, type XcutFixtureServer} from './fixtures/server.js';
 import {rejectionOf} from './fixtures/settle.js';
@@ -20,10 +25,14 @@ let server: XcutFixtureServer;
  * Walks everything a surfaced failure can nest a prior error under, visiting by identity so a cyclic
  * chain terminates -- the same discipline `XCUT-9` puts on the classifier.
  *
- * The walk is necessary because 5a's engine folds the retry trail into a `SuppressedError`
- * (`RETRY-34`), so the cancellation that ended a backoff wait arrives as `.error` beneath a wrapper
- * rather than as the top-level throwable. Asserting on the top level alone would test the wrapping,
- * not the invariant.
+ * Kept after #72 made the top-level assertion possible, because the two answer different questions.
+ * `CancellationError` carries the raw `AbortSignal.reason` as its `cause`, so the walk is what
+ * proves the ambient abort was not swallowed on the way out, and it is also what catches a
+ * `TimeoutError` hiding one hop down where `XCUT-3` forbids one. What it must no longer be is the
+ * ONLY assertion: 5a's engine folded the retry trail into a `SuppressedError` (`RETRY-34`), the
+ * cancellation arrived as `.error` beneath that wrapper, and a chain walk was the only way to find
+ * it -- which is precisely the defect, since a caller writing `catch (e) { e instanceof
+ * CancellationError }` has no walk. Every row below asserts the top level too.
  */
 function* chainOf(error: unknown): Generator {
   const seen = new Set<unknown>();
@@ -176,13 +185,17 @@ describe('XCUT-3: an inter-attempt wait is promptly cancellable', () => {
     }, 50).unref();
     const surfaced = await rejectionOf(pending);
 
-    // Asserted on the chain rather than the top-level type, because the top level is a
-    // `SuppressedError` pairing the cancellation with the prior attempt's failure. What the chain
-    // must carry is the SDK's OWN type: until 2026-09-02 the retry engine surfaced `signal.reason`
-    // verbatim, so a cancelled backoff arrived as a bare DOMException `AbortError` while the
-    // transport path mapped the identical abort to `CancellationError` -- one requirement, two
-    // types, depending on which layer noticed. Both layers now map through the same shape, so this
-    // asserts the type as well as XCUT-3's letter.
+    // XCUT-1's conformance clause, at the top level and unqualified: "assert the surfaced error is
+    // the cancellation type". Two separate defects had to be fixed for this line to hold. Until
+    // 2026-09-02 the engine surfaced `signal.reason` verbatim, so a cancelled backoff arrived as a
+    // bare DOMException `AbortError` while the transport mapped the identical abort to
+    // `CancellationError` -- one requirement, two types, depending on which layer noticed. Until
+    // 2026-09-05 the mapping was then undone one line later by the retry trail's `SuppressedError`
+    // wrapper, and a cancelled backoff ALWAYS has a non-empty trail, so this row was false for
+    // every reachable case.
+    expect(surfaced).toBeInstanceOf(CancellationError);
+    // The chain still has to carry the raw abort (the ambient flag survived the mapping) and must
+    // not carry a timeout, which is XCUT-3's own letter.
     expect(carriesCancellation(surfaced)).toBe(true);
     expect(carriesSdkCancellationError(surfaced)).toBe(true);
     expect(carriesTimeout(surfaced)).toBe(false);
@@ -207,6 +220,34 @@ describe('XCUT-3: an inter-attempt wait is promptly cancellable', () => {
 
     // One dispatch produced the 500; the cancelled wait must not produce a second.
     expect(pipeline.dispatches()).toBe(1);
+
+    await pipeline.close();
+  });
+});
+
+describe('RETRY-34: the trail survives the unwrapped cancellation', () => {
+  test('the attempt the cancelled wait was scheduled for stays reachable', async () => {
+    const pipeline = buildComposedPipeline({
+      retry: {settings: {maxAttempts: 5, initialDelayMs: 60_000}},
+    });
+    const controller = new AbortController();
+    const pending = pipeline.runtime.send(
+      Request.newBuilder().url(`${server.url}/fail-500`).build(),
+      undefined,
+      controller.signal,
+    );
+    setTimeout(() => {
+      controller.abort();
+    }, 50).unref();
+    const surfaced = await rejectionOf(pending);
+
+    // Surfacing the cancellation unwrapped is not allowed to LOSE the 500 that provoked the retry
+    // in the first place -- that was the one thing the `SuppressedError` wrapper did buy. It rides
+    // in the trail instead, and the retired response is a buffered `HttpStatusError` (RECOV-16).
+    const priors = retryAttempts(surfaced);
+    expect(priors).toHaveLength(1);
+    expect(priors[0]).toBeInstanceOf(HttpStatusError);
+    expect((priors[0] as HttpStatusError).status).toBe(500);
 
     await pipeline.close();
   });
