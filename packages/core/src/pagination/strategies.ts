@@ -23,6 +23,10 @@ function withUrl(template: Request, url: URL): Request {
  * A `null` **or empty** cursor ends the stream — both, because a server returning `""` for "no more pages" is
  * common enough that treating it as a real cursor produces an infinite walk.
  *
+ * @throws UrlConstructionError from `parse` when the cursor the server sent, or `parameterName`, carries an
+ * unpaired surrogate: such a string has no UTF-8 form and so no percent-encoded form either (PAGE-22). The
+ * engine closes the response on that path like any other parse failure (PAGE-13).
+ *
  * @public
  */
 export function cursorStrategy<T>(init: {
@@ -61,6 +65,9 @@ export function cursorStrategy<T>(init: {
  * *pre-flight* request for this hop, so it is the response's own request that reflects a redirect or any
  * rewrite a step applied on the way out, and that is the page number worth incrementing. An absent, empty,
  * or non-numeric value falls back to `startPage`; `startPage: 0` supports 0-based servers.
+ *
+ * @throws UrlConstructionError from `parse` when `parameterName` carries an unpaired surrogate, which has no
+ * percent-encoded form (PAGE-22).
  *
  * @public
  */
