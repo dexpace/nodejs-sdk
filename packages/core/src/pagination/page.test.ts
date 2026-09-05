@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/pagination/page.test.ts
-// Exercises: PAGE-2 (items and metadata survive close; items never null), PAGE-3 (one owned response, closed
-// exactly once), PAGE-4 (PageInfo shape, undefined next-request is the end signal).
+// Exercises: PAGE-2 (items and metadata survive close; items never null, at construction too), PAGE-3 (one
+// owned response, never null, closed exactly once), PAGE-4 (PageInfo shape, undefined next-request is the end
+// signal).
 import {expect, test} from 'bun:test';
 import {Page, pageInfo} from './page.js';
 
@@ -124,4 +125,26 @@ test('no "undefined" prototype key survives the guarded install (PAGE-12)', () =
   expect(Object.getOwnPropertyNames(Object.getPrototypeOf(page))).not.toContain(
     'undefined',
   );
+});
+
+// `Page` is `@public`, so these guards are reachable from consumer code, not only from the walk —
+// and until audit #67 / #79 their messages said "never null" while the check tested `!== undefined`.
+// A `null` therefore reached the item copy and surfaced as a bare `TypeError` from spread.
+test.each([
+  ['null items', null, /items must never be null/],
+  ['undefined items', undefined, /items must never be null/],
+])('a Page rejects %s at construction (PAGE-2)', (_name, items, message) => {
+  const {response} = fakeResponse();
+  expect(() =>
+    makePage(response, items as unknown as readonly number[]),
+  ).toThrow(message);
+});
+
+test('a Page rejects a null response at construction (PAGE-3)', () => {
+  expect(() =>
+    makePage(
+      null as unknown as ConstructorParameters<typeof Page<number>>[0],
+      [1],
+    ),
+  ).toThrow(/must own a response/);
 });

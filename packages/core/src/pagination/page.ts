@@ -67,12 +67,15 @@ export class Page<T> {
   readonly #response: Response;
 
   constructor(response: Response, items: readonly T[]) {
+    // `!== null` as well as `!== undefined`: both messages have always said "null", and testing only
+    // for `undefined` let a `null` through to the item copy below, where it surfaced as a bare
+    // `TypeError` from spread — outside the error tree and naming neither field (audit #67 / #79).
     invariant(
-      (response as unknown) !== undefined,
+      (response as unknown) !== undefined && (response as unknown) !== null,
       'a Page must own a response (PAGE-3)',
     );
     invariant(
-      (items as unknown) !== undefined,
+      (items as unknown) !== undefined && (items as unknown) !== null,
       'a Page’s items must never be null (PAGE-2)',
     );
 

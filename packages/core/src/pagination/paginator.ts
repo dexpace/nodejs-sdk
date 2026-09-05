@@ -196,20 +196,7 @@ export class Paginator<T> {
           response,
           request,
         );
-
-        // PAGE-4: parse must always return a well-formed result and must never signal termination through a
-        // side channel. A strategy that returns nothing is a programmer error, so it crashes at the fault
-        // rather than silently ending the walk as if the server had run out of pages.
-        invariant(
-          (info as unknown) !== undefined,
-          'PaginationStrategy.parse must return a PageInfo, never undefined',
-        );
-        invariant(
-          (info.items as unknown) !== undefined,
-          'PageInfo.items must never be null or absent (PAGE-2)',
-        );
-
-        held = new Page(response, info.items);
+        held = await pageOrClose(response, info);
         request = info.nextRequest;
         yield held;
       }
@@ -236,17 +223,67 @@ async function parseOrClose<T>(
   try {
     return await strategy.parse(response, template);
   } catch (parseError: unknown) {
-    try {
-      await response.close();
-    } catch (closeError: unknown) {
-      throw suppress(
-        parseError,
-        closeError,
-        'pagination parse failed and releasing the response also failed',
-      );
-    }
-    throw parseError;
+    return closeThenRethrow(response, parseError, 'pagination parse failed');
   }
+}
+
+/**
+ * PAGE-4: `parse` must always return a well-formed result, and must never signal termination through a side
+ * channel. A strategy that returns nothing is a programmer error, so the walk crashes at the fault rather than
+ * silently ending as if the server had run out of pages.
+ *
+ * PAGE-27: and it crashes *after* releasing the response. `parse` returning a malformed value is the one exit
+ * from this loop the `finally` in `#walk` cannot cover — `held` is still `undefined` there, because assigning it
+ * is precisely what failed — so, like PAGE-13's parse rejection, the release happens inline (audit #67 / #79).
+ *
+ * Both checks reject `null` as well as `undefined`, which is what their messages have always claimed. Testing
+ * only for `undefined` let `{items: null}` through to `Page`'s constructor, where the item copy surfaced as a
+ * bare `TypeError` from spread — naming nothing a caller could act on, and leaking the response on the way.
+ *
+ * Not async: the only asynchrony here is the close, and only on the failure path.
+ */
+function pageOrClose<T>(
+  response: Response,
+  info: PageInfo<T>,
+): Promise<Page<T>> {
+  try {
+    invariant(
+      (info as unknown) !== undefined && (info as unknown) !== null,
+      'PaginationStrategy.parse must return a PageInfo, never null or undefined',
+    );
+    invariant(
+      (info.items as unknown) !== undefined && (info.items as unknown) !== null,
+      'PageInfo.items must never be null or absent (PAGE-2)',
+    );
+    return Promise.resolve(new Page(response, info.items));
+  } catch (buildError: unknown) {
+    return closeThenRethrow(
+      response,
+      buildError,
+      'the pagination strategy returned a malformed PageInfo',
+    );
+  }
+}
+
+/**
+ * Release `response`, then rethrow `primary`. Shared by the two inline-close paths so they cannot drift: a close
+ * failure is attached as suppressed and never masks the failure that got here first (PAGE-13, PAGE-15).
+ */
+async function closeThenRethrow(
+  response: Response,
+  primary: unknown,
+  context: string,
+): Promise<never> {
+  try {
+    await response.close();
+  } catch (closeError: unknown) {
+    throw suppress(
+      primary,
+      closeError,
+      `${context} and releasing the response also failed`,
+    );
+  }
+  throw primary;
 }
 
 /** PAGE-26: on an already-settled cancellation path, a close error is swallowed — nothing is left to report to. */
