@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/retry/classify.test.ts
 // Exercises: RETRY-1 (single-sourced status set, 501/505 excluded), RETRY-2 (iterative
-// identity-tracking cause walk, cycle-safe), RETRY-3 (retryability derived from status, not a stored
-// flag), RETRY-4 (transport failures always retryable), RETRY-5/6/7 (re-sendability), RETRY-8 (both
-// axes required), RETRY-23/24 (cancellation vs timeout), RETRY-25 (allow-list makes the fatal
-// exclusion vacuous), RETRY-37 (configured set is authoritative -- widens AND narrows),
+// identity-tracking cause walk, cycle-safe; and the I/O boundary the walk tests -- one case per
+// error class in `io/errors.ts`, see the block below), RETRY-3 (retryability derived from status,
+// not a stored flag), RETRY-4 (transport failures always retryable), RETRY-5/6/7 (re-sendability),
+// RETRY-8 (both axes required), RETRY-23/24 (cancellation vs timeout), RETRY-25 (allow-list makes
+// the fatal exclusion vacuous), RETRY-37 (configured set is authoritative -- widens AND narrows),
+// TRANSPORT-20 (a no-response send surfaces as a retryable I/O subtype),
 // XCUT-5 (the baked retryability flag comes from ONE shared status classifier covering 408/429/all
 // 5xx except 501 and 505 -- asserted below. This port has no separately-cached boolean field: the
 // classifier is a pure function of HttpStatusError.status, which never changes post-construction
@@ -16,7 +18,15 @@ import {stringBody} from '../body/simple-bodies.js';
 import {streamBody} from '../body/stream-body.js';
 import type {Body} from '../body/body.js';
 import {Request} from '../http/request.js';
-import {IoError} from '../io/errors.js';
+import {
+  AllocationLimitError,
+  ClosedResourceError,
+  EndOfStreamError,
+  IoError,
+  isIoError,
+  SourceContractViolationError,
+  TransportFailureError,
+} from '../io/errors.js';
 import {CancellationError} from '../seams/transport.js';
 import {
   RETRYABLE_STATUSES,
@@ -116,6 +126,75 @@ describe('isRetryableFailure', () => {
         narrowed,
       ),
     ).toBe(false);
+  });
+});
+
+/**
+ * One case per class in `io/errors.ts`, pinning the boundary RETRY-2's "an I/O error" is read as.
+ *
+ * `isIoError` accepts all six classes the file declares; `classify.ts`'s walk tests
+ * `instanceof IoError`, which two of them satisfy. That gap was undecided until audit #67 / #78
+ * decided it (`docs/deviations.md` item 17): the branch means "the wire failed", so `IoError` and
+ * `TransportFailureError` retry and the four flat leaves do not. Each leaf case asserts BOTH halves
+ * -- that `isIoError` accepts the value, and what the classifier answers for it -- because the two
+ * disagreeing is the decision, and a test that only asserted the classifier would read as an
+ * oversight rather than a choice.
+ *
+ * These are the guard on re-parenting: moving any leaf back under `IoError`, or switching the branch
+ * to `isIoError`, turns four of them red instead of quietly making a deterministic failure retryable.
+ * Measured 2026-09-05 by making that one-line change: exactly these four fail.
+ */
+describe('the I/O boundary the cause-walk tests (RETRY-2/RETRY-4, TRANSPORT-20)', () => {
+  test('IoError itself is retryable', () => {
+    const error = new IoError('connection refused');
+    expect(isIoError(error)).toBe(true);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(true);
+  });
+
+  test('TransportFailureError is retryable (TRANSPORT-20)', () => {
+    // The one class TRANSPORT-20 requires to BE an IoError. A send that produced no response is the
+    // canonical retryable condition (RETRY-4), and the `extends` is what carries it here.
+    const error = new TransportFailureError('ECONNREFUSED');
+    expect(error).toBeInstanceOf(IoError);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(true);
+  });
+
+  test('EndOfStreamError is NOT retryable, buried in a cause chain either', () => {
+    // The exact-length-copy contract inside io/, not a wire truncation: a short copy repeats on the
+    // next attempt. A truncated response is the transport's to report, as TransportFailureError.
+    const error = new EndOfStreamError(3, 8);
+    expect(isIoError(error)).toBe(true);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(false);
+    // Asserted through a wrapper too: the walk is what would rescue it if the branch widened, so the
+    // shallow case alone would not catch a change made one hop up.
+    expect(
+      isRetryableFailure(
+        new Error('read failed', {cause: error}),
+        RETRYABLE_STATUSES,
+      ),
+    ).toBe(false);
+  });
+
+  test('SourceContractViolationError is NOT retryable', () => {
+    // A foreign source that returned zero bytes for a positive read (IO-17) is a programming error
+    // in the source, deterministic on re-send.
+    const error = new SourceContractViolationError('source returned 0 bytes');
+    expect(isIoError(error)).toBe(true);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(false);
+  });
+
+  test('ClosedResourceError is NOT retryable', () => {
+    // Using a closed resource (IO-42) is a caller lifecycle error; the resource stays closed.
+    const error = new ClosedResourceError('response body');
+    expect(isIoError(error)).toBe(true);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(false);
+  });
+
+  test('AllocationLimitError is NOT retryable', () => {
+    // A cap the same request hits again (IO-9); retrying spends the budget to fail identically.
+    const error = new AllocationLimitError(2 ** 32, 2 ** 31 - 1);
+    expect(isIoError(error)).toBe(true);
+    expect(isRetryableFailure(error, RETRYABLE_STATUSES)).toBe(false);
   });
 });
 
