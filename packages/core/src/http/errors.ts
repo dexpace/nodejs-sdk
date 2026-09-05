@@ -140,6 +140,10 @@ export class ProtocolParseError extends DexpaceError {}
  *   fail; `QueryParamsBuilder.add` rejects it at the call that supplied it instead. `cause` is not
  *   set on this path — nothing was caught, the input was inspected (HTTP-29, audit #67 / #76).
  *   `QueryParams.parse` does NOT throw it: HTTP-31 makes parsing lenient, so it substitutes U+FFFD.
+ *   Pagination's query splice — `spliceQueryParam` and `readQueryParam`, behind `cursorStrategy`
+ *   and `pageNumberStrategy` — rejects the same input for the same reason, through the same
+ *   predicate (PAGE-22, audit #67 / #79). That one is reachable without any caller mistake, since
+ *   the cursor is server-supplied; its message names the parameter and never echoes the value.
  *
  * @public
  */
