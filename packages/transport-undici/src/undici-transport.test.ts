@@ -348,25 +348,41 @@ describe('undiciTransport disposal (TRANSPORT-15/16)', () => {
   });
 });
 
+/**
+ * A `Dispatcher` that records every `request()` it is handed and answers 200 with an empty body, so
+ * a row can assert what reached undici's argument validation rather than what reached the wire.
+ * Returns the recording array; the caller builds the transport around it.
+ */
+function recordingDispatcher(sink: Dispatcher.RequestOptions[]): Dispatcher {
+  return {
+    request: (options: Dispatcher.RequestOptions) => {
+      sink.push(options);
+      return Promise.resolve({
+        statusCode: 200,
+        headers: {},
+        body: {
+          destroy: () => undefined,
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({done: true, value: undefined}),
+          }),
+        },
+      } as unknown as Dispatcher.ResponseData);
+    },
+    close: () => Promise.resolve(),
+  } as unknown as Dispatcher;
+}
+
+/** The flat `[name, value, ...]` array one recorded dispatch carried. */
+function dispatchedHeaders(
+  sent: Dispatcher.RequestOptions | undefined,
+): string[] {
+  return (sent?.headers ?? []) as string[];
+}
+
 describe('undiciTransport dispatch', () => {
   test('TRANSPORT-2/11: redirects are pinned off and Connection is forwarded, not dropped', async () => {
     const dispatched: Dispatcher.RequestOptions[] = [];
-    const recorder = {
-      request: (options: Dispatcher.RequestOptions) => {
-        dispatched.push(options);
-        return Promise.resolve({
-          statusCode: 200,
-          headers: {},
-          body: {
-            destroy: () => undefined,
-            [Symbol.asyncIterator]: () => ({
-              next: () => Promise.resolve({done: true, value: undefined}),
-            }),
-          },
-        } as unknown as Dispatcher.ResponseData);
-      },
-      close: () => Promise.resolve(),
-    } as unknown as Dispatcher;
+    const recorder = recordingDispatcher(dispatched);
 
     const transport = undiciTransport({dispatcher: recorder});
     const request = Request.newBuilder()
@@ -383,9 +399,78 @@ describe('undiciTransport dispatch', () => {
     const sent = dispatched[0];
     expect(sent?.maxRedirections).toBe(0);
     expect(sent?.path).toBe('/anything?q=1');
-    const headers = sent?.headers as string[];
+    const headers = dispatchedHeaders(sent);
     expect(headers).toContain('Connection');
     expect(headers).not.toContain('Content-Length');
+  });
+});
+
+describe('undiciTransport outbound header degradation (TRANSPORT-11/12)', () => {
+  test('every header undici refuses is dropped before dispatch, and logged by name', async () => {
+    const dispatched: Dispatcher.RequestOptions[] = [];
+    const transport = undiciTransport({
+      dispatcher: recordingDispatcher(dispatched),
+      headerDropLogging: 'all',
+    });
+    const capture = captureDroppedHeaders();
+    try {
+      const request = Request.newBuilder()
+        .url(`${origin}/anything`)
+        .headers(
+          Headers.newBuilder()
+            .set('Expect', '100-continue')
+            .set('Keep-Alive', 'timeout=5')
+            .set('Upgrade', 'websocket')
+            .set('X Custom', 'model-valid, non-token')
+            .set('X-Pass-Through', 'survives')
+            .build(),
+        )
+        .build();
+      await (await transport.send(request)).close();
+      await transport.close();
+      const headers = dispatchedHeaders(dispatched[0]);
+      // Asserted against the argument array, not the wire: undici validates in `new Request(...)`,
+      // so a name that reaches this array is a name that would have thrown (audit #67 / #81).
+      expect(headers).toEqual(['X-Pass-Through', 'survives']);
+      for (const name of ['expect', 'keep-alive', 'upgrade', 'x custom']) {
+        expect(capture.dropped).toContain(name);
+      }
+    } finally {
+      capture.restore();
+    }
+  });
+
+  test('a Connection value undici cannot carry is dropped, close and keep-alive are not', async () => {
+    const carried: string[] = [];
+    const dropped: string[] = [];
+    for (const value of ['close', 'Keep-Alive', 'upgrade']) {
+      const dispatched: Dispatcher.RequestOptions[] = [];
+      const transport = undiciTransport({
+        dispatcher: recordingDispatcher(dispatched),
+        headerDropLogging: 'all',
+      });
+      const capture = captureDroppedHeaders();
+      try {
+        const request = Request.newBuilder()
+          .url(`${origin}/anything`)
+          .headers(Headers.newBuilder().set('Connection', value).build())
+          .build();
+        await (await transport.send(request)).close();
+        await transport.close();
+        if (dispatchedHeaders(dispatched[0]).includes('Connection')) {
+          carried.push(value);
+        }
+        // `createDropLogger` lower-cases the name it logs, so the field is `connection`.
+        if (capture.dropped.includes('connection')) dropped.push(value);
+      } finally {
+        capture.restore();
+      }
+    }
+    // `Keep-Alive` mixed-cased on purpose: undici lower-cases the value before comparing
+    // (`lib/core/request.js:401`), so this transport must too or it would drop a header undici
+    // would have carried.
+    expect(carried).toEqual(['close', 'Keep-Alive']);
+    expect(dropped).toEqual(['upgrade']);
   });
 });
 

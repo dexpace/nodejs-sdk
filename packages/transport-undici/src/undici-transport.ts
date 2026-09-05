@@ -52,13 +52,26 @@ const require = createRequire(import.meta.url);
 const undici = require('undici/index.js') as typeof import('undici');
 
 /**
- * TRANSPORT-11's outbound drop set for this transport. `connection` is deliberately absent — §17's
- * own note is that an undici-class transport forwards it rather than dropping it.
+ * TRANSPORT-11's outbound drop set for this transport: the three framing headers undici computes
+ * itself, plus the three it refuses outright.
+ *
+ * `expect`, `keep-alive` and `upgrade` are undici's unconditional rejections
+ * (`lib/core/request.js:398,409` in 6.28.0 — `InvalidArgumentError` for the first two,
+ * `NotSupportedError` for `expect`). Until 2026-09-05 they were absent, so a caller who set any of
+ * them got a failed send out of `undiciTransport().send()` where the fetch twin dispatched
+ * (audit #67 / #81). TRANSPORT-12 says the header is what gives way, not the request.
+ *
+ * `connection` is deliberately absent — §17's own note is that an undici-class transport forwards
+ * it rather than dropping it. undici carries only `close` and `keep-alive`, so a third value is
+ * dropped per-request by {@link isUnsendableHeader} rather than by name here.
  */
 const UNDICI_FORBIDDEN_HEADERS: readonly string[] = [
   'content-length',
   'host',
   'transfer-encoding',
+  'expect',
+  'keep-alive',
+  'upgrade',
 ];
 
 /**
@@ -146,7 +159,52 @@ function selectDispatchers(options: UndiciTransportOptions): DispatcherSet {
   return {proxied, direct, owned: [proxied, direct]};
 }
 
-/** undici's flat `[name, value, name, value, ...]` form -- the only shape that keeps a repeated name repeated (HTTP-14). */
+/**
+ * RFC 9110 `token`, which is what undici's `isValidHTTPToken` enforces on every header name
+ * (`lib/core/util.js:547-587`): VCHAR minus the delimiters `"(),/:;<=>?@[\]{}`. Anchored and
+ * one-or-more, so the empty name undici also rejects fails here too.
+ *
+ * `@dexpace/core` is deliberately laxer: `hasForbiddenNameByte` admits every printable ASCII byte
+ * (`http/ascii-validation.ts:29-33`), so `X Custom` is a model-valid name that no native client on
+ * this platform will carry.
+ */
+const RFC9110_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
+
+/** The only two `Connection` values undici carries; anything else is `InvalidArgumentError`. */
+const FORWARDABLE_CONNECTION_VALUES: ReadonlySet<string> = new Set([
+  'close',
+  'keep-alive',
+]);
+
+/**
+ * Whether undici's own request validation would reject this header, which for TRANSPORT-12 means it
+ * is dropped rather than allowed to fail the send.
+ *
+ * Only the *name* grammar and the `connection` value are checked. undici's value grammar
+ * (`headerCharRegex`, `lib/core/util.js:598`) admits HTAB, 0x20-0x7E **and** obs-text 0x80-0xFF,
+ * which is strictly wider than the outbound value rule `mapOutboundHeaders` has already applied
+ * (HTTP-18), so no value that reaches here can fail there.
+ *
+ * @param name - the header name, as the caller spelled it.
+ * @param value - the header value.
+ * @returns `true` when the header must be dropped instead of dispatched.
+ */
+function isUnsendableHeader(name: string, value: string): boolean {
+  if (!RFC9110_TOKEN.test(name)) return true;
+  return (
+    name.toLowerCase() === 'connection' &&
+    !FORWARDABLE_CONNECTION_VALUES.has(value.toLowerCase())
+  );
+}
+
+/**
+ * undici's flat `[name, value, name, value, ...]` form -- the only shape that keeps a repeated name
+ * repeated (HTTP-14) -- with every header undici would refuse degraded to a logged drop.
+ *
+ * The per-header guard is the same degrade `@dexpace/transport-fetch` gets for free from wrapping
+ * `Headers.append` in a `try`/`catch` (`fetch-transport.ts:146-152`): undici validates at dispatch
+ * rather than at construction, so this transport has to ask the question itself (TRANSPORT-12).
+ */
 function toUndiciHeaders(
   request: Request,
   forbidden: readonly string[],
@@ -155,8 +213,14 @@ function toUndiciHeaders(
   const {sent, dropped} = mapOutboundHeaders(request.headers, forbidden, {
     bodyDerivedMediaType: request.body?.mediaType,
   });
-  logDrops(dropped);
-  return [...sent.entries()].flat();
+  const degraded = [...dropped];
+  const flat: string[] = [];
+  for (const [name, value] of sent.entries()) {
+    if (isUnsendableHeader(name, value)) degraded.push(name);
+    else flat.push(name, value);
+  }
+  logDrops(degraded);
+  return flat;
 }
 
 /**

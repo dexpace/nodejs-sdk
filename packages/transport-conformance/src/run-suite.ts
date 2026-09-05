@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-conformance/src/run-suite.ts
 // The single TRANSPORT-N conformance suite, run once per transport package so the two adapters cannot
-// drift. Exercises: TRANSPORT-1..9, TRANSPORT-14..17, TRANSPORT-20..21, TRANSPORT-23..27,
+// drift. Exercises: TRANSPORT-1..9, TRANSPORT-11..17, TRANSPORT-20..21, TRANSPORT-23..27,
 // TRANSPORT-29, SEAM-12, SEAM-16, SEAM-30, NFR-15, and AUTH-12/AUTH-25 to the extent a transport is
 // answerable for them (the repeated-challenge-header row). TRANSPORT-10..13's SHARED half -- the one
 // outbound header pass both adapters call -- is asserted at its source in
-// @dexpace/transport-shared, and the rows here cover only what each adapter decides for itself.
+// @dexpace/transport-shared; the rows here cover what each adapter decides for itself, which since
+// audit #67 / #81 includes TRANSPORT-11/12's per-header degrade, because the two adapters had four
+// different answers for the same model-valid header and only a shared row could say so.
 // TRANSPORT-18/28's collapses are Deviation Ledger rows; TRANSPORT-30's
 // full flow is transport-undici's challenge-handler.test.ts. TRANSPORT-22 is NOT driven from here --
 // forcing an adaptation throw needs a per-transport hook into the native response, so each adapter
@@ -539,6 +541,80 @@ function registerHeaderRows(ctx: SuiteContext): void {
 }
 
 /**
+ * Headers every model layer in this SDK accepts and at least one shipped native client refuses
+ * outright, paired with the value that provokes the refusal.
+ *
+ * `expect`, `keep-alive` and `upgrade` are `undici`'s three unconditional rejections
+ * (`lib/core/request.js:398,409` — `InvalidArgumentError` for the first two, `NotSupportedError`
+ * for `expect`), and Node's global `fetch` is undici-backed, so both adapters meet them. `X Custom`
+ * is the non-token name: `@dexpace/core` admits any printable ASCII byte in a header name
+ * (`http/ascii-validation.ts:29-33`), while both native layers require RFC 9110 `token`.
+ *
+ * TRANSPORT-12 is what makes these one table rather than four transport-specific quirks: whatever
+ * the native client refuses, the transport drops *that header only* and still dispatches.
+ */
+const NATIVE_REJECTED_HEADERS: readonly (readonly [string, string])[] = [
+  ['Expect', '100-continue'],
+  ['Keep-Alive', 'timeout=5'],
+  ['Upgrade', 'websocket'],
+  ['X Custom', 'model-valid, non-token'],
+];
+
+function registerNativeRejectionRows(ctx: SuiteContext): void {
+  describe('TRANSPORT-11/12/13: a header the native client refuses degrades to a logged drop', () => {
+    for (const [name, value] of NATIVE_REJECTED_HEADERS) {
+      test(`${name} is dropped and logged, and the rest of the request still dispatches`, async () => {
+        let echoed: Record<string, string> = {};
+        const dropped = await captureDroppedHeaders(async () => {
+          await withTransport(ctx.makeTransport, async transport => {
+            const request = Request.newBuilder()
+              .url(ctx.url('/echo-headers'))
+              .headers(
+                Headers.newBuilder()
+                  .set(name, value)
+                  .set('X-Pass-Through', 'survives')
+                  .build(),
+              )
+              .build();
+            echoed = await readEchoedHeaders(transport, request);
+          });
+        });
+        // The send resolved at all, which is TRANSPORT-12's "the resulting native exception MUST NOT
+        // escape the send contract"; the two header assertions are its "the bad header is absent,
+        // the normal header present".
+        expect(echoed[name.toLowerCase()]).toBeUndefined();
+        expect(echoed['x-pass-through']).toBe('survives');
+        // TRANSPORT-13: the drop is discoverable by name, never silent.
+        expect(dropped).toContain(name.toLowerCase());
+      });
+    }
+
+    test('a Connection value the native client cannot carry is dropped on both transports', async () => {
+      // `Connection` is the one name whose drop set legitimately differs (TRANSPORT-11's own note,
+      // and `registerDropSetRows` below), so this row asserts the intersection: `upgrade` is neither
+      // `close` nor `keep-alive`, undici rejects it outright (`request.js:400-404`), and the WHATWG
+      // layer forbids the name entirely. Both must drop it, whichever reason applies.
+      //
+      // Asserted through the log rather than the echo for the same reason `registerDropSetRows`
+      // does: both clients set a `Connection` header of their own, so the wire cannot tell a
+      // forwarded caller header from the client's.
+      const dropped = await captureDroppedHeaders(async () => {
+        await withTransport(ctx.makeTransport, async transport => {
+          const request = Request.newBuilder()
+            .url(ctx.url('/echo-headers'))
+            .headers(Headers.newBuilder().set('Connection', 'upgrade').build())
+            .build();
+          const response = await transport.send(request);
+          expect(response.status.code).toBe(200);
+          await response.close();
+        });
+      });
+      expect(dropped).toContain('connection');
+    });
+  });
+}
+
+/**
  * The fixture's challenge list, recovered from however this transport chose to split it.
  *
  * Scoped to `/repeated-challenge` on purpose, and deliberately NOT a general RFC 7235 parser: the two
@@ -687,6 +763,7 @@ export function runTransportConformanceSuite(
     registerCancellationRows(ctx);
     registerLifecycleRows(ctx);
     registerHeaderRows(ctx);
+    registerNativeRejectionRows(ctx);
     registerInboundHeaderRows(ctx);
     registerDropSetRows(ctx);
     registerScopedRows(ctx);

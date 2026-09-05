@@ -87,7 +87,14 @@ silently misbehaving (`TRANSPORT-30`):
 - Redirects are pinned off (`maxRedirections: 0`) even behind a bring-your-own dispatcher that may
   carry a redirect interceptor. The pipeline is the single redirect authority.
 - `Connection` is **not** dropped outbound — §17's own note is that an undici-class transport
-  forwards it. `Content-Length`, `Host`, and `Transfer-Encoding` are.
+  forwards it — but only with a value undici will carry (`close` or `keep-alive`, matched
+  case-insensitively). Any other value is dropped, because undici rejects it outright.
+- `Content-Length`, `Host` and `Transfer-Encoding` are dropped because undici computes them;
+  `Expect`, `Keep-Alive` and `Upgrade` because undici refuses them
+  (`InvalidArgumentError`/`NotSupportedError` out of its own argument validation, before anything
+  reaches the wire). So is any header name outside RFC 9110 `token` — `@dexpace/core` admits every
+  printable ASCII byte in a name, undici does not. Every one of these is a drop logged by name
+  (`TRANSPORT-12`), never a failed send.
 - Destroying the dispatcher mid-flight surfaces as the terminal `CancellationError`, while a timeout
   on the same path stays the retryable `TransportFailureError` (`TRANSPORT-8`).
 - `Response.protocol` is always `HTTP_1_1`: undici's `ResponseData` does not surface the negotiated

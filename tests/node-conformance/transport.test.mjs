@@ -12,6 +12,8 @@
 //
 // Exercises: TRANSPORT-1 (redirects not followed), TRANSPORT-4/20 (timeout and no-response classification),
 // TRANSPORT-17 (a single-use body written once, its bytes on the wire), TRANSPORT-24 (vendor status codes),
+// TRANSPORT-11/12 (a header the native layer refuses is dropped, not a failed send -- Node's undici-backed
+// `fetch` rejects three names Bun's forwards),
 // TRANSPORT-28/BODY-11 (a real fileBody() over the wire, whole and ranged),
 // TRANSPORT-25 (the response body is a lazily-read stream and close releases it), TRANSPORT-29/SEAM-12
 // (concurrent sends), SEAM-16 (an abort after delivery must not close the delivered body).
@@ -135,6 +137,42 @@ describe('the transport adapters on the Node runtime', () => {
           assert.equal(response.status.code, 302);
           assert.equal(response.headers.get('location'), '/echo');
           await response.close();
+        } finally {
+          await transport.close();
+        }
+      });
+
+      it('drops the headers the native layer refuses rather than failing the send (TRANSPORT-11/12)', async () => {
+        // The one case in this file where Bun and Node disagree about the *outcome*, not merely the
+        // implementation. `Expect`, `Keep-Alive` and `Upgrade` are undici's three unconditional
+        // rejections, and Node's global `fetch` is undici-backed, so on this runtime an undropped
+        // one rejects the send: `TypeError: fetch failed` through transport-fetch, which can only
+        // be classified as the RETRYABLE TransportFailureError, and a terminal TypeError through
+        // transport-undici. Bun's `fetch` instead forwards `Expect`/`Keep-Alive` to the wire and
+        // hangs on `Upgrade`, so the Bun conformance rows for these names prove a weaker claim than
+        // this one does (audit #67 / #81, measured 2026-09-05).
+        const transport = makeTransport();
+        try {
+          const response = await transport.send(
+            Request.newBuilder()
+              .url(`${origin}/echo`)
+              .headers(
+                Headers.newBuilder()
+                  .set('Expect', '100-continue')
+                  .set('Keep-Alive', 'timeout=5')
+                  .set('Upgrade', 'websocket')
+                  .set('X Custom', 'model-valid, non-token')
+                  .set('X-Pass-Through', 'survives')
+                  .build(),
+              )
+              .build(),
+            RequestOptions.newBuilder().timeoutMs(2_000).build(),
+          );
+          const echoed = JSON.parse(await response.text());
+          for (const name of ['expect', 'keep-alive', 'upgrade', 'x custom']) {
+            assert.equal(echoed.headers[name], undefined, name);
+          }
+          assert.equal(echoed.headers['x-pass-through'], 'survives');
         } finally {
           await transport.close();
         }
