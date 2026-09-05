@@ -9,7 +9,8 @@
 // native body), TRANSPORT-20 (a permanent argument error is terminal, a no-response failure is
 // retryable), TRANSPORT-28 (a file body dispatches its declared byte range), SEAM-14,
 // TRANSPORT-19 (a header-mapping throw leaves no started body producer stranded), SEAM-30 (so no
-// producer rejection reaches Node's default unhandledRejection policy)
+// producer rejection reaches Node's default unhandledRejection policy), TRANSPORT-9 (a producer that
+// loses the race cancels the dispatch it raced, so no response is stranded)
 import {createRequire} from 'node:module';
 import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {createServer, type Server} from 'node:http';
@@ -683,6 +684,87 @@ describe('undiciTransport failure classification (TRANSPORT-20)', () => {
     } finally {
       await transport.close();
     }
+  });
+});
+
+describe('undiciTransport producer-failure race (TRANSPORT-9, SEAM-30)', () => {
+  /**
+   * A `Dispatcher` whose `request()` resolves only after `delayMs`, recording the signal it was
+   * handed. Nothing awaits that promise once the producer has lost the race, so the signal is the
+   * only thing that can still stop the exchange.
+   */
+  function lateDispatcher(
+    seen: {signal?: AbortSignal | null; settled: boolean},
+    delayMs: number,
+  ): Dispatcher {
+    return {
+      request: (options: Dispatcher.RequestOptions) => {
+        seen.signal = options.signal as AbortSignal | null;
+        return new Promise<Dispatcher.ResponseData>(resolve => {
+          setTimeout(() => {
+            seen.settled = true;
+            resolve({
+              statusCode: 200,
+              headers: {},
+              body: {
+                destroy: () => undefined,
+                dump: () => Promise.resolve(),
+                [Symbol.asyncIterator]: () => ({
+                  next: () => Promise.resolve({done: true, value: undefined}),
+                }),
+              },
+            } as unknown as Dispatcher.ResponseData);
+          }, delayMs);
+        });
+      },
+      close: () => Promise.resolve(),
+    } as unknown as Dispatcher;
+  }
+
+  test('a producer that loses the race takes the pending dispatch down with it', async () => {
+    // Until audit #67 / #82 this send dispatched with `signal: null` -- the fork only existed when
+    // the caller supplied a signal or a timeout was composed -- so undici kept dispatching after
+    // `send()` rejected and whatever came back was dropped with its `BodyReadable` neither read nor
+    // destroyed, holding the pooled connection open.
+    const seen: {signal?: AbortSignal | null; settled: boolean} = {
+      settled: false,
+    };
+    const transport = undiciTransport({dispatcher: lateDispatcher(seen, 30)});
+    const failing: Body = {
+      kind: 'stream',
+      mediaType: undefined,
+      contentLength: -1,
+      replayable: false,
+      writeTo: () => Promise.reject(new Error('producer exploded')),
+    };
+    const request = Request.newBuilder()
+      .method('POST')
+      .url(`${origin}/upload`)
+      .body(failing)
+      .build();
+
+    const error = await rejection(transport.send(request));
+    expect(error).toBeInstanceOf(TransportFailureError);
+    expect(seen.settled).toBe(false);
+    expect(seen.signal?.aborted).toBe(true);
+    expect((seen.signal?.reason as Error | undefined)?.message).toBe(
+      'producer exploded',
+    );
+    await transport.close();
+  });
+
+  test('a delivered response is never aborted by the same handle (SEAM-16)', async () => {
+    const seen: {signal?: AbortSignal | null; settled: boolean} = {
+      settled: false,
+    };
+    const transport = undiciTransport({dispatcher: lateDispatcher(seen, 0)});
+    const request = Request.newBuilder().url(`${origin}/anything`).build();
+    const response = await transport.send(request);
+    await response.close();
+    // The fork is latched at delivery, so its abort direction can no longer reach a body the
+    // caller now owns.
+    expect(seen.signal?.aborted).toBe(false);
+    await transport.close();
   });
 });
 

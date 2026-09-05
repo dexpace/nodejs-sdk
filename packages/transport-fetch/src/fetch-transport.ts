@@ -301,7 +301,7 @@ class FetchTransport implements Transport {
     };
     if (prepared.init !== undefined) init.body = prepared.init;
     if (prepared.duplex !== undefined) init.duplex = prepared.duplex;
-    if (signal !== undefined) init.signal = signal;
+    init.signal = signal;
 
     try {
       // Raced, not sequenced: a producer failure must surface even while `fetch` is still pending,
@@ -311,8 +311,17 @@ class FetchTransport implements Transport {
         producerFailure(prepared.done),
       ]);
     } catch (error) {
+      // Read BEFORE the fork is pulled below, or every producer failure would look like a caller
+      // abort and surface as a CancellationError.
+      const abortedByCaller = signal.aborted;
       await prepared.abandon(error);
-      if (signal?.aborted) throw abortToSdkError(signal, error);
+      if (abortedByCaller) throw abortToSdkError(signal, error);
+      // TRANSPORT-9: when the producer lost the race, `fetch` is still pending. Nothing awaits it
+      // any more, so a response that arrives later would be dropped with its body neither read nor
+      // cancelled -- a leaked connection for as long as the pool keeps it. Pulling the fork takes
+      // the native call down instead. On the path where `fetch` itself rejected there is nothing
+      // left to cancel and this is inert (audit #67 / #82).
+      plan.fork.abort(error);
       // TRANSPORT-20 versus RETRY-2, decided by the table in `@dexpace/transport-shared` rather
       // than here: until audit #67 / #82 every native rejection became `TransportFailureError`,
       // which `classify.ts` reports retryable for being an `IoError`, so an `ftp://` URL or a

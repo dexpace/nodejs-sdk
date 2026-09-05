@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // packages/transport-shared/src/body-pump.ts
-import type {Body} from '@dexpace/core';
+import {TransportFailureError, type Body} from '@dexpace/core';
 
 /**
  * A streaming request body in flight: the stream to hand the native client, the producer's own
@@ -81,9 +81,17 @@ export function pumpBody(body: Body): BodyPump {
  * unhandled one. Without it that late rejection reaches Node's default `unhandledRejection` policy
  * and takes the process down — the exact hazard SEAM-30 names, arriving from the request side.
  *
+ * The rejection is classified **here**, as the retryable `TransportFailureError` both transports
+ * already reported for it, and not left raw for the caller's catch to guess at. A body that could
+ * not be written is a failure of this layer, and the catch that receives it is the one that also
+ * receives the *native* client's rejections — which since audit #67 / #82 go through a table that
+ * can call a bare `TypeError` a permanent misconfiguration. A producer that happened to throw one
+ * would have been read as the wire refusing the request. Classifying at the source is what
+ * `prepareBody`'s buffered branch already does with the same failure.
+ *
  * @param done - the producer settlement from {@link pumpBody}, or `undefined` when the body was not
  *   streamed.
- * @returns a promise that rejects with the producer's failure and never resolves.
+ * @returns a promise that rejects with the producer's failure, wrapped, and never resolves.
  *
  * @internal
  */
@@ -91,9 +99,18 @@ export function producerFailure(
   done: Promise<void> | undefined,
 ): Promise<never> {
   if (done === undefined) return new Promise<never>(() => undefined);
-  // `then` with no rejection handler: a producer *success* says nothing about the response, so the
-  // derived promise only ever carries the failure onward.
-  return done.then(() => new Promise<never>(() => undefined));
+  return done.then(
+    // A producer *success* says nothing about the response, so only the failure is carried onward.
+    () => new Promise<never>(() => undefined),
+    (cause: unknown) => {
+      throw new TransportFailureError(
+        cause instanceof Error
+          ? cause.message
+          : 'request body could not be written',
+        {cause},
+      );
+    },
+  );
 }
 
 /**

@@ -295,14 +295,11 @@ function isNativeCancel(error: unknown): boolean {
  * the same reason `abort-mapping.ts` exists.
  *
  * @param error - whatever the dispatch rejected with.
- * @param signal - the forked signal the dispatch was given, if any.
+ * @param signal - the forked signal the dispatch was given.
  * @returns the error to throw; never returns normally without one.
  */
-function toDispatchError(
-  error: unknown,
-  signal: AbortSignal | undefined,
-): Error {
-  if (signal?.aborted) return abortToSdkError(signal, error);
+function toDispatchError(error: unknown, signal: AbortSignal): Error {
+  if (signal.aborted) return abortToSdkError(signal, error);
   if (isNativeCancel(error)) {
     // TRANSPORT-8: terminal, never retryable -- the dispatcher this send was routed over no longer
     // exists, so a retry over it cannot succeed.
@@ -537,7 +534,7 @@ class UndiciTransport implements Transport {
     // which is exactly the in-flight window this check is about.
     const dispatched = context.fork.signal;
 
-    if (dispatched?.aborted) {
+    if (dispatched.aborted) {
       // TRANSPORT-9 / SEAM-30: this response will never reach a caller, so this producer closes it.
       await result.body.dump().catch(() => undefined);
       await pump?.abandon(dispatched.reason);
@@ -586,9 +583,9 @@ class UndiciTransport implements Transport {
           method: request.method,
           headers: context.headers,
           body: context.body,
-          // `?? null` rather than an omitted key: `exactOptionalPropertyTypes` makes an explicit
-          // `undefined` a distinct, rejected value here, and undici reads `null` as "no signal".
-          signal: context.fork.signal ?? null,
+          // Always a real signal since audit #67 / #82: the fork is this transport's own
+          // cancellation handle, not merely a relay for the caller's.
+          signal: context.fork.signal,
           // TRANSPORT-1: pinned explicitly rather than inherited -- a BYO dispatcher may carry a
           // redirect interceptor, and the pipeline is the single redirect authority.
           maxRedirections: 0,
@@ -596,8 +593,16 @@ class UndiciTransport implements Transport {
         producerFailure(pump?.done),
       ]);
     } catch (error) {
+      // Read BEFORE the fork is pulled below, or every producer failure would look like a caller
+      // abort and surface as a CancellationError.
+      const mapped = toDispatchError(error, context.fork.signal);
       await pump?.abandon(error);
-      throw toDispatchError(error, context.fork.signal);
+      // TRANSPORT-9: when the producer lost the race, undici is still dispatching. Nothing awaits
+      // it any more, so a response that arrives later would be dropped with its `BodyReadable`
+      // neither read nor destroyed, holding the pooled connection. Pulling the fork takes the
+      // dispatch down instead; on the path where undici itself rejected it is inert.
+      context.fork.abort(error);
+      throw mapped;
     }
   }
 

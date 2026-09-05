@@ -96,10 +96,21 @@ exactly that reason. The default is retryable, so a shape the table does not rec
 retryable `TransportFailureError`; a caller abort is the terminal `CancellationError`. A raw
 `DOMException` must never surface. `isTimeoutSignal(signal)` is how you tell them apart.
 
-**6. An abort after delivery must not close the delivered body** (`SEAM-16`). Both native clients tie
-a response body's lifetime to the signal they were given, so dispatch over a **fork** of the signal
-and detach it at delivery. Get this wrong and a caller who aborts a moment after `send()` resolves
-finds the body they already own torn out from under them.
+**6. Dispatch over a fork of the caller's signal — and keep the fork even when there is no signal**
+(`SEAM-16`, `TRANSPORT-9`). Both native clients tie a response body's lifetime to the signal they
+were given, so a caller who aborts a moment after `send()` resolves would find the body they already
+own torn out from under them. Fork the signal, forward the caller's abort through it, and detach at
+delivery.
+
+The fork runs the other way too, and that half is easy to miss. When a streaming request-body
+producer fails while the native call is still pending, your `send()` rejects and nothing is left
+awaiting that call: a response arriving afterwards is dropped with its body neither read nor
+released, which is the leak `TRANSPORT-9` names. Abort the fork before you rethrow. That is why
+`forkSignal()` hands back a live signal even when the caller supplied none and no timeout was
+composed — a send with no signal at all is precisely the case where nothing could cancel it. Read
+whether the *caller* aborted before you pull the fork yourself, or every producer failure surfaces
+as a `CancellationError`; and let `detach()` latch the abort, so the second direction cannot become
+the `SEAM-16` violation the first one exists to prevent.
 
 **7. The caller owns the response body** (`BODY-15`). Return it live and unread. Do not buffer it, do
 not close it.

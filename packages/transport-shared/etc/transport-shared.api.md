@@ -4,7 +4,7 @@
 
 ```ts
 
-import type { Body as Body_2 } from '@dexpace/core';
+import { Body as Body_2 } from '@dexpace/core';
 import { DexpaceError } from '@dexpace/core';
 import { Headers as Headers_2 } from '@dexpace/core';
 import type { Method } from '@dexpace/core';
@@ -40,8 +40,9 @@ export function degradeInboundHeaders(raw: Iterable<readonly [string, string]>):
 //
 // @internal
 export interface ForkedSignal {
+    abort(reason: unknown): void;
     detach(): void;
-    readonly signal: AbortSignal | undefined;
+    readonly signal: AbortSignal;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "forkSignal" should be prefixed with an underscore because the declaration is marked as @internal
