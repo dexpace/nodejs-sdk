@@ -8,6 +8,20 @@ import {
   hasForbiddenInboundValueByte,
 } from './ascii-validation.js';
 
+/**
+ * The one frozen empty list this model's multi-value accessor returns for an absent name.
+ *
+ * Shared, not allocated per miss, and frozen for the same reason the present-name lists are:
+ * HTTP-5's accessors "MUST NOT let a caller mutate the model through the returned value", and
+ * `getAll`'s TSDoc promises a frozen list on every path. It returned a fresh `[]` on a miss, which
+ * was neither (audit #67 / #76). Sharing is safe precisely because it is frozen — there is no
+ * state in it to alias.
+ *
+ * Declared per model rather than shared with {@link QueryParams} through `builder.ts`: the two
+ * models deliberately import nothing from each other, and a frozen empty array cannot drift.
+ */
+const EMPTY_VALUE_LIST: readonly string[] = Object.freeze([]);
+
 function validateName(name: string): string {
   const trimmed = name.trim();
   if (trimmed === '' || hasForbiddenNameByte(trimmed)) {
@@ -130,10 +144,14 @@ export class Headers {
    * Returns every value stored under `name`, in insertion order.
    *
    * @param name - the header name, as a string or a {@link HeaderName}.
-   * @returns a read-only, frozen list of values — empty when the name is absent.
+   * @returns a read-only, frozen list of values — the shared frozen empty list when the name is
+   * absent. Frozen on both paths, so mutating it cannot reach the model (HTTP-5).
    */
   getAll(name: string | HeaderName): readonly string[] {
-    return this.#valuesByLowerName.get(toRawName(name).toLowerCase()) ?? [];
+    return (
+      this.#valuesByLowerName.get(toRawName(name).toLowerCase()) ??
+      EMPTY_VALUE_LIST
+    );
   }
 
   /**

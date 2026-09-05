@@ -9,7 +9,9 @@
 // XCUT-15's ingested-collection clause (a builder defensively copies what it is handed, so mutating that
 // collection after build() cannot alter the built model, and a derived builder never aliases its source),
 // HTTP-17 (outbound name validation + trim), HTTP-18 (outbound value validation), HTTP-19 (inbound leniency),
-// HTTP-20 (no value echo, escaped name), HTTP-21 (typed HeaderName interop)
+// HTTP-20 (no value echo, escaped name), HTTP-21 (typed HeaderName interop),
+// HTTP-5 again (getAll returns a FROZEN list on both the present-name and the absent-name path),
+// HTTP-13 once more (Headers.equals asserted directly, not only through Request.equals)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
 import {Headers, HeaderName} from './headers.js';
@@ -249,5 +251,121 @@ describe('HeaderName.lowerCased (HTTP-21)', () => {
     const name = HeaderName.of('  Content-Type  ');
     expect(name.lowerCased).toBe('content-type');
     expect(name.raw).toBe('Content-Type');
+  });
+});
+
+describe('getAll returns a frozen list on every path (HTTP-5)', () => {
+  const headers = Headers.newBuilder()
+    .add('X-Tag', 'a')
+    .add('X-Tag', 'b')
+    .build();
+
+  test('the present-name list is frozen', () => {
+    // Asserted directly for the first time by audit #67 / #76. `build()` freezes each value list,
+    // and `getAll` returns that same reference rather than a copy, so the freeze is the whole of
+    // HTTP-5's "cannot mutate the model through the returned value" on this accessor — if the
+    // freeze were ever dropped, nothing else would notice.
+    const values = headers.getAll('X-Tag');
+    expect(Object.isFrozen(values)).toBe(true);
+    expect(() => (values as string[]).push('c')).toThrow(TypeError);
+    expect(headers.getAll('X-Tag')).toEqual(['a', 'b']);
+  });
+
+  test('the absent-name list is frozen too, and is the same shared instance', () => {
+    // It was a fresh `[]` — unfrozen, against the TSDoc's promise of a frozen list, and a fresh
+    // allocation on every miss.
+    const first = headers.getAll('nope');
+    const second = headers.getAll('also-nope');
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(first).toBe(second);
+    expect(() => (first as string[]).push('x')).toThrow(TypeError);
+  });
+});
+
+// Reached only through `Request.equals` until audit #67 / #76. Each case below is a way the
+// comparison could be wrong that a Request-level test would not isolate.
+function buildHeaders(pairs: readonly (readonly [string, string])[]): Headers {
+  const builder = Headers.newBuilder();
+  for (const [name, value] of pairs) builder.add(name, value);
+  return builder.build();
+}
+
+describe('Headers.equals directly (HTTP-13): names and casing', () => {
+  test('is reflexive and true for an identical construction', () => {
+    const a = buildHeaders([['X-A', '1']]);
+    expect(a.equals(a)).toBe(true);
+    expect(a.equals(buildHeaders([['X-A', '1']]))).toBe(true);
+  });
+
+  test('name casing does not participate — HTTP-13 folds names', () => {
+    expect(
+      buildHeaders([['X-A', '1']]).equals(buildHeaders([['x-a', '1']])),
+    ).toBe(true);
+  });
+
+  test('value casing DOES participate — only names are folded', () => {
+    expect(
+      buildHeaders([['X-A', 'v']]).equals(buildHeaders([['X-A', 'V']])),
+    ).toBe(false);
+  });
+
+  test('the order of distinct NAMES does not matter', () => {
+    const ab = buildHeaders([
+      ['X-A', '1'],
+      ['X-B', '2'],
+    ]);
+    const ba = buildHeaders([
+      ['X-B', '2'],
+      ['X-A', '1'],
+    ]);
+    expect(ab.equals(ba)).toBe(true);
+    expect(ba.equals(ab)).toBe(true);
+  });
+});
+
+describe('Headers.equals directly (HTTP-13): values, order and subsets', () => {
+  test('the order of VALUES under one name does matter (HTTP-14)', () => {
+    const ab = buildHeaders([
+      ['X-T', 'a'],
+      ['X-T', 'b'],
+    ]);
+    const ba = buildHeaders([
+      ['X-T', 'b'],
+      ['X-T', 'a'],
+    ]);
+    expect(ab.equals(ba)).toBe(false);
+  });
+
+  test('a strict subset is not equal, in either direction', () => {
+    const one = buildHeaders([['X-A', '1']]);
+    const two = buildHeaders([
+      ['X-A', '1'],
+      ['X-B', '2'],
+    ]);
+    expect(one.equals(two)).toBe(false);
+    expect(two.equals(one)).toBe(false);
+  });
+
+  test('same name count, disjoint names, is not equal', () => {
+    // The length pre-check passes here, so this is the case that proves the per-name lookup runs.
+    expect(
+      buildHeaders([['X-A', '1']]).equals(buildHeaders([['X-B', '1']])),
+    ).toBe(false);
+  });
+
+  test('same names with different value COUNTS is not equal', () => {
+    const one = buildHeaders([['X-T', 'a']]);
+    const two = buildHeaders([
+      ['X-T', 'a'],
+      ['X-T', 'a'],
+    ]);
+    expect(one.equals(two)).toBe(false);
+    expect(two.equals(one)).toBe(false);
+  });
+
+  test('two empty instances are equal', () => {
+    expect(
+      Headers.newBuilder().build().equals(Headers.newBuilder().build()),
+    ).toBe(true);
   });
 });

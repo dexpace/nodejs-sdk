@@ -240,3 +240,22 @@ describe('lone surrogates are rejected where they are supplied (HTTP-29, HTTP-31
     );
   });
 });
+
+describe('getAll returns a frozen list on every path (HTTP-5)', () => {
+  const params = QueryParams.newBuilder().add('x', '1').add('x', '2').build();
+
+  test('the present-name list is frozen', () => {
+    const values = params.getAll('x');
+    expect(Object.isFrozen(values)).toBe(true);
+    expect(() => (values as string[]).push('3')).toThrow(TypeError);
+    expect(params.getAll('x')).toEqual(['1', '2']);
+  });
+
+  test('the absent-name list is frozen too, and is the same shared instance', () => {
+    const first = params.getAll('nope');
+    const second = params.getAll('also-nope');
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(first).toBe(second);
+    expect(() => (first as string[]).push('x')).toThrow(TypeError);
+  });
+});
