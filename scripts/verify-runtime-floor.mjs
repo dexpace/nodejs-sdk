@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // scripts/verify-runtime-floor.mjs
 //
 // NFR-10 / the design doc's "Runtime-floor discipline" gate: a publishable
@@ -19,13 +20,17 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 // The agreed pairings for this project. These are deliberate project decisions,
-// not a general ES-to-Node compatibility matrix: ES2022 syntax runs on Node
-// 16.11+, but the SDK declares a 18.17 floor. Adding a row here is a reviewed
-// choice about what runtimes the SDK supports, never a mechanical bump.
+// not a general ES-to-Node compatibility matrix, and the floor is set by the
+// runtime built-ins the SDK calls rather than by the syntax it emits: ES2023
+// syntax runs on Node 20.0, but `globalThis.crypto` (which `MultipartBody`
+// reads synchronously at construction) is exposed unflagged only from 19.0 and
+// is absent from ESM on every Node 18 release, and `AbortSignal.any()` (which
+// `composeSignal` calls) landed in 20.3.0. Adding or moving a row here is a
+// reviewed choice about what runtimes the SDK supports, never a mechanical bump.
 const LANGUAGE_LEVEL_TO_NODE_FLOOR = {
   es2021: '>=16.11',
   es2022: '>=18.17',
-  es2023: '>=20.0',
+  es2023: '>=20.3',
 };
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));

@@ -1,0 +1,31 @@
+{
+  // Standalone and referenced by nothing. `bun run typecheck` names each package's project
+  // explicitly and this one is deliberately absent from that list, so the example is never a
+  // gate — check it by hand with `bunx tsc -p examples/petstore/tsconfig.json --noEmit`.
+  //
+  // It exists anyway, and is not optional: `eslint.config.js` runs the type-aware tier with
+  // `projectService: true`, which resolves each `.ts` file against the NEAREST enclosing
+  // tsconfig. Without this file — or with an `include` that misses a file — `gts lint .` fails
+  // at the repository root with "was not found by the project service", which is a blocking CI
+  // step. See FINDINGS.md, finding 7.
+  //
+  // `types: ["bun"]` mirrors `tests/tsconfig.json`: the canary and regen suites import
+  // `bun:test`, and nothing else in the tree supplies those globals.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "target": "ES2023",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.AsyncIterable"
+    ],
+    "types": [
+      "bun"
+    ]
+  },
+  "include": [
+    "src/**/*.ts",
+    "*.test.ts"
+  ]
+}

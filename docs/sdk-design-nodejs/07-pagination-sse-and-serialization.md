@@ -27,6 +27,10 @@ async function* items(): AsyncGenerator<Item> {
 }
 ```
 
+> [!NOTE]
+> **Erratum on close ordering (PAGE-11 vs illustrative snippet):** The snippet above illustrates JavaScript's automatic `.return()`-on-abandon via `finally`, but closes *after* yielding items. **PAGE-11** (MUST) mandates closing *before* yielding any items on the page (`const items = page.items; await page.close(); yield* items;`). Materialized items survive close (**PAGE-2**), so closing before yielding releases the underlying response immediately and ensures an abandoned item iteration cannot strand an open response.
+
+
 and an early `break` out of the consumer's `for await` loop drives the `finally` — and therefore `page.close()` —
 automatically, with no wrapper type and no documented "must remember to close" convention required from callers.
 The page-level view's two-outstanding-pages buffering (**PAGE-12**: a `hasNext()` probe eagerly runs the next

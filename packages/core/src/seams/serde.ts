@@ -2,14 +2,252 @@
 // packages/core/src/seams/serde.ts
 
 /**
- * @internal
- * Provisional. `deserialize(data: unknown): T` with `T` inferred from the instance is exactly the
- * erased/inferred generic SEAM-21 forbids ("deserialization MUST require an explicit runtime type
- * token"). Phase 6's type-witness mechanism will change this interface's shape — do not export this
- * from `packages/core/src/index.ts`.
+ * The runtime type witness a decode operation requires (SERDE-5, closing SEAM-21).
+ *
+ * TypeScript erases types completely — there is no runtime class token to reflect over, so an
+ * erased generic cannot be recovered the way a JVM port recovers one. Instead the caller supplies a
+ * *value* that already carries the same information: a schema. This interface is deliberately
+ * structural and minimal so that Zod, Valibot, ArkType, effect/schema, and anything following the
+ * community "Standard Schema" convention satisfy it without an adapter. `@dexpace/core` defines this
+ * shape and depends on none of them (SEAM-1).
+ *
+ * Because TypeScript infers `T` from the schema's own generic parameter, the compile-time type and
+ * the runtime witness are one artifact, not two things kept in sync by convention.
+ *
+ * @public
  */
-export interface Serde<T> {
+export interface Schema<T> {
+  /**
+   * Validate an already-parsed wire value and return it as `T`.
+   *
+   * @param input - the decoded-but-unvalidated wire value.
+   * @returns the value as `T`.
+   * @throws Whatever the schema library raises; a {@link Deserializer} wraps it as a
+   * `DeserializationError` with the original chained.
+   */
+  parse(input: unknown): T;
+}
+
+/**
+ * The encode half of a {@link Serde} (SERDE-3, SERDE-4).
+ *
+ * No method takes a {@link Schema} — encoding has the value in hand and needs no witness.
+ *
+ * @public
+ */
+export interface Serializer {
+  /**
+   * Encode to a freshly allocated string.
+   *
+   * One of `SEAM-20`'s four allocation profiles. A codec whose wire form is not textual (CBOR,
+   * protobuf) throws a `SerializationError` from this method rather than inventing a lossy
+   * rendering.
+   *
+   * @param value - the value to encode.
+   * @returns the encoded payload as a fresh string.
+   * @throws SerializationError when the value cannot be encoded, or when this codec has no textual
+   * wire form.
+   */
+  serializeToString(value: unknown): string;
+
+  /**
+   * Encode to a freshly allocated buffer.
+   *
+   * @param value - the value to encode.
+   * @returns the encoded payload as fresh bytes.
+   * @throws SerializationError when the value cannot be encoded.
+   */
+  serialize(value: unknown): Uint8Array;
+
+  /**
+   * Encode into a caller-owned buffer at `offset` (default 0), returning the number of bytes
+   * written.
+   *
+   * Bytes before `offset` are left untouched, and the buffer is never resized, reallocated, or
+   * otherwise taken ownership of.
+   *
+   * @param value - the value to encode.
+   * @param target - the caller-owned buffer to write into.
+   * @param offset - where to start writing; defaults to 0.
+   * @returns the number of bytes written.
+   * @throws RangeError — a plain one, **not** a serde error and with no chained cause — when
+   * `offset` is out of range or the payload does not fit (SERDE-4).
+   * @throws SerializationError when the value cannot be encoded.
+   */
+  serializeInto(value: unknown, target: Uint8Array, offset?: number): number;
+
+  /**
+   * Encode into a caller-owned sink, writing the payload fully.
+   *
+   * Does **not** close, abort, or otherwise take ownership of `sink` — the caller opened it and the
+   * caller closes it (SERDE-3).
+   *
+   * @param value - the value to encode.
+   * @param sink - the caller-owned destination; never closed or aborted by this call.
+   * @returns a promise resolving once the whole payload has been written.
+   * @throws SerializationError when the value cannot be encoded.
+   * @throws TypeError when `sink` is already locked by another writer — the plain platform error,
+   * not re-typed, because a contended sink is a programmer error rather than an encoding failure.
+   * @throws Whatever writing to `sink` raised, propagated unwrapped: SERDE-12's rule is
+   * directional-agnostic, so a genuine write failure is never re-wrapped as a serde exception.
+   * The writer lock is released on that path too; the sink itself is left errored and unclosed,
+   * because the caller owns it (SERDE-3).
+   *
+   * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
+   * `'AbortError'` when none was given. Checked before the writer lock is taken, and then raced
+   * against each pending write, so an aborted call never leaves the caller's sink locked and never
+   * closes it (SERDE-3). A write parked against a slow sink is the case the pre-check cannot cover;
+   * the write itself is left outstanding, because aborting it would be taking ownership.
+   *
+   * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
+   * project-wide test for whether an API owes one. Buffered-bytes APIs — `serialize`,
+   * `serializeToString`, `toHttpError`, `Response.bytes()` — correctly take none.
+   */
+  serializeTo(
+    value: unknown,
+    sink: WritableStream<Uint8Array>,
+    options?: {readonly signal?: AbortSignal | undefined},
+  ): Promise<void>;
+}
+
+/**
+ * What to decode into: the runtime witness, the optional label that names it in an error message,
+ * and whether the target admits a top-level wire `null`.
+ *
+ * These describe one thing and travel together, at every layer that decodes — the SPI's
+ * `deserialize`/`deserializeFrom` and the `decodeResponse`/`decodeSuccessResponse` handlers above
+ * them. Bundling is also what keeps both inside `max-params: 3`:
+ * `(response, deserializer, schema, typeName?)` is four parameters, and the optional one counts.
+ *
+ * @public
+ */
+export interface DecodeTarget<T> {
+  /** The runtime type witness; also the source of the decode's static return type (SERDE-5). */
+  readonly schema: Schema<T>;
+  /** An optional label naming the target in error messages; falls back to `'the target type'`. */
+  readonly typeName?: string | undefined;
+  /**
+   * Whether a top-level wire `null` is a legal value for this target. Defaults to `false`.
+   *
+   * `SERDE-13` requires that a wire `null` decoded into a **non-null** target fail, and an
+   * implementation cannot tell from a schema *value* whether the target is nullable — a schema
+   * carries no nullability a codec could read. So the rejection is unconditional by default, and
+   * runs *before* the schema: moving it after would let a permissive schema such as
+   * `{parse: (i) => i}` launder a wire `null` into a non-null `T`, which is the heap pollution
+   * `SERDE-5` and `SERDE-13` exist to prevent.
+   *
+   * Setting this to `true` is the caller stating what the schema cannot: that `T` includes `null`.
+   * The check is then skipped and the `null` reaches the schema, which is free to reject it. Use it
+   * for an operation whose success body is legitimately the literal `null`, and for the one place
+   * `tristate(inner)` can serve as a top-level target rather than a field combinator.
+   *
+   * A codec MUST honor this flag. Every implementor faces the same limitation, which is why the
+   * opt-in lives on the target rather than in any one codec's options.
+   */
+  readonly admitsNull?: boolean | undefined;
+}
+
+/**
+ * The decode half of a {@link Serde} (SERDE-5, SERDE-6, SERDE-13).
+ *
+ * `typeName` is an optional diagnostic label, never a witness: a structural schema value carries no
+ * reliable name, so when a wire `null` is decoded into a non-null target the implementation names
+ * the target from this label, falling back to `'the target type'`. That literal is part of the
+ * contract and each codec repeats it — SEAM-1 leaves core with no exported constant to share, so the
+ * duplication between `response-handlers.ts` and `@dexpace/codec-json` is deliberate, not drift.
+ *
+ * **Contract obligation on implementors (SERDE-13).** A wire `null` decoded into a non-null target
+ * MUST throw `DeserializationError` naming that target, on *every* entry point, and MUST NOT return
+ * a `null` that flows through the non-null result and detonates at some later field access. Enforce
+ * it before delegating to the schema — a schema library may or may not reject a bare `null`, and may
+ * or may not name the target when it does. Core cannot enforce this for you: `decodeResponse`
+ * streams bytes straight into {@link Deserializer.deserializeFrom} and never holds a parsed value to
+ * inspect, and core owning a parser would violate SEAM-1.
+ *
+ * **A decode target is treated as non-null unless the caller says otherwise.** An implementation
+ * sees a schema *value*, which carries no nullability it could read, so the check above cannot be
+ * derived from the schema — it rejects a top-level wire `null` unconditionally *by default*. The one
+ * way to admit one is {@link DecodeTarget.admitsNull}, the caller stating what the schema value
+ * cannot: that `T` includes `null`. With it set the check is skipped, the `null` reaches the schema,
+ * which is free to reject it, and `tristate(inner)` can serve as a top-level target rather than only
+ * a *field* combinator. Off by default, and deliberately so — the alternative lets a permissive
+ * schema such as `{parse: (i) => i}` launder a wire `null` into a non-null `T`, which is the heap
+ * pollution SERDE-5 and SERDE-13 exist to prevent.
+ *
+ * **One spelling, both layers.** Every decode entry point takes the schema and its diagnostic label
+ * bundled as a {@link DecodeTarget}: the SPI here, and `decodeResponse` / `decodeSuccessResponse`
+ * above it. The two used to differ — positional on the SPI, bundled at the handler layer — so a codec
+ * author implemented one shape while a caller used the other. Unified 2026-09-04, before the first
+ * published version, on the object form (`docs/knowledge/harvested/api-design.md:14`).
+ *
+ * @public
+ */
+export interface Deserializer {
+  /**
+   * Decode from a complete in-memory payload.
+   *
+   * @param data - the encoded bytes.
+   * @param target - the schema witness, its optional diagnostic label, and whether it admits a
+   * top-level wire `null`.
+   * @returns the decoded value.
+   * @throws DeserializationError on malformed input, a schema rejection, or a wire `null` decoded
+   * into a target that does not admit one.
+   */
+  deserialize<T>(data: Uint8Array, target: DecodeTarget<T>): T;
+
+  /**
+   * Decode from a caller-owned source, reading to EOF.
+   *
+   * Does **not** cancel or otherwise take ownership of `source` — the caller closes it (SERDE-3).
+   *
+   * @param source - the caller-owned byte stream; read to EOF, never cancelled.
+   * @param target - the schema witness, its optional diagnostic label, and whether it admits a
+   * top-level wire `null`.
+   * @param options - `{signal}` to abort the drain.
+   * @returns a promise of the decoded value.
+   * @throws DeserializationError on malformed input, a schema rejection, or a wire `null` decoded
+   * into a non-null target. A genuine stream failure propagates unwrapped (SERDE-12), with the
+   * reader lock released on that path too and `source` left uncancelled (SERDE-3).
+   * @throws TypeError when `source` is already locked by another reader — the plain platform error,
+   * not re-typed, because a contended source is a programmer error rather than a decode failure.
+   *
+   * @throws Whatever `options.signal` was aborted with — its `reason`, or a `DOMException` named
+   * `'AbortError'` when none was given. Checked before the reader lock is taken, and then raced
+   * against each pending read, so an aborted call never leaves the caller's source locked and never
+   * cancels it (SERDE-3). Racing is the load-bearing half: a source that stalls mid-body parks the
+   * drain inside a read that a between-reads check can never reach again, and an implementation
+   * that only checks between reads leaves that call unsettled and that source locked forever.
+   *
+   * @remarks Takes `{signal}` because this method drives a stream it did not open, which is the
+   * project-wide test for whether an API owes one. The abort reaches the drain loop; the CPU-bound
+   * parse that follows is not interruptible by any signal, and `JSON.parse` has no incremental form
+   * on which a streaming parser could be built.
+   */
+  deserializeFrom<T>(
+    source: ReadableStream<Uint8Array>,
+    target: DecodeTarget<T>,
+    options?: {readonly signal?: AbortSignal | undefined},
+  ): Promise<T>;
+}
+
+/**
+ * The SDK's format-agnostic serialization seam: one encoder, one decoder, and one declared wire
+ * media type, acquired through a single reference (SERDE-1, SEAM-19).
+ *
+ * Not generic in a payload type. A bundle is per-*format*, not per-*type* — the payload type arrives
+ * as a {@link Schema} parameter of each decode call, so one `jsonSerde()` instance serves every DTO
+ * in an application.
+ *
+ * `mediaType` is required and non-optional so a body built from a value plus a serde can never fall
+ * back to a format-agnostic default `Content-Type` (SERDE-2).
+ *
+ * @public
+ */
+export interface Serde {
+  /** The wire media type this bundle's serializer produces; never defaulted at the seam (SERDE-2). */
   readonly mediaType: string;
-  serialize(value: T): unknown;
-  deserialize(data: unknown): T;
+  /** The encode half. */
+  readonly serializer: Serializer;
+  /** The decode half. */
+  readonly deserializer: Deserializer;
 }

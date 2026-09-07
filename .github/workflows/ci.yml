@@ -19,6 +19,16 @@ jobs:
       - name: Install (frozen lockfile)
         run: bun install --frozen-lockfile
 
+      # First of the gates: pure Node over Markdown, no build, no dist/, so a
+      # corpus mistake reports in seconds instead of after the whole pipeline.
+      # Keeps docs/knowledge/'s two trees apart — no hand-written entry under
+      # harvested/, whose `<sub>` shas digest whole source files and so cannot
+      # record an edit; the next harvest would delete it silently. The companion
+      # drift report is deliberately NOT here: 16 of the 47 sources are a
+      # sibling styleguide repository that no CI checkout has.
+      - name: Knowledge-corpus structure check
+        run: bun run verify:knowledge-structure
+
       - name: Typecheck
         run: bun run typecheck
 
@@ -28,8 +38,29 @@ jobs:
       - name: Build
         run: bun run build
 
+      # `bun run test`, not a bare `bun test`: the root script passes both test
+      # trees explicitly (`./packages ./tests`), and bunfig's `root = "packages"`
+      # means a bare invocation silently skips `tests/`. See CLAUDE.md.
       - name: Test (with coverage)
-        run: bun test --coverage
+        run: bun run test --coverage
+
+      # `examples/` is not a workspace member and is not in the root test script's two trees, so
+      # until 2026-09-04 the petstore canary -- the witness for the codegen target surface, and the
+      # only assertion anywhere that an unsatisfiable AUTH requirement raises before the transport is
+      # touched -- compiled and lint-checked but never ran. Its own step rather than a widening of
+      # `bun run test`: examples are not workspace packages and their coverage does not belong in the
+      # 80% floor's denominator.
+      - name: Example canaries
+        run: bun run test:examples
+
+      # The gates' own tests (`scripts/*.test.mjs`), on `node --test`. Deliberately outside
+      # `bun run test`: bunfig scopes discovery and the 80% coverage floor to `packages`, and that
+      # floor is a statement about `packages/core`, not about repo tooling. What this protects is a
+      # gate's logic silently degrading — a bad glob, a swallowed assertion — which no other step
+      # would notice, since a degraded gate still exits 0. Closes open-items H13, whose trigger had
+      # already fired: `knowledge.test.mjs` was failing on `main` and nothing ran it.
+      - name: Gate self-tests (scripts/*.test.mjs)
+        run: bun run test:scripts
 
       - name: API surface check
         run: bun run api
@@ -47,18 +78,53 @@ jobs:
       - name: Dual JS/TS consumption check
         run: bun run verify:dual-consumption
 
+      - name: Consumer typecheck against the published .d.ts
+        run: bun run verify:consumer-types
+
       - name: SEAM-1 zero-dependency check
         run: bun run verify:seam-1
+
+      - name: Verify SSE-37/SSE-38 (no serde dependency, no reconnect path in core SSE)
+        run: bun run verify:sse-37
 
       - name: Runtime-floor consistency check
         run: bun run verify:runtime-floor
 
+      # Reads the five files that must agree on `tests/node-conformance/`. The rule and the reasons
+      # it exists live in CLAUDE.md, "HARD RULE — the `tests/` partition"; what matters here is only
+      # that every way it breaks is silent, so nothing else in this workflow would catch it.
+      - name: Test-partition check (tests/ vs tests/node-conformance/)
+        run: bun run verify:test-partition
+
+      # docs/knowledge/harvested/module-organization.md:20 treats an import cycle as a bug rather
+      # than a style nit, and :22 requires it be gated here. Hand-written and dependency-free like
+      # every other verify:* gate, so it cannot be skipped by a missing install (docs/open-items.md
+      # K12). Type-only edges count, deliberately.
+      - name: Import-cycle check
+        run: bun run verify:import-cycles
+
+      # NFR-12. Deliberately last in this job: it sweeps every dist/ and rebuilds
+      # the workspace twice, so it would otherwise pull the rug from under any
+      # step above that resolves a workspace package through its dist/.
+      - name: Reproducible-build check (NFR-12)
+        run: bun run verify:reproducible-build
+
       - name: Dependency audit
         run: bun run audit
 
-  node-floor-conformance:
+  node-conformance:
     needs: ci
     runs-on: ubuntu-latest
+    strategy:
+      # Report both versions rather than stopping at the first failure: "broken on the floor" and
+      # "broken on LTS" are different diagnoses and the matrix exists to tell them apart.
+      fail-fast: false
+      matrix:
+        # The declared floor AND current LTS, which is the "in addition to current LTS" half of
+        # sdk-design-nodejs/09:52-54 that a floor-only pin left unexercised (checkpoint 5.9).
+        # `lts/*` resolves at run time, so this does not go stale as LTS moves.
+        node: ['20.3.0', 'lts/*']
+    name: node-conformance (${{ matrix.node }})
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +140,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18.17.0
+          node-version: ${{ matrix.node }}
 
-      - name: Verify the built artifact against the declared minimum Node version (NFR-10/NFR-17)
-        run: node scripts/verify-node-floor.mjs
+      - name: Node-runtime conformance against the built artifact (NFR-10/NFR-17)
+        run: bun run test:node

@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/index.ts
 /**
- * The immutable, transport-agnostic HTTP domain model at the heart of `@dexpace/core`.
+ * The transport-agnostic HTTP core of `@dexpace/core`: an immutable domain model, and the pipeline
+ * that drives it.
  *
- * Every type here is frozen at construction and built through a builder or a static factory, so
- * case-insensitivity, multi-value semantics, ordering, header-injection defenses, method/body
- * legality, and total status handling are fixed once and behave identically under every transport.
+ * Every DOMAIN MODEL type — requests, responses, headers, bodies, status — is frozen at construction
+ * and reachable only through a builder or a static factory, so case-insensitivity, multi-value
+ * semantics, ordering, header-injection defenses, method/body legality, and total status handling are
+ * fixed once and behave identically under every transport.
+ *
+ * The PIPELINE surface promoted in Phase 5c is deliberately not held to that rule. `PipelineBuilder`
+ * is mutable by design and freezes only at `build()`; `Stage`, `Step`, `Next`, `StepContext`, and the
+ * settings records are plain types a caller writes literals for; `authStep`, `retryStep`,
+ * `redirectStep`, and `standardResilience` are factories returning descriptors and runtimes.
  *
  * The package has zero runtime dependencies.
  *
@@ -13,14 +20,384 @@
  */
 export * from './http/index.js';
 
-// Deliberately NOT `export * from './seams/index.js';` — that barrel also carries the internal-only,
-// provisional Serde<T> (SEAM-21 will reshape it in Phase 6). Naming each public export here instead keeps
-// Serde<T> unreachable from the package's public entry point and out of the api-extractor surface.
+// `packages/core/src/seams/` deliberately has NO folder-level barrel. It carried one from Phase 2
+// until 2026-09-02, when it was deleted: docs/knowledge/harvested/module-organization.md:18 bans
+// internal folder-level barrels outright and api-design.md:6 makes this file the package's sole
+// barrel, and nothing had ever imported it -- its only reference in the workspace was the comment
+// here explaining why it was not re-exported. Naming each public export below keeps the package's
+// surface a decision made in one place rather than a consequence of what a folder re-exports.
 export type {Transport} from './seams/transport.js';
 export {
   composeSignal,
   isTimeoutSignal,
   CancellationError,
 } from './seams/transport.js';
+// The four flat leaves plus `isIoError`. `decodeResponse`'s guard passes anything already in this
+// SDK's typed tree through untouched, so a caller genuinely receives `ClosedResourceError` and its
+// siblings today and until 2026-09-04 had no name to catch them by. The guard is the category catch
+// that a flat tree cannot offer through `instanceof` (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
+export {
+  AllocationLimitError,
+  ClosedResourceError,
+  EndOfStreamError,
+  IoError,
+  isIoError,
+  SourceContractViolationError,
+  TransportFailureError,
+} from './io/errors.js';
+// The shape of a suppressed-error pair, type-only. `instanceof SuppressedError` is NOT a valid test
+// on the declared `engines.node >=20.3` floor, where the global is absent, so a caller that wants to
+// narrow one needs this interface rather than the class (docs/work/mvp/2026-09-04-open-items-dissolution.md H8).
+export type {SuppressedErrorLike} from './suppress.js';
 export type {OperationDescriptor} from './seams/operation.js';
 export {buildRequest, OperationAssemblyError} from './seams/operation.js';
+
+// Deliberately NOT `export * from './body/index.js';` — that barrel also carries withRequestLogging/
+// withResponseLogging, internal until Phase 7 supplies a Logger to drive them. Naming each public export
+// here instead keeps that boundary enforced at the barrel, not by convention.
+// The concrete body classes are exported as TYPES ONLY. Exporting the class as a value publishes
+// `new ByteArrayBody(...)` as a field-wise constructor, which HTTP-2 forbids ("constructible only
+// through their builder or dedicated factory") and which duplicates the factory functions for no
+// stated need (NFR-3). Callers construct via the factories and annotate with the types.
+export type {Body, FileBodyDescriptor} from './body/body.js';
+export {
+  ConsumedBodyError,
+  FormBodyValidationError,
+  HttpStatusValidationError,
+  isBodyError,
+  MultipartBoundaryError,
+} from './body/errors.js';
+export {HttpStatusError, toHttpError} from './body/http-status-error.js';
+export {materialize} from './body/materialize.js';
+export {
+  multipartBody,
+  type MultipartBody,
+  MultipartBodyBuilder,
+  type MultipartPart,
+} from './body/multipart-body.js';
+export {
+  byteArrayBody,
+  type ByteArrayBody,
+  formUrlEncodedBody,
+  type FormUrlEncodedBody,
+  type FormUrlEncodedInput,
+  type FormUrlEncodedValue,
+  stringBody,
+  type StringBody,
+} from './body/simple-bodies.js';
+export {streamBody, type StreamBody} from './body/stream-body.js';
+export {TypedResponse} from './body/typed-response.js';
+
+// ---------------------------------------------------------------------------------------------
+// The pillar-authoring surface, promoted in Phase 5c.
+//
+// 5c is the first point a caller can assemble a genuinely working pipeline -- all three resilience
+// pillars plus the preset now exist. Promoting any earlier would have frozen shapes 5c still had
+// latitude to reshape, which is why every prior phase deliberately exported nothing from here.
+// ---------------------------------------------------------------------------------------------
+
+// Group 1: the authoring surface itself.
+export type {Stage} from './pipeline/stage.js';
+export {PILLAR_STAGES, STAGE_ORDER} from './pipeline/stage.js';
+export type {Next, Step, StepContext, StepDescriptor} from './pipeline/step.js';
+export {PipelineBuilder} from './pipeline/builder.js';
+export {Runtime} from './pipeline/runtime.js';
+// The five errors a hand-built pipeline can actually provoke. Every one is the subject of a
+// `@throws` tag on a symbol above, and until 2026-09-02 none was exported, so a consumer read the
+// tag, reached for `instanceof`, and had nothing to reach for.
+export {
+  AnchorNotFoundError,
+  CrossStageEditError,
+  CursorAlreadyAdvancedError,
+  PillarCollisionError,
+  ReservedStageError,
+} from './pipeline/errors.js';
+export {retryStep} from './retry/retry-step.js';
+// RETRY-34's read side. The retry pillar surfaces the FINAL attempt's own error, so `instanceof`
+// against it does not depend on how many attempts ran; this is how the earlier ones are reached.
+// Exported alongside `retryStep` because the two are one contract: nothing else in the barrel can
+// tell a caller that the error they caught is the third of three.
+export {retryAttempts} from './retry/attempt-trail.js';
+// The trail entry for a response the engine discarded whose status is outside 400-599 — reachable
+// only through a caller-widened `retryableStatuses`.
+export {RetryDiscardedResponseError} from './retry/errors.js';
+export {redirectStep} from './redirect/redirect-step.js';
+// `withRedirect` installs `redirectStep` together with the REDIR-11(c) guard that keeps the internal
+// cross-origin marker off the wire. Publishing the pillar without them made `withRedirect`'s own
+// instruction -- "a caller who installs redirectStep() directly is responsible for installing the
+// guard too" -- name an obligation no consumer could discharge.
+export {
+  stripCrossOriginMarkerStep,
+  withRedirect,
+} from './redirect/strip-marker-step.js';
+export {
+  NonReplayableBodyError,
+  SchemeDowngradeError,
+} from './redirect/errors.js';
+export {authStep} from './auth/auth-step.js';
+export {standardResilience} from './auth/preset.js';
+
+// Group 2: everything Group 1's signatures name. A promoted function whose parameter type is
+// internal-only is an API a caller cannot call, and api-extractor reports each omission as
+// `ae-forgotten-export`.
+//
+// The word "internal-only" above is deliberate and must not be spelled as the TSDoc tag: gts turns
+// `stripInternal` on, and TypeScript tests the WHOLE leading comment range of a declaration for that
+// tag as a substring -- so writing it in prose here silently deletes the export below from the
+// emitted `.d.ts`. It did, for one commit. `api-extractor.json` now fails `api:ci` on the resulting
+// `ae-forgotten-export`, and `verify:consumer-types` compiles these four names from the built
+// package, so the same slip cannot ship twice.
+// The whole context family, not just `ExecutionContext`: it is a union alias, and `StepContext.context`
+// makes every member reachable from a promoted signature. A caller writing a custom step reads
+// `ctx.context.kind` to tell which promotion stage it is in.
+export type {
+  DispatchContext,
+  ExchangeContext,
+  ExecutionContext,
+  RequestContext,
+} from './context/context.js';
+export type {InstrumentationBundle} from './context/instrumentation.js';
+// `PipelineOptions` is what a caller passes to `new PipelineBuilder(transport, options)` and, by
+// extension, to `standardResilience`; it is the only public route to `OBS-29`'s per-operation span
+// and `CTX-16`'s operation name, so it is exported beside the bundle it carries.
+export type {PipelineOptions} from './pipeline/builder.js';
+export type {BackoffSettings} from './retry/backoff.js';
+export type {RetrySettings} from './retry/settings.js';
+export type {RetryStepOptions} from './retry/retry-step.js';
+export type {
+  RedirectCondition,
+  RedirectPredicate,
+  RedirectSettings,
+} from './redirect/settings.js';
+export type {StandardResilienceOptions} from './auth/preset.js';
+export type {
+  ApiKeyCredentialConfig,
+  AuthCredentialSet,
+  AuthStepSettings,
+  BearerCredential,
+  ChallengeHook,
+} from './auth/auth-step.js';
+export type {AuthTiers} from './auth/resolve.js';
+export type {AuthScheme} from './auth/scheme.js';
+export type {DigestAlgorithm} from './auth/digest.js';
+
+// Factories, not bare interfaces: AUTH-3 validates and freezes inside `createAuthDescriptor`, and
+// every credential type is NOMINAL -- each carries a `#` field, so no caller-side object literal is
+// assignable and the AUTH-9 validation in each factory cannot be routed around. Without these,
+// API_KEY, OAUTH2, BASIC and DIGEST auth are unreachable from outside the package.
+// All five are VALUE exports, not type-only ones: they are classes, `TokenProvider` returns a
+// `BearerToken`, and `BasicCredential`/`DigestCredential` became classes on 2026-09-04 so AUTH-8's
+// redaction covers their passwords too (audit #67 / #71).
+export type {AuthDescriptor} from './auth/descriptor.js';
+export {createAuthDescriptor} from './auth/descriptor.js';
+export type {AuthRequirement} from './auth/requirement.js';
+export {
+  authRequirementsEqual,
+  createAuthRequirement,
+} from './auth/requirement.js';
+export type {TokenProvider} from './auth/credential.js';
+export {
+  ApiKeyCredential,
+  BasicCredential,
+  BearerToken,
+  DigestCredential,
+  NameKeyCredential,
+  bearerTokensEqual,
+  createBearerToken,
+} from './auth/credential.js';
+export {AuthResolutionError, PlaintextCredentialError} from './auth/errors.js';
+
+// ---------------------------------------------------------------------------------------------
+// The serde seam, promoted in Phase 6a.
+//
+// Public because `@dexpace/codec-json` is a SEPARATE PACKAGE and can reach core only through this
+// entry point — which is what settles the promotion question by force. Phase 2 kept `Serde<T>`
+// package-private precisely so SEAM-21's reshape would not be a breaking change; the reshape has
+// landed, so that marking comes off here.
+//
+// The phrase "package-private" is deliberate: `stripInternal` is on, and TypeScript tests a
+// declaration's WHOLE leading comment range for the release tag as a SUBSTRING — spelling that tag
+// out in prose here silently deletes the export below from the emitted `.d.ts`. It did, once.
+// ---------------------------------------------------------------------------------------------
+export type {Deserializer, Schema, Serde, Serializer} from './seams/serde.js';
+export {
+  DeserializationError,
+  isSerdeError,
+  SerializationError,
+} from './serde/errors.js';
+export type {
+  DeserializationErrorOptions,
+  SerdeErrorOptions,
+} from './serde/errors.js';
+export {
+  absent,
+  foldTristate,
+  isAbsent,
+  isNull,
+  isPresent,
+  isTristate,
+  nullValue,
+  ofNullable,
+  present,
+  TRISTATE_BRAND,
+  tristateToString,
+  valueOrNull,
+} from './serde/tristate.js';
+export type {Tristate, TristateBranches} from './serde/tristate.js';
+export {
+  decodeResponse,
+  decodeSuccessResponse,
+} from './serde/response-handlers.js';
+export type {DecodeTarget} from './serde/response-handlers.js';
+export {serdeBody} from './body/serde-body.js';
+
+// SSE (Phase 6b). The parser and line reader stay internal: they are driven only through the facade, and
+// exposing them would expose a way to violate SSE-17's non-ownership contract by accident.
+export type {SseEvent, SseEventFields} from './sse/event.js';
+export {
+  isSseEventEmpty,
+  makeSseEvent,
+  sseEventToString,
+  sseEventsEqual,
+} from './sse/event.js';
+export {SseLineTooLongError} from './sse/line-reader.js';
+export {SseStreamError} from './sse/errors.js';
+export {SseStream, sseStreamFrom} from './sse/stream.js';
+export type {SseStreamFromOptions, SseStreamOptions} from './sse/stream.js';
+export {
+  MAPPER_DONE,
+  MAPPER_SKIP,
+  mapperValue,
+  typedSseStream,
+} from './sse/typed.js';
+export type {MapperOutcome, SseMapper} from './sse/typed.js';
+
+// Pagination (Phase 6c). The query splice and link tokenizer stay internal: publishing them would put a second
+// URL-manipulation surface next to Phase 1's QueryParams, which is the confusion the one-encoder rule avoids.
+export {Page, pageInfo} from './pagination/page.js';
+export type {PageInfo} from './pagination/page.js';
+export type {PaginationStrategy} from './pagination/strategy.js';
+export {Paginator} from './pagination/paginator.js';
+export type {PaginatorInit} from './pagination/paginator.js';
+export {
+  cursorStrategy,
+  linkHeaderStrategy,
+  pageNumberStrategy,
+} from './pagination/strategies.js';
+export {paginateWithFetchers} from './pagination/fetchers.js';
+export type {
+  FetcherPage,
+  FetcherPaginationInit,
+  PagingOptions,
+} from './pagination/fetchers.js';
+export {PaginationError} from './pagination/errors.js';
+
+// Phase 4b — the recovery-chain execution model (RECOV-*). Published 2026-09-04: `DispatchConfig`
+// requires a `requestChain` and a `responseChain`, nothing in this package constructs one, and the
+// whole folder was internal-only — so the execution model the RECOV requirements describe had no
+// entry point at all. The chains stay CLASSES rather than plain data plus free functions
+// (docs/knowledge/harvested/data-modeling.md:10 would prefer the latter): RECOV-14's text is written
+// about chain and step *instances*, and the defensive copy wants a construction boundary.
+export type {RequestStep} from './recovery/request-chain.js';
+export {RequestRecoveryChain} from './recovery/request-chain.js';
+export type {RecoveryStep, ResponseStep} from './recovery/response-chain.js';
+export {ResponseRecoveryChain} from './recovery/response-chain.js';
+export type {Outcome} from './recovery/outcome.js';
+export {failure, fold, success} from './recovery/outcome.js';
+export type {DispatchConfig} from './recovery/orchestrator.js';
+export {dispatchWithRecovery} from './recovery/orchestrator.js';
+export {statusMappingStep} from './recovery/status-mapping.js';
+export {wrapCancellation} from './recovery/cancellation.js';
+// RECOV-32's idempotency-key step. A `RequestStep`, not a `StepDescriptor` — it composes into a
+// `RequestRecoveryChain` rather than into a pipeline stage, which is why it is here and
+// `clientIdentityStep` is with the Phase 7a block below.
+export type {IdempotencyKeyOptions} from './recovery/idempotency-key.js';
+export {idempotencyKeyStep} from './recovery/idempotency-key.js';
+
+// Phase 7a — configuration and platform primitives. There is no `./config/index.js`, because 7a's
+// design doc rules one out by name. Not because the question is settled: this repo carries both
+// patterns — `http/`, `body/`, `io/`, and `seams/` each have an internal barrel, while `pipeline/`,
+// `context/`, and `config/` do not — and so does the knowledge corpus, where
+// docs/knowledge/harvested/module-organization.md:18 bans internal barrels outright and
+// docs/knowledge/harvested/api-design.md:8 endorses one per feature folder, with no entry in the corpus's
+// `--section conflicts` reconciling them. 7a followed its design doc and names each symbol here
+// against its own file. That stays the shape, and `client-identity-step.ts` stays in `config/`:
+// once a symbol is `@public` and named here against its own module path, its folder is invisible to
+// every consumer, and moving it to `recovery/` would only trade its one outbound `→ pipeline/` edge
+// for a new `→ config/` one for `./build-info.js` (docs/work/mvp/2026-09-04-open-items-dissolution.md K11, closed 2026-09-04).
+// Deliberately NOT exported: `config/equality.js`'s deepEqual/deepHash — no requirement gives a
+// caller direct access to them, and they have no in-package caller either as of 2026-08-27, so the
+// module is reachable only from its own test (docs/work/mvp/2026-09-04-open-items-dissolution.md K16 owns the first real consumer).
+export type {Clock} from './config/clock.js';
+export {defaultClock} from './config/clock.js';
+export type {BuildInfo} from './config/build-info.js';
+export {getBuildInfo} from './config/build-info.js';
+// RECOV-33's identity-stamping step. Public because a caller installs it in their own pipeline —
+// `standardResilience` does not install it — so an unexported factory satisfies nothing. Promoted
+// 2026-09-04; every other step factory (`authStep`, `retryStep`, `redirectStep`, `loggingStep`,
+// `stripCrossOriginMarkerStep`) was already here (docs/work/mvp/2026-09-04-open-items-dissolution.md K1).
+export type {ClientIdentitySettings} from './config/client-identity-step.js';
+export {clientIdentityStep} from './config/client-identity-step.js';
+export type {Configuration, SourceFn} from './config/configuration.js';
+export {
+  CFG_KEY_HTTPS_PROXY,
+  CFG_KEY_HTTP_PROXY,
+  CFG_KEY_LOG_LEVEL,
+  CFG_KEY_MAX_RETRY_ATTEMPTS,
+  CFG_KEY_NO_PROXY,
+  ConfigurationBuilder,
+  defaultConfiguration,
+  getGlobalConfiguration,
+  setGlobalConfiguration,
+} from './config/configuration.js';
+export {formatHttpDate, parseHttpDate} from './config/http-date.js';
+export {randomUuid} from './config/identifiers.js';
+export type {
+  ProxyCredentials,
+  ProxyOptions,
+  ProxyOptionsInit,
+  ProxyType,
+} from './config/proxy.js';
+export {
+  createProxyOptions,
+  formatProxyOptions,
+  resolveProxyOptions,
+  shouldBypassProxy,
+} from './config/proxy.js';
+export {RETRYABLE_STATUSES, isRetryableStatus} from './config/retryable.js';
+
+// Phase 7b — Observability and instrumentation.
+export type {
+  CreateLoggerOptions,
+  LogEvent,
+  LogLevel,
+  Logger,
+} from './observability/logger.js';
+export {
+  NOOP_LOGGER,
+  createLogger,
+  getGlobalLogger,
+  setGlobalLogger,
+} from './observability/logger.js';
+export type {
+  Scope,
+  Span,
+  SpanContext,
+  Tracer,
+} from './observability/tracing.js';
+export {
+  NOOP_SPAN,
+  NOOP_TRACER,
+  activateSpan,
+  activateSpanForCorrelation,
+  createInstrumentationBundle,
+  getActiveSpan,
+} from './observability/tracing.js';
+export type {Counter, Histogram, Meter} from './observability/metrics.js';
+export {NOOP_METER} from './observability/metrics.js';
+export type {DroppedHeaderPolicy} from './observability/redaction.js';
+export type {
+  LoggingGranularity,
+  LoggingStepSettings,
+} from './observability/logging-step.js';
+export {LOGGING_STEP_TYPE, loggingStep} from './observability/logging-step.js';

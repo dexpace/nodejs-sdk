@@ -46,7 +46,7 @@ than the artifact's declared floor, producing a symbol reference that link-check
 fails at call time on an older runtime (`NoSuchMethodError` on the JVM; a plain `TypeError: X is not a function` in
 Node). The TypeScript-specific version of this trap is a `tsconfig.json` `lib` setting newer than the package's
 declared `engines.node` floor — for instance, `lib: ["ES2023"]` type-checks a call to
-`Array.prototype.toSorted` cleanly while `engines.node: ">=18.17"` promises a runtime that does not have it,
+`Array.prototype.toSorted` cleanly while `engines.node: ">=18.17"` promised a runtime that does not have it,
 producing exactly the same class of silent, deferred-to-call-time failure the JVM side already learned to guard
 against. Each package's `tsconfig` `lib`/`target` must be pinned to match its own declared `engines.node` floor, not
 inherited loosely from whatever the workspace root happens to use for editor tooling, and CI should run the built

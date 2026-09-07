@@ -1,0 +1,192 @@
+# Write a paging strategy
+
+A strategy is one method:
+
+```typescript
+interface PaginationStrategy<T> {
+  parse(response: Response, template: Request): Promise<PageInfo<T>>;
+}
+
+interface PageInfo<T> {
+  readonly items: readonly T[];
+  readonly nextRequest: Request | undefined;   // undefined ends the walk
+}
+```
+
+Given the page that just arrived and the request that fetched it, produce this page's items and the
+request that fetches the next one. `undefined` for `nextRequest` is how a walk ends — there is no
+separate "done" flag to keep consistent with it.
+
+**`template` is not the request the walk started from.** The glossary calls it "the original request
+template", but the engine passes the request it sent for *this* page and then makes your `nextRequest`
+the following hop's template — it advances with the walk
+(`packages/core/src/pagination/paginator.ts:165,213`, and the contract on
+`PaginationStrategy.parse` at `strategy.ts:10-15`). Read the parameter as "the request to derive the
+next one from". Where you specifically want the URL the response actually came from — after a redirect
+or a step's rewrite — use `response.request.url`, which is what `pageNumberStrategy` reads its current
+page number from.
+
+## Three ship already
+
+Reach for a custom strategy only when none of these fits.
+
+```typescript
+import {cursorStrategy, linkHeaderStrategy, pageNumberStrategy} from '@dexpace/core';
+
+interface Thing {
+  readonly id: string;
+}
+declare function parseItems(payload: string): readonly Thing[];
+
+// ?cursor=<opaque>, taken from the payload
+cursorStrategy<Thing>({
+  extract: async r => {
+    const {items, next} = JSON.parse(await r.text()) as {
+      items: readonly Thing[];
+      next: string | null;
+    };
+    return {items, cursor: next};
+  },
+  parameterName: 'cursor', // default
+});
+
+// RFC 8288 Link: <...>; rel="next"
+linkHeaderStrategy<Thing>({extract: async r => parseItems(await r.text()), headerName: 'Link'});
+
+// ?page=1,2,3…
+pageNumberStrategy<Thing>({extract: async r => parseItems(await r.text()), startPage: 1});
+```
+
+`extract` is handed the live response. `Response` has `text()` and `bytes()`, not `json()` — this is
+the SDK's own model, not the WHATWG one.
+
+Each takes an `extract` that reads the payload and lets the strategy own the URL manipulation.
+
+## Driving one
+
+```typescript
+import {
+  Paginator,
+  Request,
+  type PaginationStrategy,
+  type Transport,
+} from '@dexpace/core';
+
+interface Thing {
+  readonly id: string;
+}
+declare const client: Transport;
+declare const strategy: PaginationStrategy<Thing>;
+declare const signal: AbortSignal;
+
+const paginator = new Paginator<Thing>({
+  transport: client,   // a Runtime is a Transport, so a full pipeline works here
+  initialRequest: Request.newBuilder().url('https://api.example.com/v1/things').build(),
+  strategy,
+  maxPages: 50,
+  signal,
+});
+
+for await (const thing of paginator.items()) { /* item by item */ }
+for await (const page of paginator.pages()) { /* page by page */ }
+```
+
+`items()` and `pages()` each build a **fresh** generator per call (`PAGE-8`), so two iterations are
+independent walks, not two views of one. That is also why `@dexpace/rx`'s `pageItems$`/`pages$` are
+cold and repeatable while its SSE observables are not.
+
+## The five rules
+
+**1. Take everything you need from the response before your promise settles** (`PAGE-5`). The
+response you are handed is live and single-use; the engine may close it the moment `parse` resolves.
+Read the items and the cursor first, retain nothing past the call, and never hand the `Response`
+itself to a caller.
+
+**`parse` returns a `Promise`, and that is deliberate — do not "fix" it toward the literal
+requirement.** `PAGE-5` says the strategy reads what it needs *synchronously* inside `parse`. Node has
+no synchronous body read, so the literal form is unimplementable here and the discipline the clause
+protects — single use, nothing retained — is what the async signature preserves. Recorded in the `PAGE-5`
+"synchronously inside parse" row of
+[`docs/work/mvp/2026-09-04-register-retirement-purge.md`](../work/mvp/2026-09-04-register-retirement-purge.md),
+where the dissolved deferral register's rows went — precisely so an async signature does not later read as an oversight. Every shipped strategy's `extract` above is `async` for the same reason.
+
+**2. Build `nextRequest` from the template, not from scratch.** The template carries the headers, auth
+tier and options the walk was started with, and it is the previous hop's request rather than page one's,
+so deriving from it accumulates the walk's state instead of re-deriving it. A next request built from
+scratch loses all of that.
+
+```typescript
+const next = template
+  .newBuilder()
+  .url(withQueryParam(template.url, 'cursor', cursor))
+  .build();
+return pageInfo(items, next);
+```
+
+`pageInfo(items, nextRequest?)` is the `PageInfo` factory. Use `QueryParams` for the URL work — see
+[`http.md`](./http.md) for why not `URLSearchParams`.
+
+**3. A page is closed before its items are yielded** (`PAGE-11`). The engine does this for you. It is
+worth knowing because it means your `extract` is the **only** place the response body is readable, and
+because `sdk-design-nodejs/07` §7.1's illustrative snippet has it backwards — closing after yielding —
+which is an erratum recorded in `docs/knowledge/notes/pagination.md` and `docs/work/mvp/2026-09-04-open-items-dissolution.md` J1.
+
+**4. Terminate.** Returning a `nextRequest` equal to the one just fetched is an infinite walk.
+`maxPages` on `PaginatorInit` is the backstop, not the design. Loop detection is not the paginator's
+job.
+
+**5. Always return a well-formed `PageInfo`** (`PAGE-4`). `items` must be an array — an empty one is
+fine and is a perfectly valid non-terminal page — and `nextRequest === undefined` is the **single,
+exclusive** end-of-stream signal. A `PageInfo` that is itself `null` or `undefined`, or whose `items`
+is either, is a programmer error and the engine treats it as one: it closes the response and throws
+an assertion naming the invariant you broke. It does **not** end the walk quietly, because "the
+strategy forgot to `return`" and "the server ran out of pages" must not look the same from the
+outside. Use `pageInfo(items, next?)` and this cannot happen; the check exists because `parse`
+crosses a seam, where an `any`-typed decode or a trusted server field can produce a shape the types
+say is impossible.
+
+Terminating and failing are different acts. To *end* the walk, return `pageInfo(items)` with no next
+request. To *fail* it, throw — the engine closes the response and your error reaches the consumer
+unwrapped (`PAGE-13`, `PAGE-28`).
+
+`PaginationError` is reserved for engine misuse and precondition violations — not for "the server
+returned a page I did not understand", which is your `extract`'s error to raise.
+
+## The fetcher form
+
+When the API is already wrapped in functions rather than reachable as requests, skip
+`PaginationStrategy` entirely:
+
+```typescript
+import {paginateWithFetchers, type FetcherPage, type PagingOptions} from '@dexpace/core';
+
+interface Thing {
+  readonly id: string;
+}
+declare function firstPage(options: PagingOptions): Promise<FetcherPage<Thing> | undefined>;
+declare function nextPage(key: string, options: PagingOptions): Promise<FetcherPage<Thing> | undefined>;
+
+for await (const page of paginateWithFetchers<Thing>({
+  first: async options => firstPage(options),
+  next: async (key, options) => nextPage(key, options),
+  maxPages: 20,
+})) {
+  console.log(page.items);
+}
+```
+
+`first` and `next` return a `FetcherPage<T>` — a `Page<T>` plus either a `continuationToken` or a
+`nextLink` — or `undefined` to end the walk. This is the adapter for a generated client whose
+pagination is already a pair of methods.
+
+## Disposal
+
+`Page` has a `close()`. It does **not** support `await using`: `Symbol.asyncDispose` arrived in Node
+20.4 and this project's floor is 20.3, so the disposal member is installed only when the symbol
+exists and is never declared in the `.d.ts`. Declaring it anyway would be a type that lies on the
+supported runtime, which `NFR-10` forbids. `close()` is the teardown on every runtime, and
+`open-items.md`'s Section D row [`await using` support](../work/mvp/2026-09-04-open-items-dissolution.md#d-nfr-10-await-using)
+records the decision with the four reasons the floor does not move instead.
+
+Within a `Paginator` walk the engine closes each page for you; `close()` matters when you hold a
+`Page` yourself.

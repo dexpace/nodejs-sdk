@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request-conditions.test.ts
-// Exercises: HTTP-50 (comma-joined If-Match/If-None-Match, RFC 1123 dates, idempotent apply, any-tag exclusivity)
+// Exercises: HTTP-50 (comma-joined If-Match/If-None-Match, RFC 1123 dates, idempotent apply, any-tag
+// exclusivity, and an invalid Date rejected at the setter rather than emitted as `Invalid Date`)
 import {describe, expect, test} from 'bun:test';
 import {
   RequestConditions,
@@ -132,5 +133,55 @@ describe('ifUnmodifiedSince (HTTP-50)', () => {
     expect(twice.getAll('If-Unmodified-Since')).toEqual([
       'Wed, 21 Oct 2015 07:28:00 GMT',
     ]);
+  });
+});
+
+describe('an invalid Date is rejected at the setter (HTTP-50)', () => {
+  // `toRfc1123` is `date.toUTCString()`, which renders the literal string `Invalid Date` for a NaN
+  // time value. `Invalid Date` is HTAB-free printable ASCII, so HTTP-18's outbound header grammar
+  // waves it through and it reaches the wire as `If-Modified-Since: Invalid Date` — a header no
+  // server can evaluate, produced from a caller mistake made several frames earlier. HTTP-50's
+  // "emit RFC 1123 dates" is not satisfiable from a NaN instant, so the setter is where it fails.
+  // Measured on the pre-fix tree, audit #67 / #76.
+  test.each([
+    ['new Date("nope")', new Date('nope')],
+    ['new Date(NaN)', new Date(Number.NaN)],
+  ])(
+    'ifModifiedSince rejects %s with RequestConditionsValidationError',
+    (_label, date) => {
+      expect(() =>
+        RequestConditions.newBuilder().ifModifiedSince(date),
+      ).toThrow(RequestConditionsValidationError);
+    },
+  );
+
+  test.each([
+    ['new Date("nope")', new Date('nope')],
+    ['new Date(NaN)', new Date(Number.NaN)],
+  ])(
+    'ifUnmodifiedSince rejects %s with RequestConditionsValidationError',
+    (_label, date) => {
+      expect(() =>
+        RequestConditions.newBuilder().ifUnmodifiedSince(date),
+      ).toThrow(RequestConditionsValidationError);
+    },
+  );
+
+  test('the message names the setter, so the caller knows which field to fix', () => {
+    expect(() =>
+      RequestConditions.newBuilder().ifModifiedSince(new Date('nope')),
+    ).toThrow(/If-Modified-Since/);
+    expect(() =>
+      RequestConditions.newBuilder().ifUnmodifiedSince(new Date('nope')),
+    ).toThrow(/If-Unmodified-Since/);
+  });
+
+  test('no invalid instant can reach applyTo, so no header renders "Invalid Date"', () => {
+    const builder = RequestConditions.newBuilder();
+    expect(() => builder.ifModifiedSince(new Date('nope'))).toThrow(
+      RequestConditionsValidationError,
+    );
+    const headers = builder.build().applyTo(Headers.newBuilder().build());
+    expect(headers.has('If-Modified-Since')).toBe(false);
   });
 });

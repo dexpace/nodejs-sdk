@@ -6,6 +6,8 @@
     "sourceMap": true
   },
   "exclude": [
-    "src/**/*.test.ts"
+    "src/**/*.test.ts",
+    "src/**/*.bench.ts",
+    "src/io/test-support/**"
   ]
 }

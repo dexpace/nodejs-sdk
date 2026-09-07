@@ -6,7 +6,12 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dexpace/nodejs-sdk.git",
+    "directory": "packages/core"
   },
   "exports": {
     ".": {
@@ -20,6 +25,7 @@
   "sideEffects": false,
   "dependencies": {},
   "scripts": {
+    "prebuild": "node scripts/gen-version.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
@@ -28,6 +34,6 @@
     "prepublishOnly": "bun run build && bun run api:ci && publint . && attw --pack . --ignore-rules cjs-resolves-to-esm"
   },
   "devDependencies": {
-    "expect-type": "^1.4.0"
+    "expect-type": "catalog:"
   }
 }

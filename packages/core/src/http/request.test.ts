@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 // packages/core/src/http/request.test.ts
-// Exercises: HTTP-6 (required fields), HTTP-7 (body/method legality), HTTP-8 (GET default / missing method),
+// Exercises: XCUT-15's alias and new-instance clauses (a model retains no alias to externally-mutable
+// state -- the returned URL is cloned per access, so mutating it cannot reach the request -- and every
+// "setter" yields a NEW instance rather than mutating in place: the HTTP-3/5 rows below. The
+// ingested-collection clause is asserted in headers.test.ts and query-params.test.ts),
+// HTTP-6 (required fields), HTTP-7 (body/method legality), HTTP-8 (GET default / missing method),
 // HTTP-9 (method), HTTP-46 (textual URL equality, no DNS), HTTP-47 (malformed URL), HTTP-3/5 (derivation,
 // immutability)
 import {describe, expect, test} from 'bun:test';
 import fc from 'fast-check';
+import {stringBody} from '../body/simple-bodies.js';
 import {Request} from './request.js';
 import {Headers} from './headers.js';
 import {
@@ -31,7 +36,7 @@ describe('method/body legality (HTTP-7)', () => {
         Request.newBuilder()
           .method(method)
           .url('https://example.com')
-          .body('x')
+          .body(stringBody('x'))
           .build(),
       ).toThrow(RequestBodyNotAllowedError);
     }
@@ -42,7 +47,7 @@ describe('method/body legality (HTTP-7)', () => {
       Request.newBuilder()
         .method('POST')
         .url('https://example.com')
-        .body('x')
+        .body(stringBody('x'))
         .build(),
     ).not.toThrow();
   });
@@ -51,18 +56,8 @@ describe('method/body legality (HTTP-7)', () => {
     const request = Request.newBuilder()
       .method('GET')
       .url('https://example.com')
-      .body('x')
+      .body(stringBody('x'))
       .body(undefined)
-      .build();
-    expect(request.body).toBeUndefined();
-  });
-
-  test('a null body clears like undefined — HTTP-7 rejects only a non-null body', () => {
-    const request = Request.newBuilder()
-      .method('GET')
-      .url('https://example.com')
-      .body('x')
-      .body(null)
       .build();
     expect(request.body).toBeUndefined();
   });
@@ -76,7 +71,10 @@ describe('method defaulting (HTTP-8)', () => {
 
   test('fails naming the missing method when a body is set with no method', () => {
     expect(() =>
-      Request.newBuilder().url('https://example.com').body('x').build(),
+      Request.newBuilder()
+        .url('https://example.com')
+        .body(stringBody('x'))
+        .build(),
     ).toThrow('method is required');
   });
 });

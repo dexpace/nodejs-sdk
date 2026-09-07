@@ -1,0 +1,66 @@
+# .github/dependabot.yml
+#
+# Version updates for the Bun workspace.
+#
+# Preconditions this repository meets. Dependabot's `bun` ecosystem went GA on
+# 2025-02-13 -- https://github.blog/changelog/2025-02-13-dependabot-version-updates-now-support-the-bun-package-manager-ga/
+# -- and needs Bun >= 1.1.39 and the text-based `bun.lock`, not the legacy
+# binary `bun.lockb`. `.bun-version` pins 1.3.14 and `bun.lock` is JSON
+# (`"lockfileVersion": 1` on its second line).
+#
+# One hard limit and one caution, stated here rather than diagnosed later from
+# a confusing PR:
+#
+#   * HARD: `bun` covers VERSION updates only. Dependabot issues no SECURITY
+#     updates for this ecosystem, so an advisory against a dependency will not
+#     arrive as a PR. `bun run audit` (`bun audit --audit-level=high --prod`)
+#     is a CI step and stays the thing that catches those.
+#   * CAUTION: treat lockfile updates under a workspace layout as unproven.
+#     dependabot/dependabot-core#14223 is open (2026-02-19), titled "Dependabot
+#     does not fix bun.lock in environment which using npm workspace", and the
+#     symptom matches this repository's shape -- `workspaces.packages:
+#     ["packages/*"]` in the root package.json, eleven packages. It is NOT a
+#     confirmed defect of the configuration below: the reporter's linked config
+#     declares `package-ecosystem: "npm"` with `enable-beta-ecosystems: true`,
+#     not `bun`, so the published repro does not exercise this file. (#11602,
+#     closed, is the older single-package report.) If it does bite, it shows up
+#     as a no-op PR, or as a manifest bump with a stale lockfile -- the second
+#     kind fails CI at `bun install --frozen-lockfile`, the first step of the
+#     run, and that failure is the tooling, not the bump. Re-run `bun install`
+#     locally and commit `bun.lock` onto the PR branch.
+#
+# This file is inert until it reaches the repository's DEFAULT branch --
+# Dependabot reads its configuration only from there, and the default is `main`
+# while the MVP work integrates on `mvp` (see CONTRIBUTING.md, "Branching").
+# To activate it before that merge, cherry-pick it onto `main` AND add
+# `target-branch: 'mvp'` to the entry below, so the PRs land where the work is.
+# Drop that line again once `mvp` has merged.
+#
+# No `github-actions` ecosystem block: deliberately out of scope for the ticket
+# that added this file. The three actions in use -- actions/checkout@v4,
+# oven-sh/setup-bun@v2, actions/setup-node@v4 -- are pinned by major tag.
+version: 2
+
+updates:
+  - package-ecosystem: 'bun'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    # 5 is Dependabot's own default, written out so it reads as a decision
+    # rather than an omission. Deliberately not RAISED: every PR here runs the
+    # full 20-step CI, including a double clean build for the reproducibility
+    # gate, and the caution above means some fraction of them may be no-ops.
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore'
+      include: 'scope'
+    groups:
+      # One PR for the routine drift. A major bump is excluded, so it arrives on
+      # its own branch and the breaking change gets reviewed alone.
+      minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'

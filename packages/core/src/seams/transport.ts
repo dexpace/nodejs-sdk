@@ -76,8 +76,20 @@ export interface Transport {
  * logic.
  *
  * @param userSignal - an optional caller-supplied abort signal.
- * @param timeoutMs - an optional timeout, in milliseconds.
+ * @param timeoutMs - an optional timeout, in milliseconds. Must be an integer in
+ * `1 .. 2**32 - 1` — the range Node's `AbortSignal.timeout()` accepts. A value taken from
+ * {@link RequestOptions.timeoutMs} always is, because {@link RequestOptionsBuilder.timeoutMs}
+ * rejects everything else at the call site (HTTP-35). A transport's own `defaultTimeoutMs`
+ * construction option is NOT validated by this package and is the one remaining way an
+ * out-of-range value reaches here.
  * @returns the composed signal, the sole supplied signal, or `undefined` when neither is supplied.
+ * @throws Whatever the host runtime's `AbortSignal.timeout()` raises for an out-of-range delay,
+ * unwrapped. The runtimes disagree, measured 2026-09-05: Node raises `RangeError` for a fractional
+ * value, for anything above `4294967295`, and for a negative one; Bun accepts the first two and
+ * raises `TypeError` for the third. Not wrapped in a `DexpaceError` and not clamped here — it is a
+ * programming error in whatever supplied the value, and the divergence is exactly why the range
+ * lives on {@link RequestOptionsBuilder.timeoutMs}, which rejects every such value identically on
+ * both runtimes (HTTP-35, audit #67 / #76).
  *
  * @public
  */

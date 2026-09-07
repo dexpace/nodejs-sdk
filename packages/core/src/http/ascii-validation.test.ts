@@ -3,24 +3,26 @@
 // Exercises: HTTP-18 (outbound value grammar: HTAB + printable ASCII 0x20-0x7E only)
 import {describe, expect, test} from 'bun:test';
 import {
-  hasForbiddenOutboundByte,
+  hasForbiddenOutboundValueByte,
   hasForbiddenNameByte,
   hasForbiddenInboundValueByte,
 } from './ascii-validation.js';
 
-describe('hasForbiddenOutboundByte', () => {
+describe('hasForbiddenOutboundValueByte', () => {
   test('accepts HTAB and printable ASCII', () => {
-    expect(hasForbiddenOutboundByte('a\tb')).toBe(false);
-    expect(hasForbiddenOutboundByte('printable ASCII 0x20-0x7E')).toBe(false);
+    expect(hasForbiddenOutboundValueByte('a\tb')).toBe(false);
+    expect(hasForbiddenOutboundValueByte('printable ASCII 0x20-0x7E')).toBe(
+      false,
+    );
   });
 
   test('rejects CR/LF and other control characters', () => {
-    expect(hasForbiddenOutboundByte('a\r\nb')).toBe(true);
-    expect(hasForbiddenOutboundByte('a\0b')).toBe(true);
+    expect(hasForbiddenOutboundValueByte('a\r\nb')).toBe(true);
+    expect(hasForbiddenOutboundValueByte('a\0b')).toBe(true);
   });
 
   test('rejects non-ASCII bytes', () => {
-    expect(hasForbiddenOutboundByte('vålue')).toBe(true);
+    expect(hasForbiddenOutboundValueByte('vålue')).toBe(true);
   });
 });
 
