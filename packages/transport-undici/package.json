@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/transport-undici",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Undici-based transport adapter with proxy and connection pooling support for the dexpace Node.js SDK.",
   "license": "MIT",
   "type": "module",
