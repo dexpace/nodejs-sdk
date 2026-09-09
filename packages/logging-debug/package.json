@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/logging-debug",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Debug logging adapter for the dexpace Node.js SDK.",
   "license": "MIT",
   "type": "module",
