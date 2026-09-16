@@ -31,7 +31,7 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4",
     "@microsoft/api-extractor": "catalog:",
     "@types/bun": "latest",
-    "eslint": "^9",
+    "eslint": "^10",
     "fast-check": "catalog:",
     "globals": "^17.8.0",
     "gts": "^7",
