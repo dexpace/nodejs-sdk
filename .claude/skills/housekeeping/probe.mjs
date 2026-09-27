@@ -313,7 +313,6 @@ const ROOT_MARKDOWN_ALLOWED = new Set([
   'CODE_OF_CONDUCT.md',
   'SECURITY.md',
   'CHANGELOG.md',
-  'LICENSE.md',
 ]);
 
 function checkRootDocuments(ctx) {
