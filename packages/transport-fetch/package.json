@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/transport-fetch",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Fetch-based transport adapter for the dexpace Node.js SDK.",
   "license": "MIT",
   "type": "module",

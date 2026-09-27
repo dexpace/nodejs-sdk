@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/codec-json",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Reference JSON wire codec for the dexpace SDK: JSON.parse/JSON.stringify plus Tristate wiring and schema decode glue.",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/body-file",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "File body adapter with fail-fast node:fs validation for the dexpace Node.js SDK.",
   "license": "MIT",
   "type": "module",
