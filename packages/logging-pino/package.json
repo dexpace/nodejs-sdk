@@ -1,6 +1,6 @@
 {
   "name": "@dexpace/logging-pino",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Pino logging adapter for the dexpace Node.js SDK.",
   "license": "MIT",
   "type": "module",
